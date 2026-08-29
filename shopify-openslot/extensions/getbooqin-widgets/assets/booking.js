@@ -750,11 +750,9 @@
 				self.stepDateTime();
 			} );
 			self.body.appendChild( el( 'div', { class: 'getbooqin-actions' }, [ continueBtn ] ) );
-
-			self.body.appendChild( self.backRow( function () {
-				self.state.resourceId = 0;
-				self.stepResource();
-			} ) );
+			// No Back row here — this step is a single yes/no question with
+			// nothing worth revisiting before it, and the modal's own close
+			// (×) button already covers "I don't want to do this."
 		} ).catch( function ( err ) {
 			self.body.innerHTML = '';
 			self.error( err.message );

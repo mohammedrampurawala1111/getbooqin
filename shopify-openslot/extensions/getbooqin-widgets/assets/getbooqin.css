@@ -313,27 +313,66 @@
 .getbooqin-addon {
 	display: flex;
 	align-items: flex-start;
-	gap: 10px;
+	gap: 12px;
 	width: 100%;
-	padding: 12px 14px;
+	padding: 14px;
 	border: 1px solid var(--getbooqin-line, #e3e6ea);
 	border-radius: var(--getbooqin-radius, 10px);
 	cursor: pointer;
 	transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.getbooqin-addon:hover,
-.getbooqin-addon:focus-within {
+.getbooqin-addon:hover {
 	border-color: var(--getbooqin-accent, #2563eb);
-	background: rgba(37, 99, 235, 0.04);
 }
 
+/* The checked state is the one that matters most here — a customer
+   scanning the list should see which add-ons they've picked at a glance,
+   not have to spot a small checkbox. Highlighting the whole card (not
+   just the input) makes that legible without reading each row. */
+.getbooqin-addon:has(input:checked) {
+	border-color: var(--getbooqin-accent, #2563eb);
+	background: color-mix(in srgb, var(--getbooqin-accent, #2563eb) 6%, transparent);
+}
+
+/* A plain unstyled checkbox reads as a leftover HTML default next to
+   custom-radius cards and pill buttons everywhere else in this wizard —
+   appearance: none plus a hand-drawn check keeps it sized and shaped to
+   match the rest of the design system, and themeable via the same accent
+   variable instead of being stuck in browser-default blue. */
 .getbooqin-addon input {
-	margin-top: 3px;
-	/* Without this a native checkbox renders in the browser's default
-	   blue regardless of the store's own accent color — the one visibly
-	   off-brand element on an otherwise theme-matched screen. */
-	accent-color: var(--getbooqin-accent, #2563eb);
+	appearance: none;
+	-webkit-appearance: none;
+	width: 22px;
+	height: 22px;
+	flex-shrink: 0;
+	margin: 0;
+	border: 1.5px solid var(--getbooqin-line, #e3e6ea);
+	border-radius: 7px;
+	background: var(--getbooqin-bg, #fff);
+	cursor: pointer;
+	display: grid;
+	place-content: center;
+	transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.getbooqin-addon input:checked {
+	border-color: var(--getbooqin-accent, #2563eb);
+	background: var(--getbooqin-accent, #2563eb);
+}
+
+.getbooqin-addon input:checked::after {
+	content: '';
+	width: 6px;
+	height: 10px;
+	border: solid #fff;
+	border-width: 0 2px 2px 0;
+	transform: rotate(45deg) translate(-1px, -1px);
+}
+
+.getbooqin-addon input:focus-visible {
+	outline: 2px solid var(--getbooqin-accent, #2563eb);
+	outline-offset: 2px;
 }
 
 .getbooqin-addon strong {
