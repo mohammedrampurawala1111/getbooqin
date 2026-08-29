@@ -7,23 +7,11 @@
   </div>
 
   {% paginate collection.products by section.settings.products_per_page %}
-    {%- comment -%}
-      Services are calendar-based appointments, not shelf inventory — mixing
-      them into the general shop grid puts a nail-art booking next to top
-      coat, so this skips them here. Captured first (rather than gating on
-      collection.products.size, which still counts services) so the "no
-      products" message only shows when nothing retail is actually left.
-    {%- endcomment -%}
-    {%- capture retail_grid -%}
-      {% for product in collection.products %}
-        {% unless product.type == 'Service' %}
-          {% render 'product-card', product: product %}
-        {% endunless %}
-      {% endfor %}
-    {%- endcapture -%}
-    {% if retail_grid != blank %}
+    {% if collection.products.size > 0 %}
       <div class="product-grid">
-        {{ retail_grid }}
+        {% for product in collection.products %}
+          {% render 'product-card', product: product %}
+        {% endfor %}
       </div>
 
       {% if paginate.pages > 1 %}
