@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="{{ request.locale.iso_code }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="{{ settings.color_background }}">
+  <title>
+    {{ page_title }}{% if current_tags %} &ndash; tagged "{{ current_tags | join: ', ' }}"{% endif %}{% if current_page != 1 %} &ndash; Page {{ current_page }}{% endif %}{% unless page_title contains shop.name %} &ndash; {{ shop.name }}{% endunless %}
+  </title>
+  {% if page_description %}
+    <meta name="description" content="{{ page_description | escape }}">
+  {% endif %}
+
+  <link rel="canonical" href="{{ canonical_url }}">
+  {% if settings.favicon %}
+    <link rel="icon" type="image/png" href="{{ settings.favicon | image_url: width: 32, height: 32 }}">
+  {% endif %}
+
+  <link rel="preconnect" href="https://cdn.shopify.com" crossorigin>
+
+  {{ 'theme.css' | asset_url | stylesheet_tag }}
+
+  <style>
+    {{ settings.font_heading | font_face: font_display: 'swap' }}
+    {{ settings.font_body | font_face: font_display: 'swap' }}
+
+    :root {
+      --color-background: {{ settings.color_background }};
+      --color-background-secondary: {{ settings.color_background_secondary }};
+      --color-text: {{ settings.color_text }};
+      --color-text-muted: {{ settings.color_text_muted }};
+      --color-accent: {{ settings.color_accent }};
+      --color-accent-text: {{ settings.color_accent_text }};
+      --color-border: {{ settings.color_border }};
+      --font-heading: {{ settings.font_heading.family }}, serif;
+      --font-heading-weight: {{ settings.font_heading.weight }};
+      --font-heading-style: {{ settings.font_heading.style }};
+      --font-body: {{ settings.font_body.family }}, sans-serif;
+      --font-body-weight: {{ settings.font_body.weight }};
+      --page-width: {{ settings.page_width }}px;
+      --radius: {{ settings.corner_radius }}px;
+
+      /*
+        Lets the GetBooqin app block's own "Book now" button (rendered by
+        the GetBooqin app, not this theme) pick up the studio's accent colour
+        instead of its generic default blue. The button itself only
+        inherits this if it isn't wrapped in the app's own booking-wizard
+        markup, which is exactly true for the launcher button — see
+        extensions/getbooqin-widgets/assets/getbooqin.css in the GetBooqin app for
+        the matching var(--getbooqin-accent, #2563eb) declaration.
+      */
+      --getbooqin-accent: {{ settings.color_accent }};
+    }
+  </style>
+
+  {{ content_for_header }}
+</head>
+<body>
+  <a class="visually-hidden skip-link" href="#main-content">Skip to content</a>
+
+  {% section 'header' %}
+
+  <main id="main-content">
+    {{ content_for_layout }}
+  </main>
+
+  {% section 'footer' %}
+
+  <script src="{{ 'theme.js' | asset_url }}" defer></script>
+</body>
+</html>

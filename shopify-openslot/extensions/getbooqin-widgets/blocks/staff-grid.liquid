@@ -1,0 +1,14 @@
+{{ 'getbooqin.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'staff-grid.js' | asset_url }}" defer></script>
+
+<div class="getbooqin-grid" style="--getbooqin-cols:{{ block.settings.columns }}" data-getbooqin-staff {{ block.shopify_attributes }}></div>
+
+{% schema %}
+{
+  "name": "GetBooqin Staff",
+  "target": "section",
+  "settings": [
+    { "type": "range", "id": "columns", "label": "Columns", "min": 1, "max": 4, "default": 3 }
+  ]
+}
+{% endschema %}

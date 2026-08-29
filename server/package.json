@@ -1,0 +1,21 @@
+{
+  "name": "getbooqin-server",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Combined production entrypoint that serves cloud and shopify-openslot from one Fly app/process, dispatching by URL path. See combined.js for the routing table.",
+  "main": "combined.js",
+  "scripts": {
+    "start": "node combined.js"
+  },
+  "dependencies": {
+    "@react-router/express": "^7.1.1",
+    "compression": "^1.8.1",
+    "express": "^4.22.2",
+    "morgan": "^1.11.0"
+  },
+  "engines": {
+    "node": "^18.20 || ^20.10 || >=21.0.0"
+  },
+  "author": "GetBooqin"
+}

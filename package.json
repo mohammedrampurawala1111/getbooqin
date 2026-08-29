@@ -1,0 +1,10 @@
+{
+  "name": "getbooqin-workspace",
+  "private": true,
+  "workspaces": [
+    "core",
+    "cloud",
+    "shopify-openslot",
+    "server"
+  ]
+}

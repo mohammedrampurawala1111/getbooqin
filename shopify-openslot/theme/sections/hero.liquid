@@ -1,0 +1,53 @@
+<section class="hero" style="--hero-min-height: {{ section.settings.height }}px;">
+  {% if section.settings.image %}
+    <img
+      class="hero__image"
+      src="{{ section.settings.image | image_url: width: 2000 }}"
+      alt=""
+      width="{{ section.settings.image.width }}"
+      height="{{ section.settings.image.height }}"
+      loading="eager"
+      fetchpriority="high"
+    >
+  {% endif %}
+  <div class="hero__scrim"></div>
+  <div class="hero__content">
+    {% if section.settings.eyebrow != blank %}
+      <p class="hero__eyebrow">{{ section.settings.eyebrow }}</p>
+    {% endif %}
+    {% if section.settings.heading != blank %}
+      <h1 class="hero__heading">{{ section.settings.heading }}</h1>
+    {% endif %}
+    {% if section.settings.subheading != blank %}
+      <p class="hero__subheading">{{ section.settings.subheading }}</p>
+    {% endif %}
+    <div class="hero__actions">
+      {% if section.settings.primary_text != blank %}
+        <a href="{{ section.settings.primary_link | default: '#' }}" class="button button--accent button--lg">{{ section.settings.primary_text }}</a>
+      {% endif %}
+      {% if section.settings.secondary_text != blank %}
+        <a href="{{ section.settings.secondary_link | default: '#' }}" class="button button--outline button--lg">{{ section.settings.secondary_text }}</a>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Hero banner",
+  "settings": [
+    { "type": "image_picker", "id": "image", "label": "Image" },
+    { "type": "range", "id": "height", "label": "Minimum height", "min": 320, "max": 760, "step": 20, "unit": "px", "default": 560 },
+    { "type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "Est. your city" },
+    { "type": "text", "id": "heading", "label": "Heading", "default": "Nails, done beautifully" },
+    { "type": "textarea", "id": "subheading", "label": "Subheading", "default": "Manicures, extensions and nail art in a calm, unhurried studio. Book your seat or shop our take-home essentials." },
+    { "type": "text", "id": "primary_text", "label": "Primary button text", "default": "Book an appointment" },
+    { "type": "url", "id": "primary_link", "label": "Primary button link" },
+    { "type": "text", "id": "secondary_text", "label": "Secondary button text", "default": "Shop products" },
+    { "type": "url", "id": "secondary_link", "label": "Secondary button link" }
+  ],
+  "presets": [
+    { "name": "Hero banner" }
+  ]
+}
+{% endschema %}

@@ -1,0 +1,185 @@
+{%- assign product = product | default: section.settings.product -%}
+
+<script type="application/json" data-product-variants="{{ product.id }}">
+  {{ product.variants | json }}
+</script>
+
+<section class="product-page" data-product-section>
+  <div class="product-page__media">
+    {% if product.featured_image %}
+      <div class="product-page__main-image" data-product-main-image>
+        <img
+          src="{{ product.featured_image | image_url: width: 1200 }}"
+          alt="{{ product.featured_image.alt | default: product.title | escape }}"
+          width="{{ product.featured_image.width }}"
+          height="{{ product.featured_image.height }}"
+          loading="eager"
+          id="product-main-image-{{ product.id }}"
+        >
+      </div>
+      {% if product.images.size > 1 %}
+        <div class="product-page__thumbs">
+          {% for image in product.images %}
+            <button
+              type="button"
+              class="product-page__thumb{% if forloop.first %} is-active{% endif %}"
+              data-thumb
+              data-full="{{ image | image_url: width: 1200 }}"
+              data-target="product-main-image-{{ product.id }}"
+              aria-label="Show image {{ forloop.index }}"
+            >
+              <img
+                src="{{ image | image_url: width: 160 }}"
+                alt=""
+                width="{{ image.width }}"
+                height="{{ image.height }}"
+                loading="lazy"
+              >
+            </button>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% else %}
+      <div class="product-page__main-image product-page__main-image--placeholder"></div>
+    {% endif %}
+  </div>
+
+  <div class="product-page__info">
+    {% for block in section.blocks %}
+      {% case block.type %}
+
+        {% when 'title' %}
+          <div {{ block.shopify_attributes }}>
+            {% if product.vendor != blank %}
+              <p class="product-page__vendor">{{ product.vendor }}</p>
+            {% endif %}
+            <h1 class="product-page__title">{{ product.title }}</h1>
+          </div>
+
+        {% when 'price' %}
+          <div {{ block.shopify_attributes }}>
+            {% render 'price', product: product %}
+          </div>
+
+        {% when 'description' %}
+          {% if product.description != blank %}
+            <div class="product-page__description" {{ block.shopify_attributes }}>
+              {{ product.description }}
+            </div>
+          {% endif %}
+
+        {% when 'variant_picker' %}
+          {% if product.has_only_default_variant == false %}
+            <div class="product-page__variants" {{ block.shopify_attributes }}>
+              {% for option in product.options_with_values %}
+                <div class="product-page__option">
+                  <label for="option-{{ option.position }}-{{ product.id }}">{{ option.name }}</label>
+                  <select id="option-{{ option.position }}-{{ product.id }}" data-option-index="{{ option.position | minus: 1 }}" data-variant-option>
+                    {% for value in option.values %}
+                      <option value="{{ value | escape }}"{% if value == option.selected_value %} selected{% endif %}>{{ value }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+        {% when 'buy_buttons' %}
+          {%- comment -%}
+            Service-type products are calendar-based, not stock-based —
+            "quantity" and "add to cart" don't mean anything for an
+            appointment, and letting someone check out without picking a
+            time would create an order GetBooqin never sees.
+
+            Whether a *specific* product is actually linked to a bookable
+            service lives in GetBooqin's own database, not in Shopify — Liquid
+            has no way to know that at render time without a metafield sync
+            (a write_products scope this app deliberately doesn't request).
+            So this still renders the cart form here for every product
+            (except ones the merchant explicitly typed "Service", which
+            skips the flash entirely) — booking.js replaces it with the same
+            note once its product-service lookup confirms a link, the exact
+            same call that decides whether to show the GetBooqin button at all.
+            data-getbooqin-buy-buttons is the hook it looks for; see
+            extensions/getbooqin-widgets/assets/booking.js.
+          {%- endcomment -%}
+          {% if product.type == 'Service' %}
+            <div class="product-page__buy product-page__buy--service" data-getbooqin-buy-buttons {{ block.shopify_attributes }}>
+              <p class="getbooqin-service-note">This is booked by appointment, not purchased directly — choose a time below.</p>
+            </div>
+          {% else %}
+          <div class="product-page__buy" data-getbooqin-buy-buttons {{ block.shopify_attributes }}>
+            {% form 'product', product, class: 'product-form', data-product-form: '', data-product-id: product.id %}
+              <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}" data-variant-id>
+
+              <div class="product-form__quantity">
+                <label for="quantity-{{ product.id }}">Qty</label>
+                <input type="number" id="quantity-{{ product.id }}" name="quantity" value="1" min="1" inputmode="numeric">
+              </div>
+
+              <button
+                type="submit"
+                name="add"
+                class="button button--outline button--lg product-form__add"
+                data-add-to-cart
+                {% unless product.selected_or_first_available_variant.available %}disabled{% endunless %}
+              >
+                <span data-add-to-cart-text>
+                  {% if product.selected_or_first_available_variant.available %}Add to cart{% else %}Sold out{% endif %}
+                </span>
+              </button>
+
+              {% if product.selected_or_first_available_variant.available %}
+                {{ form | payment_button }}
+              {% endif %}
+
+              <p class="product-form__message" data-cart-message role="status" hidden></p>
+            {% endform %}
+          </div>
+          {% endif %}
+
+        {% when 'share' %}
+          <div class="product-page__share" {{ block.shopify_attributes }}>
+            <a href="https://www.instagram.com/" target="_blank" rel="noopener" aria-label="Share on Instagram">{% render 'icon-instagram' %}</a>
+            <a href="https://www.facebook.com/sharer/sharer.php?u={{ shop.url | append: product.url }}" target="_blank" rel="noopener" aria-label="Share on Facebook">{% render 'icon-facebook' %}</a>
+          </div>
+
+        {% when '@app' %}
+          {% comment %}
+            This is the slot the GetBooqin app's "GetBooqin Button" block plugs
+            into — add it here (Add block → GetBooqin Button) to show a
+            "Book now" button on this product's page once it's linked to a
+            service in the GetBooqin admin. Position it anywhere in this list,
+            e.g. right after Buy buttons.
+          {% endcomment %}
+          {% render block %}
+
+      {% endcase %}
+    {% endfor %}
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Product information",
+  "blocks": [
+    { "type": "title", "name": "Title", "limit": 1 },
+    { "type": "price", "name": "Price", "limit": 1 },
+    { "type": "variant_picker", "name": "Variant picker", "limit": 1 },
+    { "type": "buy_buttons", "name": "Buy buttons", "limit": 1 },
+    { "type": "description", "name": "Description", "limit": 1 },
+    { "type": "share", "name": "Share", "limit": 1 },
+    { "type": "@app" }
+  ],
+  "default": {
+    "blocks": [
+      { "type": "title" },
+      { "type": "price" },
+      { "type": "variant_picker" },
+      { "type": "buy_buttons" },
+      { "type": "description" },
+      { "type": "share" }
+    ]
+  }
+}
+{% endschema %}

@@ -1,0 +1,353 @@
+// GetBooqin data model, ported from the WordPress plugin's `os_*` tables.
+//
+// One difference from the WordPress version drives most of the schema:
+// a Shopify app serves many shops from one database, so every table that
+// used to be scoped to "the site" now carries an explicit `shop` column
+// (the shop's *.myshopify.com domain). Nothing else about the model changed —
+// a Resource still delivers a Service to a Customer inside a Booking.
+//
+// Money fields are still Float, a holdover from when the dev datasource was
+// SQLite (which doesn't support Decimal). Now on Postgres, but the fields
+// haven't been migrated to `Decimal @db.Decimal(12, 2)` yet — payments are
+// disabled for the v1 App Store submission, so this isn't load-bearing yet,
+// but do it before re-enabling live payment gateways. See DEVELOPERS.md.
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// --- Shopify session storage (required by @shopify/shopify-app-react-router) ---
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// --- Per-shop settings (mirrors the single `openslot_settings` WP option) ---
+
+model ShopSettings {
+  shop      String   @id
+  data      String // JSON blob — see app/lib/settings.server.ts for the typed shape
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// --- Catalogue ---
+//
+// Prompt 3 refactor: a Shopify product is the source of truth for
+// catalogue fields (name/price/category/description) — they're never
+// duplicated here as editable state, only cached (see ProductCache).
+// ServiceConfig owns booking config only, and maps 1:1 to a product via
+// productId — this table is the same physical "Service" table evolved in
+// place (@@map below) so Booking/ServiceResource/ServiceAddon history keeps
+// working against the same ids, no FK remapping needed. Kept in sync with
+// the product's `getbooqin` metafield namespace both ways: GetBooqin's
+// dashboard and a Shopify Admin UI Extension on the product page both write
+// through metafieldsSet; webhooks.products.tsx reads back into this cache.
+model ServiceConfig {
+  id                Int               @id @default(autoincrement())
+  shop              String
+  platform          String            @default("shopify")
+  productId         String
+  productHandle     String
+  durationMin       Int               @default(30)
+  bufferBeforeMin   Int               @default(0)
+  bufferAfterMin    Int               @default(0)
+  capacity          Int               @default(1)
+  locationType      String            @default("onsite") // onsite | video | phone
+  paymentRequired   Boolean           @default(false)
+  depositPercent    Int               @default(100)
+  // Storefront services-grid swatch colour — a GetBooqin-only display
+  // preference, not a Shopify product concept, so unlike the rest of
+  // ServiceConfig this is plain local state, not synced via metafields.
+  color             String            @default("#2563eb")
+  position          Int               @default(0)
+  status            Boolean           @default(true)
+  // Last product `updated_at` this row was synced from — lets the products
+  // webhook cheaply skip an out-of-order/duplicate delivery without
+  // re-fetching metafields. Not itself the loop-prevention guard (this
+  // handler never writes metafields, so there's no cycle to break) — see
+  // webhooks.products.tsx for the value-equality check that is.
+  platformUpdatedAt DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  resourceLinks     ServiceResource[]
+  addonLinks        ServiceAddon[]
+  bookings          Booking[]
+
+  @@unique([shop, productId])
+  @@index([shop, status, position])
+  @@index([shop, productHandle])
+  @@map("Service")
+}
+
+// Read-only reference cache of a Shopify product's catalogue fields —
+// refreshed by webhooks.products.tsx, never edited directly. Lookup by
+// handle backs the storefront ("book on product page" app block only has
+// `{{ product.handle }}` in Liquid scope, see product-book-button.liquid);
+// lookup by productId backs ServiceConfig's 1:1 join.
+model ProductCache {
+  id            Int      @id @default(autoincrement())
+  shop          String
+  platform      String   @default("shopify")
+  productId     String
+  productHandle String
+  title         String   @default("")
+  description   String   @default("")
+  category      String   @default("")
+  image         String   @default("")
+  price         Float    @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, platform, productId])
+  @@index([shop, productHandle])
+}
+
+model Resource {
+  id           Int               @id @default(autoincrement())
+  shop         String
+  name         String
+  title        String            @default("")
+  email        String            @default("")
+  phone        String            @default("")
+  description  String?
+  avatarUrl    String            @default("")
+  meetingLink  String            @default("")
+  timezone     String            @default("")
+  position     Int               @default(0)
+  status       Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  serviceLinks ServiceResource[]
+  schedules    Schedule[]
+  bookings     Booking[]
+
+  @@index([shop, status, position])
+}
+
+// Deliberately permissive, same as the PHP version: if a service has no rows
+// here, every active resource can deliver it.
+model ServiceResource {
+  id               Int           @id @default(autoincrement())
+  shop             String
+  serviceId        Int
+  resourceId       Int
+  priceOverride    Float?
+  durationOverride Int?
+  service          ServiceConfig @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  resource         Resource      @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, resourceId])
+  @@index([shop, resourceId])
+}
+
+// Optional paid add-ons a customer can attach to a service at booking time
+// (e.g. "extra 30 min", "gift wrap"). Price/duration are added on top of the
+// base service's.
+model Addon {
+  id           Int            @id @default(autoincrement())
+  shop         String
+  name         String
+  description  String?
+  price        Float          @default(0)
+  durationMin  Int            @default(0)
+  position     Int            @default(0)
+  status       Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  serviceLinks ServiceAddon[]
+  bookingLinks BookingAddon[]
+
+  @@index([shop, status, position])
+}
+
+// Which add-ons are offered for a given service. Same permissive convention
+// as ServiceResource: this table only controls what's *offered*, not who can
+// deliver it.
+model ServiceAddon {
+  id        Int           @id @default(autoincrement())
+  shop      String
+  serviceId Int
+  addonId   Int
+  service   ServiceConfig @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  addon     Addon         @relation(fields: [addonId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, addonId])
+  @@index([shop, addonId])
+}
+
+model Schedule {
+  id         Int      @id @default(autoincrement())
+  shop       String
+  resourceId Int
+  dayOfWeek  Int // 0 (Sun) - 6 (Sat)
+  startTime  String // "HH:MM"
+  endTime    String // "HH:MM"
+  resource   Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@index([shop, resourceId, dayOfWeek])
+}
+
+// resourceId = 0 means "whole business", same convention as the plugin.
+model TimeOff {
+  id         Int      @id @default(autoincrement())
+  shop       String
+  resourceId Int      @default(0)
+  startUtc   DateTime
+  endUtc     DateTime
+  reason     String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([shop, resourceId, startUtc, endUtc])
+}
+
+model Customer {
+  id        Int       @id @default(autoincrement())
+  shop      String
+  firstName String    @default("")
+  lastName  String    @default("")
+  email     String
+  phone     String    @default("")
+  timezone  String    @default("")
+  notes     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  bookings  Booking[]
+
+  @@unique([shop, email])
+}
+
+model Booking {
+  id              Int      @id @default(autoincrement())
+  shop            String
+  uid             String   @unique
+  serviceId       Int
+  resourceId      Int
+  customerId      Int
+  startUtc        DateTime
+  endUtc          DateTime
+  timezone        String   @default("UTC")
+  status          String   @default("pending") // pending|confirmed|cancelled|completed|no_show
+  price           Float    @default(0)
+  amountDue       Float    @default(0)
+  currency        String   @default("USD")
+  paymentStatus   String   @default("not_required") // not_required|unpaid|paid|refunded|failed
+  meetingProvider String   @default("")
+  meetingUrl      String   @default("")
+  meetingId       String   @default("")
+  notes           String?
+  customFields    String?
+  source          String   @default("form") // form|chat
+  reminderSent    Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  service  ServiceConfig  @relation(fields: [serviceId], references: [id])
+  resource Resource       @relation(fields: [resourceId], references: [id])
+  customer Customer       @relation(fields: [customerId], references: [id])
+  payments Payment[]
+  addons   BookingAddon[]
+
+  @@index([shop, resourceId, startUtc, status])
+  @@index([shop, customerId, startUtc])
+  @@index([shop, status, startUtc])
+  @@index([shop, reminderSent, startUtc])
+  @@index([shop, paymentStatus])
+}
+
+// A snapshot of what was selected and charged at booking time — not just a
+// live FK, since the Addon's own price/duration can change later. Same
+// snapshot convention as ServiceResource's priceOverride/durationOverride.
+model BookingAddon {
+  id          Int     @id @default(autoincrement())
+  shop        String
+  bookingId   Int
+  addonId     Int
+  name        String
+  price       Float   @default(0)
+  durationMin Int     @default(0)
+  booking     Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  addon       Addon   @relation(fields: [addonId], references: [id])
+
+  @@index([shop, bookingId])
+}
+
+model Payment {
+  id            Int      @id @default(autoincrement())
+  shop          String
+  bookingId     Int
+  gateway       String   @default("")
+  transactionId String   @default("")
+  amount        Float    @default(0)
+  currency      String   @default("USD")
+  status        String   @default("pending") // pending|paid|failed|refunded
+  payload       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  booking       Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([shop, bookingId])
+  @@index([shop, status])
+  @@index([shop, gateway, transactionId])
+}
+
+model Faq {
+  id       Int     @id @default(autoincrement())
+  shop     String
+  question String
+  answer   String?
+  keywords String  @default("")
+  position Int     @default(0)
+  status   Boolean @default(true)
+
+  @@index([shop, status, position])
+}
+
+model ChatConversation {
+  id           Int           @id @default(autoincrement())
+  shop         String
+  uid          String        @unique
+  visitorName  String        @default("")
+  visitorEmail String        @default("")
+  visitorPhone String        @default("")
+  state        String? // JSON — { step, data, ui }
+  status       String        @default("open") // open|booked
+  bookingId    Int           @default(0)
+  pageUrl      String        @default("")
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  messages     ChatMessage[]
+
+  @@index([shop, status, updatedAt])
+}
+
+model ChatMessage {
+  id             Int              @id @default(autoincrement())
+  conversationId Int
+  sender         String           @default("bot") // bot|visitor
+  body           String?
+  createdAt      DateTime         @default(now())
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, id])
+}

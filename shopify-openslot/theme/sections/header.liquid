@@ -1,0 +1,106 @@
+{% if section.settings.show_announcement and section.settings.announcement_text != blank %}
+  <div class="announcement-bar">
+    {% if section.settings.announcement_link != blank %}
+      <a href="{{ section.settings.announcement_link }}">{{ section.settings.announcement_text }}</a>
+    {% else %}
+      <span>{{ section.settings.announcement_text }}</span>
+    {% endif %}
+  </div>
+{% endif %}
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <button type="button" class="site-header__menu-toggle" aria-label="Menu" aria-expanded="false" aria-controls="mobile-nav" data-menu-toggle>
+      {% render 'icon-menu' %}
+    </button>
+
+    <a href="{{ routes.root_url }}" class="site-header__logo">
+      {% if section.settings.logo %}
+        <img
+          src="{{ section.settings.logo | image_url: width: 320 }}"
+          alt="{{ shop.name }}"
+          width="{{ section.settings.logo.width }}"
+          height="{{ section.settings.logo.height }}"
+          loading="eager"
+        >
+      {% else %}
+        <span class="site-header__wordmark">{{ shop.name }}</span>
+      {% endif %}
+    </a>
+
+    <nav class="site-header__nav" aria-label="Primary">
+      <ul>
+        {% for link in section.settings.menu.links %}
+          <li>
+            <a href="{{ link.url }}"{% if link.active %} aria-current="page"{% endif %}>{{ link.title }}</a>
+            {% if link.links != blank %}
+              <ul class="site-header__submenu">
+                {% for sublink in link.links %}
+                  <li><a href="{{ sublink.url }}">{{ sublink.title }}</a></li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </nav>
+
+    <div class="site-header__actions">
+      <a href="{{ routes.search_url }}" class="site-header__icon-link" aria-label="Search">
+        {% render 'icon-search' %}
+      </a>
+      <a href="{{ routes.account_url }}" class="site-header__icon-link" aria-label="Account">
+        {% render 'icon-account' %}
+      </a>
+      <a href="{{ routes.cart_url }}" class="site-header__icon-link site-header__cart-link" aria-label="Cart">
+        {% render 'icon-cart' %}
+        <span class="site-header__cart-count" data-cart-count{% if cart.item_count == 0 %} hidden{% endif %}>{{ cart.item_count }}</span>
+      </a>
+      {% if section.settings.book_button_text != blank %}
+        <a href="{{ section.settings.book_button_link | default: '#' }}" class="button button--accent site-header__book-cta">
+          {{ section.settings.book_button_text }}
+        </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <nav id="mobile-nav" class="site-header__mobile-nav" data-mobile-nav hidden aria-label="Mobile">
+    <ul>
+      {% for link in section.settings.menu.links %}
+        <li>
+          <a href="{{ link.url }}">{{ link.title }}</a>
+          {% if link.links != blank %}
+            <ul>
+              {% for sublink in link.links %}
+                <li><a href="{{ sublink.url }}">{{ sublink.title }}</a></li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  </nav>
+</header>
+
+{% schema %}
+{
+  "name": "Header",
+  "settings": [
+    { "type": "image_picker", "id": "logo", "label": "Logo" },
+    { "type": "link_list", "id": "menu", "label": "Menu", "default": "main-menu" },
+    {
+      "type": "header",
+      "content": "Book appointment button"
+    },
+    { "type": "text", "id": "book_button_text", "label": "Button text", "default": "Book now" },
+    { "type": "url", "id": "book_button_link", "label": "Button link", "info": "Link to your booking page, e.g. a page with the GetBooqin Booking block." },
+    {
+      "type": "header",
+      "content": "Announcement bar"
+    },
+    { "type": "checkbox", "id": "show_announcement", "label": "Show announcement bar", "default": true },
+    { "type": "text", "id": "announcement_text", "label": "Text", "default": "Now booking for the holiday season — reserve your spot" },
+    { "type": "url", "id": "announcement_link", "label": "Link" }
+  ]
+}
+{% endschema %}

@@ -1,0 +1,209 @@
+import type { Route } from "./+types/_index";
+import { getUserSession } from "~/session.server";
+import { LogoMark, PlanCard } from "~/components/onboarding";
+import { PRESETS, INTEGRATIONS } from "~/lib/presets";
+import { Badge, LogoutButton } from "~/components/ui";
+
+// Always renders the marketing page, logged in or not — a direct hit on
+// "/" should never bounce a visitor into onboarding or the dashboard (that
+// only happens from an explicit "Log in"/"Sign up" action, via /login and
+// /dashboard's own redirect chain). Logged-in state only changes the nav's
+// CTAs below, from Log in/Sign up to Dashboard/Log out.
+export async function loader({ request }: Route.LoaderArgs) {
+  const session = await getUserSession(request);
+  return { loggedIn: !!session };
+}
+
+const PLANS = [
+  {
+    name: "Starter", price: "$0", per: "/mo", featured: false, cta: "Start free",
+    blurb: "For a single store finding its feet.",
+    features: ["1 connected store", "Unlimited bookings", "Email reminders", "Shopify product sync"],
+  },
+  {
+    name: "Growth", price: "$29", per: "/mo", featured: true, cta: "Start free trial",
+    blurb: "For a business juggling staff, resources and payments.",
+    features: ["Everything in Starter", "Unlimited staff & resources", "Deposits & payments", "WhatsApp reminders (soon)"],
+  },
+  {
+    name: "Scale", price: "$79", per: "/mo", featured: false, cta: "Talk to us",
+    blurb: "For multiple locations under one account.",
+    features: ["Everything in Growth", "Unlimited connected stores", "Priority support", "Google Calendar sync (soon)"],
+  },
+];
+
+export default function Home({ loaderData }: Route.ComponentProps) {
+  const { loggedIn } = loaderData;
+
+  return (
+    <div className="mkt-shell">
+      <div className="mkt-bar">
+        <div className="mkt-wrap flex h-[60px] items-center gap-7">
+          <a href="#" className="flex items-center gap-[9px] no-underline hover:no-underline">
+            <LogoMark size={26} />
+            <span className="text-[14px] font-semibold text-ink">GetBooqin</span>
+          </a>
+          <nav className="ml-3 hidden items-center gap-6 md:flex">
+            <a href="#product" className="mkt-link">Product</a>
+            <a href="#integrations" className="mkt-link">Integrations</a>
+            <a href="#industries" className="mkt-link">Industries</a>
+            <a href="#pricing" className="mkt-link">Pricing</a>
+          </nav>
+          <div className="ml-auto flex items-center gap-2">
+            {loggedIn ? (
+              <>
+                <a href="/dashboard" className="mkt-cta text-[13px] no-underline hover:no-underline">Go to dashboard</a>
+                <LogoutButton className="mkt-link" />
+              </>
+            ) : (
+              <>
+                <a href="/login" className="mkt-link">Log in</a>
+                <a href="/signup" className="mkt-cta text-[13px] no-underline hover:no-underline">Sign up free</a>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ---------------------------------------------------------------- Hero */}
+      <section id="product" className="mkt-section">
+        <div className="mkt-wrap grid grid-cols-[1.05fr_.95fr] items-center gap-12 py-20">
+          <div className="flex flex-col gap-5">
+            <span className="mkt-eyebrow">Booking software for any industry</span>
+            <h1 className="mkt-h1">Bookings, staff and payments — one dashboard, every store.</h1>
+            <p className="mkt-lede">
+              GetBooqin turns a Shopify catalogue into bookable appointments, jobs or reservations —
+              with staff schedules, deposits, and reminders that cut no-shows, all set up in minutes.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <a href="/signup" className="mkt-cta no-underline hover:no-underline">Start free</a>
+              <a href="#pricing" className="mkt-cta-alt no-underline hover:no-underline">See pricing</a>
+            </div>
+          </div>
+
+          <div className="card overflow-hidden shadow-pop">
+            <div className="card-header">
+              <h2 className="card-title">Overview</h2>
+              <span className="text-meta text-subtle">This week</span>
+            </div>
+            <div className="card-body grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-[6px] rounded-card border border-line px-4 py-3">
+                <span className="text-[11px] font-medium text-muted">Bookings</span>
+                <span className="num text-[20px] font-medium tracking-[-0.02em]">128</span>
+              </div>
+              <div className="flex flex-col gap-[6px] rounded-card border border-line px-4 py-3">
+                <span className="text-[11px] font-medium text-muted">No-show rate</span>
+                <span className="num text-[20px] font-medium tracking-[-0.02em] text-ok">3%</span>
+              </div>
+            </div>
+            <div className="thead" style={{ gridTemplateColumns: "1.1fr 1fr .8fr" }}>
+              <div className="th">Customer</div>
+              <div className="th">Service</div>
+              <div className="th">Status</div>
+            </div>
+            {[
+              { name: "Amelia Ross", service: "Cut & finish", status: "confirmed" as const },
+              { name: "Priya Nair", service: "Balayage & toner", status: "pending" as const },
+              { name: "Jonas Weber", service: "Beard trim", status: "confirmed" as const },
+            ].map((row) => (
+              <div key={row.name} className="trow" style={{ gridTemplateColumns: "1.1fr 1fr .8fr" }}>
+                <span className="min-w-0 truncate font-medium">{row.name}</span>
+                <span className="min-w-0 truncate text-muted">{row.service}</span>
+                <Badge status={row.status} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ---------------------------------------------------------- Integrations */}
+      <section id="integrations" className="mkt-section mkt-alt">
+        <div className="mkt-wrap flex flex-col gap-8 py-16">
+          <div className="flex max-w-[560px] flex-col gap-2">
+            <h2 className="mkt-h2">Connects to what you already use</h2>
+            <p className="m-0 text-body text-ink-3">
+              Start with Shopify, add channels as you grow.
+            </p>
+          </div>
+          <div className="grid grid-cols-5 gap-3">
+            {INTEGRATIONS.map((integ) => (
+              <div key={integ.id} className="tile cursor-default">
+                <span
+                  className="integ-logo h-8 w-8 text-[13px]"
+                  style={{ background: integ.tint }}
+                >
+                  {integ.initial}
+                </span>
+                <span className="text-[13px] font-medium">{integ.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ------------------------------------------------------------ Industries */}
+      <section id="industries" className="mkt-section">
+        <div className="mkt-wrap flex flex-col gap-8 py-20">
+          <div className="flex max-w-[560px] flex-col gap-2">
+            <h2 className="mkt-h2">Built for how your industry books</h2>
+            <p className="m-0 text-body text-ink-3">
+              Pick your industry at signup and GetBooqin scaffolds the right vocabulary, services and hours —
+              editable any time.
+            </p>
+          </div>
+          <div className="grid grid-cols-5 gap-2">
+            {PRESETS.map((p) => (
+              <a
+                key={p.id}
+                href={`/signup?preset=${p.id}`}
+                title={p.label}
+                className="tile no-underline hover:no-underline hover:border-brand-500"
+              >
+                <span className="h-5 w-5 shrink-0 rounded-[6px]" style={{ background: p.tint }} />
+                <span className="min-w-0 truncate text-body font-medium text-ink">{p.label.split(" / ")[0]}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ---------------------------------------------------------------- Pricing */}
+      <section id="pricing" className="mkt-section mkt-alt">
+        <div className="mkt-wrap flex flex-col gap-8 py-20">
+          <div className="flex max-w-[560px] flex-col gap-2">
+            <h2 className="mkt-h2">Simple pricing</h2>
+            <p className="m-0 text-body text-ink-3">Start free. Upgrade when you need more staff or more stores.</p>
+          </div>
+          <div className="grid grid-cols-3 gap-5">
+            {PLANS.map((plan) => (
+              <PlanCard key={plan.name} {...plan} />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* -------------------------------------------------------------------- CTA */}
+      <div className="mkt-wrap py-20">
+        <div className="mkt-band">
+          <div className="flex flex-col gap-2">
+            <h2 className="m-0 text-[24px] font-semibold tracking-[-0.02em]">Ready to take your first booking?</h2>
+            <p className="m-0 max-w-[420px] text-[14px] text-[#c9c2d4]">
+              Connect your Shopify store and be live in minutes.
+            </p>
+          </div>
+          <a href="/signup" className="mkt-cta no-underline hover:no-underline">Start free</a>
+        </div>
+      </div>
+
+      <footer className="border-t border-line">
+        <div className="mkt-wrap flex items-center justify-between gap-4 py-7">
+          <span className="flex items-center gap-[9px]">
+            <LogoMark size={22} />
+            <span className="text-[13px] font-medium text-muted">GetBooqin</span>
+          </span>
+          <span className="text-[12.5px] text-subtle">© {new Date().getFullYear()} GetBooqin</span>
+        </div>
+      </footer>
+    </div>
+  );
+}

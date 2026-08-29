@@ -1,0 +1,392 @@
+// GetBooqin Core — the standalone backend and system of record for the
+// booking workflow (Booking, Resource, Schedule, TimeOff, Customer, Payment,
+// Addon, ChatConversation). Bootstrapped from shopify-openslot's schema;
+// see docs/plan/tenant-session-design.md for why this split exists.
+//
+// Every tenant-scoped table carries both `shop` (the store's identifier on
+// its platform — a *.myshopify.com domain today) and `platform` (default
+// "shopify") so a second platform is additive later, not a migration. Catalog
+// data (product name/price/description) is NOT modeled as editable state —
+// it stays owned by the platform; GetBooqin only stores booking config
+// (ServiceConfig) and a read-through cache (ProductCache).
+//
+// Money fields are Float, carried over as-is from shopify-openslot — see
+// that repo's schema.prisma for the Decimal migration note; the same
+// caveat applies here once payments are wired up.
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// --- Shopify session storage (required by @shopify/shopify-app-react-router,
+// used by shopify-openslot's embedded admin via PrismaSessionStorage) ---
+// Single-platform by nature (Shopify's own OAuth session shape) — no
+// `platform` column, unlike the tenant-scoped models below.
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// --- Standalone identity: users and their linked platform stores ---
+
+// id is Clerk's own user id (e.g. "user_xxx") — Clerk owns identity/auth,
+// this row just mirrors it for Connection to key off. Kept in sync by
+// cloud/app/routes/webhooks.clerk.tsx on user.created/user.updated.
+model User {
+  id          String       @id
+  email       String       @unique
+  // Collected at signup for our own records only — not sent to Clerk, since
+  // Clerk's SMS country allowlist rejects +91 and others regardless of
+  // whether phone sign-in/verification is even enabled. Re-evaluate once
+  // phone-based sign-in is wired up through Clerk properly.
+  phone       String       @default("")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  connections Connection[]
+}
+
+// One store a User has linked. `credentials` holds whatever the platform's
+// auth flow hands back (a Shopify offline access token today) encrypted at
+// rest — see src/auth/encryption.ts. A (platform, shop) pair can only ever
+// belong to one User: reconnecting the same store from a different User
+// must be rejected or made an explicit transfer, never a silent duplicate.
+model Connection {
+  id          String   @id @default(cuid())
+  userId      String
+  platform    String   @default("shopify")
+  shop        String
+  credentials String
+  status      String   @default("active") // active|revoked|error
+  connectedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([platform, shop])
+  @@index([userId])
+}
+
+// --- Per-shop settings ---
+
+model ShopSettings {
+  shop      String
+  platform  String   @default("shopify")
+  data      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([platform, shop])
+}
+
+// --- Catalogue ---
+// Prompt 4 catch-up: brought into line with shopify-openslot's Prompt 3
+// refactor. The platform product is the source of truth for catalogue
+// fields (name/price/category/description) — never duplicated here as
+// editable state, only cached (ProductCache). ServiceConfig owns booking
+// config only, 1:1 with a product via productId. Kept in sync with the
+// product's `getbooqin` metafield namespace both ways where the platform
+// supports it (see src/platforms/shopifyAdmin.ts).
+
+model ServiceConfig {
+  id                Int               @id @default(autoincrement())
+  shop              String
+  platform          String            @default("shopify")
+  productId         String
+  productHandle     String
+  durationMin       Int               @default(30)
+  bufferBeforeMin   Int               @default(0)
+  bufferAfterMin    Int               @default(0)
+  capacity          Int               @default(1)
+  locationType      String            @default("onsite") // onsite | video | phone
+  paymentRequired   Boolean           @default(false)
+  depositPercent    Int               @default(100)
+  // Storefront services-grid swatch colour — a GetBooqin-only display
+  // preference, not a platform product concept, so unlike the rest of
+  // ServiceConfig this is plain local state, not synced via metafields.
+  color             String            @default("#2563eb")
+  position          Int               @default(0)
+  status            Boolean           @default(true)
+  // Last product `updated_at` this row was synced from — lets a future
+  // webhook/sync cheaply skip an out-of-order/duplicate delivery.
+  platformUpdatedAt DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  resourceLinks     ServiceResource[]
+  addonLinks        ServiceAddon[]
+  bookings          Booking[]
+
+  @@unique([platform, shop, productId])
+  @@index([platform, shop, status, position])
+  @@index([platform, shop, productHandle])
+}
+
+// Read-only reference cache of a platform product's catalogue fields —
+// refreshed by src/platforms/shopifyAdmin.ts's syncProductsFromShopify,
+// never edited directly.
+model ProductCache {
+  id            Int      @id @default(autoincrement())
+  shop          String
+  platform      String   @default("shopify")
+  productId     String
+  productHandle String
+  title         String   @default("")
+  description   String   @default("")
+  category      String   @default("")
+  image         String   @default("")
+  price         Float    @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@unique([platform, shop, productId])
+  @@index([platform, shop, productHandle])
+}
+
+model Resource {
+  id           Int               @id @default(autoincrement())
+  shop         String
+  platform     String            @default("shopify")
+  name         String
+  title        String            @default("")
+  email        String            @default("")
+  phone        String            @default("")
+  description  String?
+  avatarUrl    String            @default("")
+  meetingLink  String            @default("")
+  timezone     String            @default("")
+  position     Int               @default(0)
+  status       Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  serviceLinks ServiceResource[]
+  schedules    Schedule[]
+  bookings     Booking[]
+
+  @@index([platform, shop, status, position])
+}
+
+model ServiceResource {
+  id               Int           @id @default(autoincrement())
+  shop             String
+  platform         String        @default("shopify")
+  serviceId        Int
+  resourceId       Int
+  priceOverride    Float?
+  durationOverride Int?
+  service          ServiceConfig @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  resource         Resource      @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, resourceId])
+  @@index([platform, shop, resourceId])
+}
+
+model Addon {
+  id           Int            @id @default(autoincrement())
+  shop         String
+  platform     String         @default("shopify")
+  name         String
+  description  String?
+  price        Float          @default(0)
+  durationMin  Int            @default(0)
+  position     Int            @default(0)
+  status       Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  serviceLinks ServiceAddon[]
+  bookingLinks BookingAddon[]
+
+  @@index([platform, shop, status, position])
+}
+
+model ServiceAddon {
+  id        Int           @id @default(autoincrement())
+  shop      String
+  platform  String        @default("shopify")
+  serviceId Int
+  addonId   Int
+  service   ServiceConfig @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  addon     Addon         @relation(fields: [addonId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, addonId])
+  @@index([platform, shop, addonId])
+}
+
+model Schedule {
+  id         Int      @id @default(autoincrement())
+  shop       String
+  platform   String   @default("shopify")
+  resourceId Int
+  dayOfWeek  Int // 0 (Sun) - 6 (Sat)
+  startTime  String // "HH:MM"
+  endTime    String // "HH:MM"
+  resource   Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@index([platform, shop, resourceId, dayOfWeek])
+}
+
+// resourceId = 0 means "whole business", same convention as shopify-openslot.
+model TimeOff {
+  id         Int      @id @default(autoincrement())
+  shop       String
+  platform   String   @default("shopify")
+  resourceId Int      @default(0)
+  startUtc   DateTime
+  endUtc     DateTime
+  reason     String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([platform, shop, resourceId, startUtc, endUtc])
+}
+
+model Customer {
+  id        Int       @id @default(autoincrement())
+  shop      String
+  platform  String    @default("shopify")
+  firstName String    @default("")
+  lastName  String    @default("")
+  email     String
+  phone     String    @default("")
+  timezone  String    @default("")
+  notes     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  bookings  Booking[]
+
+  @@unique([platform, shop, email])
+}
+
+model Booking {
+  id              Int      @id @default(autoincrement())
+  shop            String
+  platform        String   @default("shopify")
+  uid             String   @unique
+  serviceId       Int
+  resourceId      Int
+  customerId      Int
+  startUtc        DateTime
+  endUtc          DateTime
+  timezone        String   @default("UTC")
+  status          String   @default("pending") // pending|confirmed|cancelled|completed|no_show
+  price           Float    @default(0)
+  amountDue       Float    @default(0)
+  currency        String   @default("USD")
+  paymentStatus   String   @default("not_required") // not_required|unpaid|paid|refunded|failed
+  meetingProvider String   @default("")
+  meetingUrl      String   @default("")
+  meetingId       String   @default("")
+  notes           String?
+  customFields    String?
+  source          String   @default("form") // form|chat
+  reminderSent    Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  service  ServiceConfig  @relation(fields: [serviceId], references: [id])
+  resource Resource       @relation(fields: [resourceId], references: [id])
+  customer Customer       @relation(fields: [customerId], references: [id])
+  payments Payment[]
+  addons   BookingAddon[]
+
+  @@index([platform, shop, resourceId, startUtc, status])
+  @@index([platform, shop, customerId, startUtc])
+  @@index([platform, shop, status, startUtc])
+  @@index([platform, shop, reminderSent, startUtc])
+  @@index([platform, shop, paymentStatus])
+}
+
+model BookingAddon {
+  id          Int     @id @default(autoincrement())
+  shop        String
+  platform    String  @default("shopify")
+  bookingId   Int
+  addonId     Int
+  name        String
+  price       Float   @default(0)
+  durationMin Int     @default(0)
+  booking     Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  addon       Addon   @relation(fields: [addonId], references: [id])
+
+  @@index([platform, shop, bookingId])
+}
+
+model Payment {
+  id            Int      @id @default(autoincrement())
+  shop          String
+  platform      String   @default("shopify")
+  bookingId     Int
+  gateway       String   @default("")
+  transactionId String   @default("")
+  amount        Float    @default(0)
+  currency      String   @default("USD")
+  status        String   @default("pending") // pending|paid|failed|refunded
+  payload       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  booking       Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([platform, shop, bookingId])
+  @@index([platform, shop, status])
+  @@index([platform, shop, gateway, transactionId])
+}
+
+model Faq {
+  id       Int     @id @default(autoincrement())
+  shop     String
+  platform String  @default("shopify")
+  question String
+  answer   String?
+  keywords String  @default("")
+  position Int     @default(0)
+  status   Boolean @default(true)
+
+  @@index([platform, shop, status, position])
+}
+
+model ChatConversation {
+  id           Int           @id @default(autoincrement())
+  shop         String
+  platform     String        @default("shopify")
+  uid          String        @unique
+  visitorName  String        @default("")
+  visitorEmail String        @default("")
+  visitorPhone String        @default("")
+  state        String? // JSON — { step, data, ui }
+  status       String        @default("open") // open|booked
+  bookingId    Int           @default(0)
+  pageUrl      String        @default("")
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  messages     ChatMessage[]
+
+  @@index([platform, shop, status, updatedAt])
+}
+
+model ChatMessage {
+  id             Int              @id @default(autoincrement())
+  conversationId Int
+  sender         String           @default("bot") // bot|visitor
+  body           String?
+  createdAt      DateTime         @default(now())
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, id])
+}

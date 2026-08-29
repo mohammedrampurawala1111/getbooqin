@@ -1,0 +1,11 @@
+{%- comment -%}
+  Accepts: product (object)
+{%- endcomment -%}
+{%- assign compare_at = product.compare_at_price -%}
+{%- assign price = product.price -%}
+<span class="price{% if compare_at > price %} price--on-sale{% endif %}">
+  {% if compare_at > price %}
+    <span class="price__compare">{{ compare_at | money }}</span>
+  {% endif %}
+  <span class="price__current">{% if product.price_varies %}From {% endif %}{{ price | money }}</span>
+</span>

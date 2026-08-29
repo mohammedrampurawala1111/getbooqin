@@ -1,0 +1,54 @@
+{
+  "sections": {
+    "hero": {
+      "type": "hero",
+      "settings": {}
+    },
+    "services": {
+      "type": "collection-list",
+      "blocks": {
+        "service-1": { "type": "service", "settings": { "title": "Manicure", "subtitle": "from $35", "icon": "manicure" } },
+        "service-2": { "type": "service", "settings": { "title": "Pedicure", "subtitle": "from $45", "icon": "pedicure" } },
+        "service-3": { "type": "service", "settings": { "title": "Gel & Extensions", "subtitle": "from $65", "icon": "gel" } },
+        "service-4": { "type": "service", "settings": { "title": "Nail Art", "subtitle": "from $10", "icon": "nail-art" } }
+      },
+      "block_order": ["service-1", "service-2", "service-3", "service-4"],
+      "settings": {}
+    },
+    "featured": {
+      "type": "featured-collection",
+      "settings": {}
+    },
+    "story": {
+      "type": "rich-text",
+      "settings": {}
+    },
+    "booking": {
+      "type": "booking-callout",
+      "settings": {}
+    },
+    "reviews": {
+      "type": "testimonials",
+      "blocks": {
+        "t1": { "type": "testimonial", "settings": {} },
+        "t2": {
+          "type": "testimonial",
+          "settings": {
+            "quote": "Booking online took thirty seconds and they text you a reminder. Love it.",
+            "author": "Priya S."
+          }
+        },
+        "t3": {
+          "type": "testimonial",
+          "settings": {
+            "quote": "Clean, calm, and my nail tech actually listens to what I want.",
+            "author": "Devon M."
+          }
+        }
+      },
+      "block_order": ["t1", "t2", "t3"],
+      "settings": {}
+    }
+  },
+  "order": ["hero", "services", "featured", "story", "booking", "reviews"]
+}

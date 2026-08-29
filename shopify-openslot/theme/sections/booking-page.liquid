@@ -1,0 +1,52 @@
+{%- comment -%}
+  Use this section on your booking page (Templates → assign "page.booking"
+  to a page, e.g. one called "Book"). Add the GetBooqin app's "GetBooqin Booking"
+  block here via Add block — it renders the full booking wizard right in
+  this spot.
+{%- endcomment -%}
+<section class="booking-page">
+  <div class="booking-page__intro">
+    {% if section.settings.heading != blank %}
+      <h1 class="booking-page__heading">{{ section.settings.heading }}</h1>
+    {% endif %}
+    {% if section.settings.text != blank %}
+      <p class="booking-page__text">{{ section.settings.text }}</p>
+    {% endif %}
+  </div>
+
+  {% if section.settings.reassurance_1 != blank or section.settings.reassurance_2 != blank or section.settings.reassurance_3 != blank %}
+    <ul class="booking-page__reassurance">
+      {% if section.settings.reassurance_1 != blank %}<li>{{ section.settings.reassurance_1 }}</li>{% endif %}
+      {% if section.settings.reassurance_2 != blank %}<li>{{ section.settings.reassurance_2 }}</li>{% endif %}
+      {% if section.settings.reassurance_3 != blank %}<li>{{ section.settings.reassurance_3 }}</li>{% endif %}
+    </ul>
+  {% endif %}
+
+  <div class="booking-page__widget">
+    {% content_for 'blocks' %}
+  </div>
+
+  <p class="booking-page__manage-note">
+    Already booked? Use the "Manage booking" link in your confirmation email to view, reschedule, or cancel — no account needed.
+  </p>
+</section>
+
+{% schema %}
+{
+  "name": "Booking page",
+  "settings": [
+    { "type": "text", "id": "heading", "label": "Heading", "default": "Book your appointment" },
+    { "type": "textarea", "id": "text", "label": "Text", "default": "Pick a service, your technician, and a time — you'll get an instant confirmation by email." },
+    {
+      "type": "header",
+      "content": "Reassurance badges"
+    },
+    { "type": "text", "id": "reassurance_1", "label": "First", "default": "Instant confirmation" },
+    { "type": "text", "id": "reassurance_2", "label": "Second", "default": "Free cancellation up to 24h before" },
+    { "type": "text", "id": "reassurance_3", "label": "Third", "default": "Secure checkout" }
+  ],
+  "blocks": [
+    { "type": "@app" }
+  ]
+}
+{% endschema %}

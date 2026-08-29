@@ -1,0 +1,40 @@
+{%- comment -%}
+  Accepts: product (object)
+{%- endcomment -%}
+<a href="{{ product.url }}" class="product-card">
+  <div class="product-card__media">
+    {% if product.featured_image %}
+      <img
+        src="{{ product.featured_image | image_url: width: 700 }}"
+        alt="{{ product.featured_image.alt | default: product.title | escape }}"
+        width="{{ product.featured_image.width }}"
+        height="{{ product.featured_image.height }}"
+        loading="lazy"
+      >
+      {% if product.images[1] %}
+        <img
+          class="product-card__media-hover"
+          src="{{ product.images[1] | image_url: width: 700 }}"
+          alt=""
+          width="{{ product.images[1].width }}"
+          height="{{ product.images[1].height }}"
+          loading="lazy"
+        >
+      {% endif %}
+    {% else %}
+      <div class="product-card__placeholder">{% render 'illustration-bottle', class: 'product-card__icon' %}</div>
+    {% endif %}
+    {% if product.available == false %}
+      <span class="product-card__badge">Sold out</span>
+    {% elsif product.compare_at_price > product.price %}
+      <span class="product-card__badge product-card__badge--sale">Sale</span>
+    {% endif %}
+  </div>
+  <div class="product-card__info">
+    {% if product.vendor != blank %}
+      <p class="product-card__vendor">{{ product.vendor }}</p>
+    {% endif %}
+    <h3 class="product-card__title">{{ product.title }}</h3>
+    {% render 'price', product: product %}
+  </div>
+</a>

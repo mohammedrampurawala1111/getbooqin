@@ -1,0 +1,12 @@
+node_modules
+/build
+/.react-router
+/.cache
+.env
+.DS_Store
+*.sqlite
+*.sqlite-journal
+.shopify
+smtp-key
+*.key
+commands

@@ -1,0 +1,27 @@
+{%- comment -%}
+  App embed — toggle this on once under Theme Editor → App embeds and it
+  shows a "Book now" button site-wide with zero per-page setup, the same
+  pattern other booking apps (e.g. Apntly) use for this. Trade-off vs.
+  "GetBooqin Button" (the app block): you don't control exactly where it sits
+  on the page, it always floats — in exchange, there's nothing to add to
+  the theme per template.
+
+  Unlike an app block, an app embed only gets Liquid's *global* scope — no
+  `product` object is available here, per Shopify's own theme-app-extension
+  docs — so this can't check page type or read product.handle in Liquid at
+  all. booking.js already handles that: it parses the handle out of the
+  current URL (/products/<handle>) instead, the exact fallback path it has
+  for this case. Renders nothing except on an actual product page whose
+  product is linked to a service.
+{%- endcomment -%}
+{{ 'getbooqin.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'booking.js' | asset_url }}" defer></script>
+
+<div class="getbooqin-product-embed getbooqin-product-embed--floating" {{ block.shopify_attributes }}></div>
+
+{% schema %}
+{
+  "name": "GetBooqin",
+  "target": "body"
+}
+{% endschema %}

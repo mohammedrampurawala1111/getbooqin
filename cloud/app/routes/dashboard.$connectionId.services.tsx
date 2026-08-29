@@ -1,0 +1,80 @@
+import { Form } from "react-router";
+import type { Route } from "./+types/dashboard.$connectionId.services";
+import { Data, ShopifyAdmin, decryptCredentials } from "getbooqin-core";
+import { requireTenant } from "~/tenant.server";
+import { PageHeader, DataTable, EmptyState, Badge } from "~/components/ui";
+
+export async function loader({ request, params }: Route.LoaderArgs) {
+  const { shop, platform, connection } = await requireTenant(request, params.connectionId);
+  const services = await Data.catalogServices(shop, platform, false);
+  return { services, platform, connectionId: connection.id };
+}
+
+export async function action({ request, params }: Route.ActionArgs) {
+  const { shop, platform, connection } = await requireTenant(request, params.connectionId);
+
+  if (platform !== "shopify") {
+    return { error: "Product sync is only available for Shopify stores." };
+  }
+
+  try {
+    const accessToken = decryptCredentials(connection.credentials);
+    const result = await ShopifyAdmin.syncProductsFromShopify(shop, platform, accessToken);
+    return { synced: result };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Sync failed." };
+  }
+}
+
+export default function ServicesList({ loaderData, actionData, params }: Route.ComponentProps) {
+  const { services, platform } = loaderData;
+  const base = `/dashboard/${params.connectionId}`;
+
+  return (
+    <div className="flex flex-col gap-[18px]">
+      <PageHeader
+        title="Services"
+        subtitle="Name, price, and description come from the connected store's product catalog. Click a service to configure booking settings only."
+        actions={
+          platform === "shopify" ? (
+            <Form method="post">
+              <button type="submit" className="btn-sec">
+                Sync products from Shopify
+              </button>
+            </Form>
+          ) : undefined
+        }
+      />
+
+      {actionData?.error && <div className="alert-error">{actionData.error}</div>}
+      {actionData?.synced && (
+        <div className="alert-success">
+          Synced {actionData.synced.productsSynced} product{actionData.synced.productsSynced === 1 ? "" : "s"}, created{" "}
+          {actionData.synced.servicesCreated} new booking config{actionData.synced.servicesCreated === 1 ? "" : "s"}.
+        </div>
+      )}
+
+      <DataTable
+        cols="1.6fr .7fr .8fr .9fr .7fr 24px"
+        columns={["Name", "Colour", "Price", "Duration", "Status", ""]}
+        rows={services}
+        rowKey={(s) => String(s.id)}
+        href={(s) => `${base}/services/${s.id}`}
+        renderRow={(s) => [
+          s.name || `Service #${s.id}`,
+          <span className="inline-block h-[10px] w-6 rounded-[3px]" style={{ backgroundColor: s.color }} />,
+          <span className="num">{s.price > 0 ? s.price.toFixed(2) : "—"}</span>,
+          <span className="num">{s.durationMin} min</span>,
+          <Badge status={s.status ? "confirmed" : "cancelled"} label={s.status ? "Active" : "Inactive"} />,
+          <span className="text-faint">›</span>,
+        ]}
+        empty={
+          <EmptyState
+            title="No services yet"
+            body={'Sync products, then a product typed "Service" becomes bookable automatically.'}
+          />
+        }
+      />
+    </div>
+  );
+}

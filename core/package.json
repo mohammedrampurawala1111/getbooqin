@@ -1,0 +1,51 @@
+{
+  "name": "getbooqin-core",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "GetBooqin Cloud's standalone backend — system of record for the booking workflow, shared across all platform connectors (Shopify today, others later).",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./booking/bookingsShared": {
+      "types": "./dist/booking/bookingsShared.d.ts",
+      "default": "./dist/booking/bookingsShared.js"
+    },
+    "./booking/settingsShared": {
+      "types": "./dist/booking/settingsShared.d.ts",
+      "default": "./dist/booking/settingsShared.js"
+    },
+    "./booking/serviceMetafields": {
+      "types": "./dist/booking/serviceMetafields.d.ts",
+      "default": "./dist/booking/serviceMetafields.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "prisma": "prisma",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.1.0",
+    "luxon": "^3.5.0",
+    "nodemailer": "^9.0.5"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.4.2",
+    "@types/node": "^22.2.5",
+    "@types/nodemailer": "^8.0.1",
+    "prisma": "^6.1.0",
+    "typescript": "^5.2.2"
+  },
+  "engines": {
+    "node": "^18.20 || ^20.10 || >=21.0.0"
+  },
+  "author": "GetBooqin"
+}

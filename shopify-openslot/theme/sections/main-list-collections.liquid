@@ -1,0 +1,36 @@
+<section class="collection-page">
+  <div class="collection-page__header">
+    <h1 class="collection-page__title">{{ section.settings.heading | default: 'Shop by category' }}</h1>
+  </div>
+  <div class="service-grid__items">
+    {% for collection in collections %}
+      {% unless collection.handle == 'frontpage' %}
+        <a href="{{ collection.url }}" class="service-card">
+          <div class="service-card__media">
+            {% if collection.featured_image %}
+              <img
+                src="{{ collection.featured_image | image_url: width: 800 }}"
+                alt=""
+                width="{{ collection.featured_image.width }}"
+                height="{{ collection.featured_image.height }}"
+                loading="lazy"
+              >
+            {% else %}
+              <div class="service-card__placeholder"></div>
+            {% endif %}
+          </div>
+          <h3 class="service-card__title">{{ collection.title }}</h3>
+        </a>
+      {% endunless %}
+    {% endfor %}
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "All collections",
+  "settings": [
+    { "type": "text", "id": "heading", "label": "Heading", "default": "Shop by category" }
+  ]
+}
+{% endschema %}

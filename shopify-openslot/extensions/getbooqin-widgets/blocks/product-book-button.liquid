@@ -1,0 +1,26 @@
+{%- comment -%}
+  App block — the merchant drags this into the product template's block
+  list via the theme editor (e.g. right below "Buy it now"), the same way
+  they'd position any native block. Unlike an app *embed* block (which only
+  gets Liquid's global scope), an app block gets access to its parent
+  section's Liquid object, so `product` is available here — no URL-parsing
+  workaround needed. booking.js still resolves the product → service link
+  itself by calling /apps/getbooqin/product-service; the merchant only picks
+  the product in the app admin, never types an ID.
+{%- endcomment -%}
+{{ 'getbooqin.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'booking.js' | asset_url }}" defer></script>
+
+<div
+  class="getbooqin-product-embed"
+  data-product-handle="{{ product.handle }}"
+  {{ block.shopify_attributes }}
+></div>
+
+{% schema %}
+{
+  "name": "GetBooqin Button",
+  "target": "section",
+  "settings": []
+}
+{% endschema %}

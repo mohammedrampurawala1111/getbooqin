@@ -1,0 +1,36 @@
+<section class="rich-text">
+  <div class="rich-text__inner rich-text__inner--{{ section.settings.alignment }}">
+    {% if section.settings.eyebrow != blank %}
+      <p class="section-eyebrow">{{ section.settings.eyebrow }}</p>
+    {% endif %}
+    {% if section.settings.heading != blank %}
+      <h2 class="section-heading">{{ section.settings.heading }}</h2>
+    {% endif %}
+    {% if section.settings.text != blank %}
+      <div class="rich-text__body">{{ section.settings.text }}</div>
+    {% endif %}
+    {% if section.settings.button_text != blank %}
+      <a href="{{ section.settings.button_link | default: '#' }}" class="button button--outline">{{ section.settings.button_text }}</a>
+    {% endif %}
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Rich text",
+  "settings": [
+    { "type": "select", "id": "alignment", "label": "Alignment", "default": "center", "options": [
+      { "value": "left", "label": "Left" },
+      { "value": "center", "label": "Center" }
+    ]},
+    { "type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "Our studio" },
+    { "type": "text", "id": "heading", "label": "Heading", "default": "A quieter kind of manicure" },
+    { "type": "richtext", "id": "text", "label": "Text", "default": "<p>We keep our books small and our chairs comfortable. Every appointment includes a hand massage, your choice of tea, and as much (or as little) conversation as you like.</p>" },
+    { "type": "text", "id": "button_text", "label": "Button text" },
+    { "type": "url", "id": "button_link", "label": "Button link" }
+  ],
+  "presets": [
+    { "name": "Rich text" }
+  ]
+}
+{% endschema %}

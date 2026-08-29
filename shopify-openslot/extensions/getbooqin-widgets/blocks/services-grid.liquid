@@ -1,0 +1,25 @@
+{{ 'getbooqin.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'services-grid.js' | asset_url }}" defer></script>
+
+<div
+  class="getbooqin-grid"
+  style="--getbooqin-cols:{{ block.settings.columns }}"
+  data-getbooqin-services
+  data-category="{{ block.settings.category | escape }}"
+  data-show-price="{{ block.settings.show_price }}"
+  data-book-url="{{ block.settings.book_url | escape }}"
+  {{ block.shopify_attributes }}
+></div>
+
+{% schema %}
+{
+  "name": "GetBooqin Services",
+  "target": "section",
+  "settings": [
+    { "type": "range", "id": "columns", "label": "Columns", "min": 1, "max": 4, "default": 3 },
+    { "type": "checkbox", "id": "show_price", "label": "Show price", "default": true },
+    { "type": "text", "id": "category", "label": "Filter by category (optional)" },
+    { "type": "url", "id": "book_url", "label": "Booking page (optional) — links each card to it with ?service=ID" }
+  ]
+}
+{% endschema %}

@@ -1,0 +1,37 @@
+{%- comment -%}
+  A homepage banner pointing at your booking page. Pairs with the GetBooqin app:
+  create a page (e.g. "Book"), add the "GetBooqin Booking" app block to it in
+  the theme editor, then link this button to that page.
+{%- endcomment -%}
+<section class="booking-callout">
+  <div class="booking-callout__inner">
+    {% if section.settings.eyebrow != blank %}
+      <p class="section-eyebrow section-eyebrow--on-accent">{{ section.settings.eyebrow }}</p>
+    {% endif %}
+    {% if section.settings.heading != blank %}
+      <h2 class="booking-callout__heading">{{ section.settings.heading }}</h2>
+    {% endif %}
+    {% if section.settings.text != blank %}
+      <p class="booking-callout__text">{{ section.settings.text }}</p>
+    {% endif %}
+    {% if section.settings.button_text != blank %}
+      <a href="{{ section.settings.button_link | default: '#' }}" class="button button--light button--lg">{{ section.settings.button_text }}</a>
+    {% endif %}
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Booking callout",
+  "settings": [
+    { "type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "Appointments" },
+    { "type": "text", "id": "heading", "label": "Heading", "default": "Ready for your next set?" },
+    { "type": "textarea", "id": "text", "label": "Text", "default": "Pick a service, a technician, and a time that works for you — confirmed instantly." },
+    { "type": "text", "id": "button_text", "label": "Button text", "default": "Book your appointment" },
+    { "type": "url", "id": "button_link", "label": "Button link", "info": "Point this at the page where you've added the GetBooqin Booking app block." }
+  ],
+  "presets": [
+    { "name": "Booking callout" }
+  ]
+}
+{% endschema %}

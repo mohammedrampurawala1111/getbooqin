@@ -1,0 +1,66 @@
+# Dev config — used by `npm run dev`. application_url gets overwritten with
+# a fresh tunnel URL every time that runs (automatically_update_urls_on_dev
+# below), so it's never stable. For real deploys / the App Store submission,
+# use shopify.app.production.toml instead:
+#   shopify app config use production && npm run deploy
+#
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+client_id = "80f15f805851ecca97d8b6342a6d9d87"
+name = "GetBooqin"
+handle = "getbooqin"
+#application_url = "https://getbooqin.fly.dev"
+application_url = "https://copy-divisions-teaching-increased.trycloudflare.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+
+[webhooks]
+api_version = "2025-01"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
+  [[webhooks.subscriptions]]
+  # Auto-creates a bookable service for any product typed "Service" — see
+  # webhooks.products.tsx.
+  topics = [ "products/create", "products/update" ]
+  uri = "/webhooks/products"
+
+  [webhooks.privacy_compliance]
+  customer_deletion_url = "https://getbooqin.fly.dev/webhooks/customers/redact"
+  customer_data_request_url = "https://getbooqin.fly.dev/webhooks/customers/data_request"
+  shop_deletion_url = "https://getbooqin.fly.dev/webhooks/shop/redact"
+
+[access_scopes]
+# Prompt 3 catalog refactor: write_products was added alongside read_products
+# so GetBooqin can write ServiceConfig booking settings to the product's
+# `getbooqin` metafields (metafieldsSet, in app.services_.$id.tsx and the
+# getbooqin-service-config Admin UI Extension) — GetBooqin still keeps its
+# own database as the source of truth for everything except catalogue/config
+# data, which now round-trips through the product itself. This scope change
+# means already-installed merchants see a re-consent screen on next login.
+# Add "read_customers,write_customers" here if you later want to sync
+# booking customers into the Shopify customer list.
+scopes = "read_products,write_products"
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [
+  "https://getbooqin.fly.dev/auth/callback",
+  "https://getbooqin.fly.dev/auth/shopify/callback",
+  "https://getbooqin.fly.dev/api/auth/callback"
+]
+
+[app_proxy]
+url = "https://getbooqin.fly.dev/apps/getbooqin"
+subpath = "getbooqin"
+prefix = "apps"
+
+[pos]
+embedded = false

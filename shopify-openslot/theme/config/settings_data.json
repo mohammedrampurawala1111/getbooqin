@@ -1,0 +1,73 @@
+{
+  "current": {
+    "color_background": "#FBF4EF",
+    "color_background_secondary": "#F3E4DE",
+    "color_text": "#2E2622",
+    "color_text_muted": "#7A6E67",
+    "color_accent": "#C6788B",
+    "color_accent_text": "#FFFFFF",
+    "color_border": "#E6D9D1",
+    "font_heading": "playfair_display_n7",
+    "font_body": "poppins_n4",
+    "page_width": 1300,
+    "corner_radius": 14,
+    "social_instagram": "",
+    "social_tiktok": "",
+    "social_facebook": "",
+    "sections": {
+      "header": {
+        "type": "header",
+        "settings": {
+          "menu": "main-menu",
+          "book_button_text": "Book now",
+          "book_button_link": "",
+          "show_announcement": true,
+          "announcement_text": "Now booking for the holiday season — reserve your spot",
+          "announcement_link": ""
+        }
+      },
+      "footer": {
+        "type": "footer",
+        "blocks": {
+          "footer-0": {
+            "type": "menu",
+            "settings": {
+              "heading": "Studio",
+              "menu": "footer"
+            }
+          },
+          "footer-1": {
+            "type": "text",
+            "settings": {
+              "heading": "Visit us",
+              "text": "<p>123 Studio Lane<br>Open Tue–Sat, 10am–7pm</p>"
+            }
+          }
+        },
+        "block_order": [
+          "footer-0",
+          "footer-1"
+        ],
+        "settings": {
+          "tagline": "Nails, done beautifully.",
+          "booking_page_link": "",
+          "newsletter_heading": "Stay polished",
+          "newsletter_text": "New shades, seasonal offers and appointment openings — straight to your inbox."
+        }
+      }
+    },
+    "content_for_index": [],
+    "blocks": {
+      "1850493961649900144": {
+        "type": "shopify://apps/apntly-appointment-booking-app/blocks/main-app-embed/17a520a2-4844-483a-826a-11cb5dd0370d",
+        "disabled": true,
+        "settings": {}
+      },
+      "15997128343326101727": {
+        "type": "shopify://apps/getbooqin/blocks/product-floating-button/01a01b3e-1772-76da-bb29-f4fe08409b1d",
+        "disabled": false,
+        "settings": {}
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+api_version = "2025-07"
+
+[[extensions]]
+name = "t:name"
+handle = "getbooqin-service-config"
+type = "ui_extension"
+uid = "873892f2-745c-416d-8683-7515775a2c21"
+
+# Renders the booking-config form (duration, buffers, capacity, location,
+# payment/deposit, resource/add-on pickers) on the product details page,
+# backed by the same `getbooqin` product metafields GetBooqin's own
+# dashboard writes through (app.services_.$id.tsx) — see
+# app/lib/serviceMetafields.server.ts and docs/plan for the shared schema.
+[[extensions.targeting]]
+module = "./src/BlockExtension.tsx"
+target = "admin.product-details.block.render"

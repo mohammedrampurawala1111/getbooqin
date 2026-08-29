@@ -1,0 +1,34 @@
+# Dependencies
+**/node_modules
+
+# Env / secrets
+**/.env
+**/.env.*
+!**/.env.example
+**/smtp-key
+**/*.key
+
+# Build output
+**/dist
+**/build
+**/.react-router
+**/.shopify
+**/.cache
+
+# Logs
+**/*.log
+
+# Databases (local dev)
+core/prisma/*.sqlite
+core/prisma/*.sqlite-journal
+shopify-openslot/prisma/*.sqlite
+shopify-openslot/prisma/*.sqlite-journal
+
+# OS junk
+**/.DS_Store
+
+# Unrelated scratch content living in this workspace directory — not part
+# of the getbooqin-workspace npm workspaces, doesn't belong in the repo.
+desgin/
+my-tanstack-app/
+Repo connection needed.zip

@@ -1,0 +1,72 @@
+{
+  "name": "shopify-getbooqin",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "react-router build",
+    "dev": "shopify app dev",
+    "config:link": "shopify app config link",
+    "generate": "shopify app generate",
+    "deploy": "shopify app deploy",
+    "config:use": "shopify app config use",
+    "env": "shopify app env",
+    "start": "react-router-serve ./build/server/index.js",
+    "docker-start": "npm run setup && npm run start",
+    "setup": "prisma generate --schema ../core/prisma/schema.prisma && prisma migrate deploy --schema ../core/prisma/schema.prisma",
+    "lint": "eslint .",
+    "shopify": "shopify",
+    "prisma": "prisma",
+    "vite": "vite",
+    "typecheck": "tsc --noEmit",
+    "backfill:service-config": "tsx scripts/backfill-service-config.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.1.0",
+    "@shopify/app-bridge-react": "^4.1.6",
+    "@shopify/polaris": "^13.9.0",
+    "@shopify/shopify-app-react-router": "^2.0.0",
+    "@shopify/shopify-app-session-storage-prisma": "^10.0.0",
+    "getbooqin-core": "*",
+    "isbot": "^5.1.0",
+    "luxon": "^3.5.0",
+    "nodemailer": "^6.9.16",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router": "^7.1.1",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@react-router/dev": "^7.1.1",
+    "@react-router/fs-routes": "^7.1.1",
+    "@react-router/node": "^7.1.1",
+    "@react-router/serve": "^7.1.1",
+    "@shopify/api-codegen-preset": "^1.1.1",
+    "@types/eslint": "^9.6.1",
+    "@types/luxon": "^3.4.2",
+    "@types/node": "^22.2.5",
+    "@types/nodemailer": "^6.4.16",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "eslint": "^8.42.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.2.4",
+    "prisma": "^6.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.2.2",
+    "vite": "^6.0.0",
+    "vite-tsconfig-paths": "^5.0.1"
+  },
+  "engines": {
+    "node": "^18.20 || ^20.10 || >=21.0.0"
+  },
+  "trustedDependencies": [
+    "@shopify/plugin-cloudflare"
+  ],
+  "resolutions": {
+    "undici": "6.19.7"
+  },
+  "overrides": {
+    "undici": "6.19.7"
+  },
+  "author": "GetBooqin"
+}

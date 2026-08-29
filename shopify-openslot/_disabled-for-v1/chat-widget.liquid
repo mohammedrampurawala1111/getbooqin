@@ -1,0 +1,18 @@
+{%- comment -%}
+  App embed block — toggled on/off site-wide under Theme Editor → App embeds,
+  the Shopify equivalent of the WordPress version's wp_footer chat mount. All
+  copy (title, colour, greeting…) comes from Settings → Chat widget in the
+  app admin, fetched by chat.js at runtime, not from block settings here —
+  that keeps one source of truth instead of two places to edit the same text.
+{%- endcomment -%}
+{{ 'getbooqin.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'chat.js' | asset_url }}" defer></script>
+
+<div id="getbooqin-chat" class="getbooqin-chat" {{ block.shopify_attributes }}></div>
+
+{% schema %}
+{
+  "name": "GetBooqin Chat Widget",
+  "target": "body"
+}
+{% endschema %}

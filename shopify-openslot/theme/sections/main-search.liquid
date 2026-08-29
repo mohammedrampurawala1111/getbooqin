@@ -1,0 +1,35 @@
+<section class="search-page">
+  <h1 class="search-page__title">
+    {% if search.performed %}
+      {{ search.results_count }} result{% if search.results_count != 1 %}s{% endif %} for "{{ search.terms }}"
+    {% else %}
+      Search
+    {% endif %}
+  </h1>
+
+  <form action="{{ routes.search_url }}" method="get" role="search" class="search-page__form">
+    <input type="search" name="q" value="{{ search.terms | escape }}" placeholder="Search products" aria-label="Search">
+    <input type="hidden" name="type" value="product">
+    <button type="submit" class="button button--accent">{% render 'icon-search' %}</button>
+  </form>
+
+  {% if search.performed %}
+    {% if search.results.size > 0 %}
+      <div class="product-grid">
+        {% for item in search.results %}
+          {% if item.object_type == 'product' %}
+            {% render 'product-card', product: item %}
+          {% endif %}
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="search-page__empty">No results — try a different search.</p>
+    {% endif %}
+  {% endif %}
+</section>
+
+{% schema %}
+{
+  "name": "Search results"
+}
+{% endschema %}

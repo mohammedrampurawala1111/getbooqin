@@ -1,0 +1,197 @@
+/* GetBooqin cloud dashboard — Tailwind v4 entry.
+   Import once from app/root.tsx:  import "./app.css";
+   vite.config.ts:  plugins: [tailwindcss(), reactRouter(), tsconfigPaths()]
+   (npm i -D tailwindcss @tailwindcss/vite) */
+
+@import "tailwindcss";
+
+@theme {
+  /* ---- brand (from the app icon: orchid on violet-black) ---- */
+  --color-brand-50:  #f6ecfa;   /* soft fills: active nav, selected cards */
+  --color-brand-200: #e0bced;   /* chart bars (non-highlighted) */
+  --color-brand-500: #b05fc9;   /* the logo orchid: mark, accents, bars, toggles */
+  --color-brand-600: #8f3aa9;   /* filled buttons w/ white text (AA-safe, 5:1) */
+  --color-brand-700: #7c3193;   /* button hover / active */
+  --color-brand-950: #131118;   /* logo plate, dark sidebar, auth panel */
+
+  /* ---- neutrals (very slightly violet-tinted) ---- */
+  --color-canvas:      #f7f6fa; /* page background */
+  --color-canvas-alt:  #fbfafc; /* table header + card footer bars */
+  --color-surface:     #ffffff;
+  --color-line:        #e8e5ee; /* card + section borders */
+  --color-line-strong: #ded9e6; /* input borders */
+  --color-row:         #f2f0f5; /* row divider / hover fill */
+  --color-ink:         #14161a;
+  --color-ink-2:       #3d4350; /* labels */
+  --color-ink-3:       #545b68;
+  --color-muted:       #6a7180; /* secondary copy */
+  --color-subtle:      #98a0ae; /* hints, timestamps */
+  --color-faint:       #c4cad4; /* chevrons, disabled text */
+
+  /* ---- status ---- */
+  --color-ok:       #0f7a4f;  --color-ok-bg:      #e6f5ee;
+  --color-warn:     #92600b;  --color-warn-bg:    #fdf3e0;
+  --color-danger:   #b42318;  --color-danger-bg:  #fdecea;
+  --color-danger-line: #f4cfcb;
+  --color-neutral:  #545b68;  --color-neutral-bg: #f0f1f4;
+  /* chart-only tints */
+  --color-chart-ok: #2f9e6e;  --color-chart-warn: #e0a325;  --color-chart-off: #c9cdd8;
+
+  /* ---- type ---- */
+  --font-sans: "Instrument Sans", "Helvetica Neue", Helvetica, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --text-meta:  0.781rem;  /* 12.5px — hints, table meta */
+  --text-body:  0.844rem;  /* 13.5px — default body/cell */
+  --text-card:  0.906rem;  /* 14.5px — card titles */
+  --text-page:  1.375rem;  /* 22px  — page h1 */
+  --text-stat:  1.688rem;  /* 27px  — stat card number (mono) */
+
+  /* ---- radius / shadow ---- */
+  --radius-field: 8px;
+  --radius-card:  12px;
+  --radius-modal: 14px;
+  --shadow-card:   0 1px 2px rgb(16 24 40 / 0.04);
+  --shadow-raised: 0 1px 2px rgb(16 24 40 / 0.10);
+  --shadow-pop:    0 4px 14px rgb(16 24 40 / 0.07);
+  --shadow-modal:  0 20px 50px rgb(16 24 40 / 0.24);
+}
+
+@layer base {
+  html { background: var(--color-canvas); }
+  body { @apply bg-canvas text-ink font-sans text-body antialiased; }
+  a    { @apply text-brand-600 no-underline hover:underline; }
+  ::placeholder { color: var(--color-subtle); }
+  :where(input, select, textarea):focus-visible {
+    outline: 2px solid color-mix(in oklch, var(--color-brand-500) 45%, transparent);
+    outline-offset: 1px;
+  }
+  /* tabular numbers everywhere we show counts/money */
+  .num { @apply font-mono tabular-nums; }
+}
+
+/* ------------------------------------------------------------------
+   Base classes that other component classes @apply below. Tailwind v4
+   only lets @apply reference utilities registered via @utility, not
+   plain @layer components classes — so these two live here instead.
+------------------------------------------------------------------ */
+@utility btn {
+  @apply inline-flex cursor-pointer items-center gap-[7px] rounded-field px-[14px] py-2 text-[13px] font-medium transition-colors;
+}
+@utility badge {
+  @apply inline-flex items-center gap-[5px] rounded-full px-2 py-[3px] text-[11.5px] font-medium;
+}
+
+/* ------------------------------------------------------------------
+   Primitive class recipes. Use these OR the React components in
+   handoff/components — they emit exactly these class strings.
+------------------------------------------------------------------ */
+@layer components {
+  /* layout */
+  .page       { @apply mx-auto flex w-full max-w-[1240px] flex-col gap-[18px] px-[30px] pt-[26px] pb-12; }
+  .page-title { @apply m-0 text-page font-semibold tracking-[-0.02em]; }
+  .page-sub   { @apply m-0 text-body text-muted; }
+
+  /* cards */
+  .card        { @apply overflow-hidden rounded-card border border-line bg-surface shadow-card; }
+  .card-header { @apply flex items-center justify-between gap-4 border-b border-line px-[18px] py-[14px]; }
+  .card-title  { @apply m-0 text-card font-semibold tracking-[-0.01em]; }
+  .card-body   { @apply p-[18px]; }
+  .card-footer { @apply flex items-center justify-between gap-4 border-t border-line bg-canvas-alt px-[18px] py-[13px]; }
+
+  /* buttons — 13px/600, 8px radius, 8px/14px padding */
+  .btn-pri  { @apply btn bg-brand-600 font-semibold text-white shadow-raised hover:bg-brand-700; }
+  .btn-sec  { @apply btn border border-line-strong bg-surface hover:bg-canvas; }
+  .btn-del  { @apply btn border border-danger-line bg-surface text-danger hover:bg-danger-bg; }
+  .btn-ghost{ @apply btn text-muted hover:bg-row hover:text-ink; }
+  .btn-link { @apply cursor-pointer text-meta font-medium text-brand-600 hover:underline; }
+
+  /* form field */
+  .field       { @apply flex flex-col gap-[6px]; }
+  .field-label { @apply text-meta font-medium text-ink-2; }
+  .input       { @apply w-full rounded-field border border-line-strong bg-surface px-[11px] py-[9px] text-body font-normal; }
+  .input-error { @apply border-[#e0827a] bg-[#fffbfb]; }
+  .field-hint  { @apply text-[11.5px] font-normal text-subtle; }
+  .field-error { @apply flex items-center gap-[5px] text-[11.5px] font-medium text-danger; }
+
+  /* table */
+  .thead { @apply grid gap-3 border-b border-line bg-canvas-alt px-4 py-[9px] text-[11.5px] font-semibold uppercase tracking-[0.03em] text-muted; }
+  .th    { @apply flex cursor-pointer items-center gap-1 select-none; }
+  .trow  { @apply grid items-center gap-3 border-b border-row px-4 py-[13px] text-[13px] hover:bg-canvas-alt; }
+  .trow-compact { @apply py-[9px]; }
+  .tfoot { @apply flex items-center justify-between bg-canvas-alt px-4 py-[11px] text-meta text-muted; }
+
+  /* badges — status colours are semantic, don't recolour them per brand */
+  .badge-ok       { @apply badge bg-ok-bg text-ok; }
+  .badge-pending  { @apply badge bg-warn-bg text-warn; }
+  .badge-neutral  { @apply badge bg-neutral-bg text-neutral; }
+  .badge-danger   { @apply badge bg-danger-bg text-danger; }
+  .badge-dot      { @apply h-[5px] w-[5px] rounded-full bg-current; }
+
+  /* sidebar */
+  .nav-item        { @apply flex cursor-pointer items-center gap-[10px] rounded-field px-[10px] py-2 text-body font-medium text-ink-2 hover:bg-row; }
+  .nav-item-active { @apply bg-brand-50 text-brand-600 hover:bg-brand-50; }
+  /* dark sidebar variant: wrap sidebar in .side-dark */
+  .side-dark { @apply bg-brand-950 text-[#ece9f0]; }
+  .side-dark .nav-item { @apply text-[#a49caf] hover:bg-white/5; }
+  .side-dark .nav-item-active {
+    color: color-mix(in oklch, var(--color-brand-500), white 50%);
+    background: color-mix(in oklch, var(--color-brand-500) 22%, transparent);
+  }
+
+  /* tabs */
+  .tab        { @apply cursor-pointer border-b-2 border-transparent px-[13px] py-[9px] text-body font-medium text-muted hover:text-ink; }
+  .tab-active { @apply border-brand-600 text-brand-600; }
+
+  /* misc */
+  .alert-error   { @apply flex items-center gap-3 rounded-[10px] border border-danger-line bg-danger-bg px-[15px] py-[13px] text-[13px] text-[#7a1c14]; }
+  .alert-success { @apply flex items-center gap-[7px] text-meta font-medium text-ok; }
+  .kv       { @apply grid grid-cols-[152px_1fr] gap-4 border-b border-row py-[11px] text-body; }
+  .kv-key   { @apply text-muted; }
+  .kv-val   { @apply font-medium; }
+  .readonly-panel { @apply flex flex-col gap-[14px] rounded-card border border-[#e2e4ea] bg-canvas-alt px-[18px] py-4; }
+  .readonly-tag   { @apply text-[11px] font-semibold uppercase tracking-[0.04em] text-muted; }
+
+  /* ---- marketing home (routes/_index.tsx) ---- */
+  .mkt-shell   { @apply bg-surface; }
+  .mkt-bar     { @apply sticky top-0 z-10 border-b border-line bg-white/[0.88] backdrop-blur-[10px]; }
+  .mkt-wrap    { @apply mx-auto w-full max-w-[1120px] px-7; }
+  .mkt-link    { @apply text-[13.5px] text-ink-3 no-underline hover:text-ink hover:no-underline; }
+  .mkt-section { @apply scroll-mt-[68px]; }   /* clears the sticky bar on #anchor jumps */
+  .mkt-alt     { @apply border-y border-line bg-canvas-alt; }
+  .mkt-h1      { @apply m-0 text-[50px] font-semibold leading-[1.06] tracking-[-0.035em] text-balance; }
+  .mkt-h2      { @apply m-0 text-[24px] font-semibold tracking-[-0.02em]; }
+  .mkt-lede    { @apply m-0 max-w-[480px] text-[16.5px] leading-relaxed text-ink-3 text-pretty; }
+  .mkt-eyebrow { @apply inline-flex items-center gap-[7px] self-start rounded-full bg-brand-50 px-[11px] py-[5px] text-[12px] font-medium text-brand-600; }
+  .mkt-cta     { @apply cursor-pointer rounded-[9px] px-[18px] py-[11px] text-[14px] font-semibold text-white shadow-raised bg-brand-600 hover:bg-brand-700; }
+  .mkt-cta-alt { @apply cursor-pointer rounded-[9px] border border-line-strong px-[18px] py-[11px] text-[14px] font-medium hover:bg-canvas; }
+  .mkt-band    { @apply flex flex-wrap items-center justify-between gap-7 rounded-[16px] bg-brand-950 p-11 text-white; }
+  .plan-card   { @apply flex flex-col gap-4 rounded-modal border border-line bg-surface p-[22px] shadow-card; }
+  .plan-card-featured { @apply border-brand-200 shadow-pop; }
+
+  /* ---- onboarding (routes/onboarding.tsx) ---- */
+  .ob-shell    { @apply flex min-h-screen flex-col bg-canvas; }
+  .ob-progress { @apply h-[2px] bg-line; }
+  .ob-progress > span { @apply block h-[2px] bg-brand-500 transition-[width] duration-300; }
+  .ob-grid     { @apply mx-auto grid w-full max-w-[940px] grid-cols-[196px_1fr] items-start gap-[34px] px-7 pt-[34px] pb-14; }
+  .ob-rail     { @apply sticky top-[34px] flex flex-col gap-[2px]; }
+  .ob-step     { @apply flex cursor-pointer items-center gap-[10px] rounded-[9px] px-[10px] py-[9px] text-[13px] font-medium text-subtle; }
+  .ob-step-active { @apply bg-brand-50 text-brand-600; }
+  .ob-step-done   { @apply text-ink-2; }
+  .ob-dot      { @apply inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface font-mono text-[10.5px] font-medium text-subtle; }
+  .ob-dot-active { @apply border-brand-600 text-brand-600; }
+  .ob-dot-done   { @apply border-brand-600 bg-brand-600 text-white; }
+  .ob-h1       { @apply m-0 text-[24px] font-semibold tracking-[-0.02em]; }
+
+  /* selectable tile — industry preset, payment mode, preset service */
+  .tile        { @apply flex cursor-pointer items-center gap-[10px] rounded-[9px] border border-line bg-surface px-3 py-[11px]; }
+  .tile-on     { @apply border-brand-500 bg-brand-50; }
+
+  /* integration row (onboarding step 3 + Settings › Integrations) */
+  .integ-row   { @apply flex items-center gap-[13px] border-b border-row px-[18px] py-[15px]; }
+  .integ-logo  { @apply inline-flex shrink-0 items-center justify-center rounded-[9px] text-[14px] font-bold text-white; }
+
+  /* setup checklist (empty dashboard) */
+  .task-row    { @apply flex cursor-pointer items-center gap-[13px] border-b border-row px-[18px] py-[14px] hover:bg-canvas-alt; }
+  .task-dot    { @apply inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface text-[11px] text-white; }
+  .task-dot-done { @apply border-brand-600 bg-brand-600; }
+}

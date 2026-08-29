@@ -1,0 +1,47 @@
+<article class="article-page">
+  {% if article.image %}
+    <img
+      class="article-page__hero"
+      src="{{ article.image | image_url: width: 1600 }}"
+      alt="{{ article.title | escape }}"
+      width="{{ article.image.width }}"
+      height="{{ article.image.height }}"
+      loading="eager"
+    >
+  {% endif %}
+  <div class="article-page__inner">
+    <p class="article-page__date">{{ article.published_at | date: '%B %d, %Y' }}{% if article.author %} &middot; {{ article.author }}{% endif %}</p>
+    <h1 class="article-page__title">{{ article.title }}</h1>
+    <div class="article-page__content rich-text__body">
+      {{ article.content }}
+    </div>
+  </div>
+
+  {% if blog.comments_enabled? %}
+    <div class="article-page__comments">
+      <h2 class="section-heading">Comments ({{ article.comments_count }})</h2>
+      {% for comment in article.comments %}
+        <div class="comment">
+          <p class="comment__author">{{ comment.author }}</p>
+          <div class="comment__body">{{ comment.content }}</div>
+        </div>
+      {% endfor %}
+      {% form 'new_comment', article %}
+        {% if form.posted_successfully? %}
+          <p class="newsletter-form__success">Thanks — your comment is awaiting approval.</p>
+        {% endif %}
+        {{ form.errors | default_errors }}
+        <input type="text" name="comment[author]" placeholder="Name" required>
+        <input type="email" name="comment[email]" placeholder="Email" required>
+        <textarea name="comment[body]" rows="4" placeholder="Comment" required></textarea>
+        <button type="submit" class="button button--accent">Post comment</button>
+      {% endform %}
+    </div>
+  {% endif %}
+</article>
+
+{% schema %}
+{
+  "name": "Article"
+}
+{% endschema %}

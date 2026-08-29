@@ -1,0 +1,921 @@
+/**
+ * GetBooqin front-end styles.
+ *
+ * Deliberately quiet: the widget inherits the host theme's font stack and only
+ * asserts spacing, structure and a single accent colour, so it reads as part of
+ * the site rather than as a bolted-on plugin.
+ */
+
+.getbooqin-booking,
+.getbooqin-card,
+.getbooqin-grid {
+	/*
+	  Deliberately no hardcoded --getbooqin-* values here. Every actual usage
+	  below already reads them as var(--getbooqin-x, <fallback>), so this
+	  inherits whatever a theme-aware store defines on :root (see
+	  layout/theme.liquid's --getbooqin-accent bridge) and only falls back to
+	  the defaults where nothing does. Redeclaring them locally, like this
+	  used to, would win over inheritance and force every store to the
+	  fallback blue regardless of its own brand color — which is exactly
+	  the bug that made the modal's buttons blue while the launcher button
+	  (outside .getbooqin-booking, so never affected) correctly showed pink.
+	*/
+	font-family: inherit;
+	color: var(--getbooqin-fg, #1f2328);
+	box-sizing: border-box;
+}
+
+.getbooqin-booking *,
+.getbooqin-card *,
+.getbooqin-chat * {
+	box-sizing: border-box;
+}
+
+.getbooqin-muted {
+	color: var(--getbooqin-muted, #6b7280);
+	font-size: 0.9em;
+}
+
+/* ------------------------------------------------------------ Booking form */
+
+.getbooqin-booking {
+	border: 1px solid var(--getbooqin-line, #e3e6ea);
+	border-radius: var(--getbooqin-radius, 10px);
+	padding: 24px;
+	background: var(--getbooqin-bg, #fff);
+	max-width: 720px;
+}
+
+.getbooqin-booking__title {
+	margin: 0 0 16px;
+	font-size: 1.25em;
+}
+
+.getbooqin-booking h4 {
+	margin: 0 0 12px;
+	font-size: 1.05em;
+}
+
+.getbooqin-options {
+	display: grid;
+	gap: 8px;
+	grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.getbooqin-option {
+	display: block;
+	width: 100%;
+	text-align: left;
+	padding: 12px 14px;
+	border: 1px solid var(--getbooqin-line, #e3e6ea);
+	border-radius: var(--getbooqin-radius, 10px);
+	background: transparent;
+	cursor: pointer;
+	font: inherit;
+	color: inherit;
+	transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.getbooqin-option:hover,
+.getbooqin-option:focus-visible {
+	border-color: var(--getbooqin-accent, #2563eb);
+	background: rgba(37, 99, 235, 0.04);
+}
+
+.getbooqin-option strong {
+	display: block;
+}
+
+.getbooqin-option small {
+	color: var(--getbooqin-muted, #6b7280);
+}
+
+/* --------------------------------------------------------- Calendar picker */
+
+.getbooqin-calendar-picker {
+	display: flex;
+	flex-direction: column;
+	gap: 20px;
+}
+
+.getbooqin-calendar__header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 12px;
+}
+
+.getbooqin-calendar__label {
+	font-size: 1em;
+}
+
+.getbooqin-calendar__nav {
+	width: 32px;
+	height: 32px;
+	border-radius: 999px;
+	border: 1px solid var(--getbooqin-line, #e3e6ea);
+	background: transparent;
+	color: var(--getbooqin-fg, #1f2328);
+	font-size: 1.2em;
+	line-height: 1;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.getbooqin-calendar__nav:hover:not(:disabled) {
+	border-color: var(--getbooqin-accent, #2563eb);
+	color: var(--getbooqin-accent, #2563eb);
+}
+
+.getbooqin-calendar__nav:disabled {
+	opacity: 0.35;
+	cursor: not-allowed;
+}
+
+.getbooqin-calendar__weekdays {
+	display: grid;
+	grid-template-columns: repeat(7, 1fr);
+	text-align: center;
+	font-size: 0.78em;
+	font-weight: 600;
+	color: var(--getbooqin-muted, #6b7280);
+	margin-bottom: 6px;
+}
+
+.getbooqin-calendar__grid {
+	display: grid;
+	grid-template-columns: repeat(7, 1fr);
+	gap: 4px;
+	min-height: 40px;
+}
+
+.getbooqin-calendar__cell {
+	aspect-ratio: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.getbooqin-calendar__day {
+	width: 100%;
+	height: 100%;
+	border: 1px solid transparent;
+	border-radius: 999px;
+	background: transparent;
+	color: var(--getbooqin-fg, #1f2328);
+	font: inherit;
+	font-size: 0.9em;
+	cursor: pointer;
+	transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.getbooqin-calendar__day:hover:not(:disabled) {
+	border-color: var(--getbooqin-accent, #2563eb);
+}
+
+.getbooqin-calendar__day.is-selected {
+	background: var(--getbooqin-accent, #2563eb);
+	color: #fff;
+}
+
+.getbooqin-calendar__day.is-unavailable {
+	color: var(--getbooqin-line, #e3e6ea);
+	cursor: not-allowed;
+}
+
+.getbooqin-calendar-times {
+	padding-top: 4px;
+}
+
+.getbooqin-calendar-picker__columns {
+	display: flex;
+	gap: 32px;
+	align-items: flex-start;
+}
+
+.getbooqin-calendar-picker__left {
+	flex: 1.1;
+	min-width: 0;
+}
+
+.getbooqin-calendar-picker__right {
+	flex: 1;
+	min-width: 0;
+	border-left: 1px solid var(--getbooqin-line, #e3e6ea);
+	padding-left: 28px;
+}
+
+@media (max-width: 640px) {
+	.getbooqin-calendar-picker__columns {
+		flex-direction: column;
+	}
+	.getbooqin-calendar-picker__right {
+		border-left: 0;
+		padding-left: 0;
+		border-top: 1px solid var(--getbooqin-line, #e3e6ea);
+		padding-top: 20px;
+		margin-top: 4px;
+	}
+}
+
+.getbooqin-calendar__timezone {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 0.85em;
+	color: var(--getbooqin-muted, #6b7280);
+	margin: 16px 0 0;
+}
+
+.getbooqin-calendar__meta {
+	margin-top: 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.getbooqin-calendar__meta-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 10px 14px;
+	border: 1px solid var(--getbooqin-line, #e3e6ea);
+	border-radius: var(--getbooqin-radius, 10px);
+	font-size: 0.9em;
+}
+
+.getbooqin-calendar__meta-label {
+	font-weight: 600;
+}
+
+.getbooqin-calendar__meta-value {
+	color: var(--getbooqin-muted, #6b7280);
+	text-align: right;
+}
+
+.getbooqin-calendar__submit {
+	width: 100%;
+	margin-top: 18px;
+}
+
+.getbooqin-calendar__time-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: 420px;
+	overflow-y: auto;
+	padding-right: 4px;
+}
+
+@media (max-width: 640px) {
+	.getbooqin-calendar__time-list {
+		max-height: 280px;
+	}
+}
+
+.getbooqin-calendar__time {
+	padding: 12px 16px;
+	border: 1px solid var(--getbooqin-line, #e3e6ea);
+	border-radius: var(--getbooqin-radius, 10px);
+	background: transparent;
+	color: var(--getbooqin-fg, #1f2328);
+	font: inherit;
+	font-size: 0.92em;
+	text-align: left;
+	cursor: pointer;
+	transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.getbooqin-calendar__time:hover {
+	border-color: var(--getbooqin-accent, #2563eb);
+}
+
+.getbooqin-calendar__time.is-selected {
+	border-color: var(--getbooqin-accent, #2563eb);
+	background: var(--getbooqin-accent, #2563eb);
+	color: #fff;
+}
+
+.getbooqin-calendar__hint {
+	margin-top: 12px;
+	font-size: 0.85em;
+}
+
+.getbooqin-addon {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	width: 100%;
+	padding: 12px 14px;
+	border: 1px solid var(--getbooqin-line, #e3e6ea);
+	border-radius: var(--getbooqin-radius, 10px);
+	cursor: pointer;
+	transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.getbooqin-addon:hover,
+.getbooqin-addon:focus-within {
+	border-color: var(--getbooqin-accent, #2563eb);
+	background: rgba(37, 99, 235, 0.04);
+}
+
+.getbooqin-addon input {
+	margin-top: 3px;
+}
+
+.getbooqin-addon strong {
+	display: block;
+}
+
+.getbooqin-addon small {
+	color: var(--getbooqin-muted, #6b7280);
+}
+
+.getbooqin-times .getbooqin-option {
+	text-align: center;
+	padding: 10px 6px;
+}
+
+.getbooqin-field {
+	margin-bottom: 14px;
+}
+
+.getbooqin-field-row {
+	display: flex;
+	gap: 12px;
+}
+.getbooqin-field-row .getbooqin-field {
+	flex: 1;
+	min-width: 0;
+}
+
+@media (max-width: 420px) {
+	.getbooqin-field-row {
+		flex-direction: column;
+		gap: 0;
+	}
+}
+
+.getbooqin-field label {
+	display: block;
+	margin-bottom: 4px;
+	font-size: 0.9em;
+	font-weight: 600;
+}
+
+.getbooqin-field input,
+.getbooqin-field textarea {
+	width: 100%;
+	padding: 10px 12px;
+	border: 1px solid var(--getbooqin-line, #e3e6ea);
+	border-radius: 8px;
+	font: inherit;
+	background: var(--getbooqin-bg, #fff);
+	color: inherit;
+}
+
+.getbooqin-field input:focus,
+.getbooqin-field textarea:focus {
+	outline: 2px solid var(--getbooqin-accent, #2563eb);
+	outline-offset: 1px;
+	border-color: transparent;
+}
+
+.getbooqin-hp {
+	position: absolute !important;
+	left: -9999px !important;
+}
+
+.getbooqin-btn {
+	display: inline-block;
+	padding: 11px 20px;
+	border: 0;
+	border-radius: 8px;
+	background: var(--getbooqin-accent, #2563eb);
+	color: #fff;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+	text-decoration: none;
+	transition: filter 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+}
+
+.getbooqin-btn:hover {
+	filter: brightness(0.94);
+	color: #fff;
+}
+
+.getbooqin-btn:active {
+	transform: translateY(1px);
+}
+
+.getbooqin-btn:focus-visible {
+	outline: 2px solid var(--getbooqin-accent, #2563eb);
+	outline-offset: 2px;
+}
+
+.getbooqin-btn[disabled] {
+	opacity: 0.55;
+	cursor: progress;
+}
+
+.getbooqin-btn--ghost {
+	background: transparent;
+	color: var(--getbooqin-muted, #6b7280);
+	border: 1px solid var(--getbooqin-line, #e3e6ea);
+	font-weight: 500;
+}
+
+.getbooqin-btn--ghost:hover {
+	color: var(--getbooqin-fg, #1f2328);
+}
+
+.getbooqin-btn--danger {
+	background: #b42318;
+}
+
+.getbooqin-actions {
+	display: flex;
+	gap: 10px;
+	align-items: center;
+	margin-top: 18px;
+}
+
+.getbooqin-summary {
+	border-left: 3px solid var(--getbooqin-accent, #2563eb);
+	padding: 4px 0 4px 12px;
+	margin-bottom: 18px;
+	font-size: 0.95em;
+}
+
+.getbooqin-error {
+	color: #b42318;
+	margin: 10px 0 0;
+	font-size: 0.92em;
+}
+
+.getbooqin-done {
+	text-align: center;
+	padding: 20px 0;
+}
+
+.getbooqin-done__mark {
+	font-size: 2.4em;
+	line-height: 1;
+	margin-bottom: 8px;
+}
+
+/* -------------------------------------------------------------- Card grids */
+
+.getbooqin-grid {
+	display: grid;
+	gap: 16px;
+	grid-template-columns: repeat(var(--getbooqin-cols, 3), minmax(0, 1fr));
+}
+
+@media (max-width: 720px) {
+	.getbooqin-grid {
+		grid-template-columns: 1fr;
+	}
+}
+
+.getbooqin-card {
+	border: 1px solid var(--getbooqin-line, #e3e6ea);
+	border-radius: var(--getbooqin-radius, 10px);
+	padding: 20px;
+	background: var(--getbooqin-bg, #fff);
+}
+
+.getbooqin-card h4 {
+	margin: 0 0 6px;
+}
+
+.getbooqin-service__dot {
+	display: inline-block;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	margin-bottom: 8px;
+}
+
+.getbooqin-service__meta {
+	color: var(--getbooqin-muted, #6b7280);
+	font-size: 0.9em;
+	margin: 8px 0 12px;
+}
+
+.getbooqin-staff__avatar {
+	border-radius: 50%;
+	margin-bottom: 10px;
+}
+
+.getbooqin-details {
+	margin: 12px 0 18px;
+}
+
+.getbooqin-details dt {
+	font-size: 0.82em;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--getbooqin-muted, #6b7280);
+	margin-top: 10px;
+}
+
+.getbooqin-details dd {
+	margin: 2px 0 0;
+	font-weight: 600;
+}
+
+.getbooqin-status {
+	display: inline-block;
+	padding: 3px 10px;
+	border-radius: 999px;
+	font-size: 0.82em;
+	font-weight: 600;
+	background: #eef2ff;
+	color: #3730a3;
+}
+
+.getbooqin-status--cancelled {
+	background: #fee4e2;
+	color: #b42318;
+}
+
+.getbooqin-status--completed {
+	background: #dcfae6;
+	color: #067647;
+}
+
+/* ------------------------------------------------------- Product page button */
+
+/* Shown in place of a theme's native buy buttons on a product that's
+   linked to a bookable service — server-rendered by themes that mark the
+   product's Type as "Service" (no flash), or swapped in client-side by
+   booking.js for every other linked product (see initProductEmbed). Uses
+   GetBooqin's own class rather than a theme one so the styling travels with
+   the app regardless of which theme it's installed on. */
+.getbooqin-service-note {
+	margin: 0;
+	padding: 12px 16px;
+	border: 1px dashed var(--getbooqin-line, #e3e6ea);
+	border-radius: var(--getbooqin-radius, 10px);
+	color: var(--getbooqin-muted, #6b7280);
+	font-size: 0.88em;
+}
+
+/* product-book-button.liquid is an app block the merchant drags into the
+   product template — it renders inline wherever they put it (e.g. right
+   below Buy it now), so the button itself needs no special positioning,
+   just to look at home next to the theme's own buy buttons. */
+.getbooqin-product-embed__launcher {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	width: 100%;
+	margin-top: 12px;
+	padding: 14px 20px;
+	font-size: 1em;
+	box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+}
+
+.getbooqin-product-embed__launcher:hover {
+	box-shadow: 0 4px 12px rgba(16, 24, 40, 0.15);
+}
+
+/* On a small screen the button can sit anywhere in a long product page's
+   info column and scroll out of view — booking is the highest-intent
+   action on the page, so below this width it becomes a persistent bottom
+   bar instead of something a customer has to scroll back up to find. */
+@media (max-width: 640px) {
+	.getbooqin-product-embed__launcher {
+		position: fixed;
+		left: 12px;
+		right: 12px;
+		bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+		z-index: 9998;
+		margin-top: 0;
+		box-shadow: 0 8px 24px rgba(16, 24, 40, 0.22);
+	}
+}
+
+/* The app-embed variant (product-floating-button.liquid) has no inline
+   placement to fall back to — it's not sitting in the product form the way
+   the app block's launcher is, so above mobile width it floats as a
+   corner pill instead of following the block's normal inline sizing. */
+@media (min-width: 641px) {
+	.getbooqin-product-embed--floating .getbooqin-product-embed__launcher {
+		position: fixed;
+		right: 24px;
+		bottom: 24px;
+		left: auto;
+		width: auto;
+		z-index: 9998;
+		margin-top: 0;
+		box-shadow: 0 8px 24px rgba(16, 24, 40, 0.22);
+	}
+}
+
+/* Clicking the button opens the wizard in this modal rather than inline,
+   since the block sits in the middle of the product form and a multi-step
+   form expanding in place there would push the rest of the page around. */
+.getbooqin-modal-overlay {
+	position: fixed;
+	inset: 0;
+	background: rgba(16, 24, 40, 0.5);
+	z-index: 99999;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 20px;
+}
+
+.getbooqin-modal {
+	position: relative;
+	background: var(--getbooqin-bg, #fff);
+	border-radius: var(--getbooqin-radius, 10px);
+	max-width: 780px;
+	width: 100%;
+	max-height: calc(100vh - 40px);
+	overflow-y: auto;
+	box-shadow: 0 24px 64px rgba(16, 24, 40, 0.3);
+}
+
+.getbooqin-modal .getbooqin-booking {
+	border: 0;
+	max-width: none;
+}
+
+.getbooqin-modal__close {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	background: transparent;
+	border: 0;
+	font-size: 1.6em;
+	line-height: 1;
+	cursor: pointer;
+	color: var(--getbooqin-muted, #6b7280);
+	padding: 6px 10px;
+}
+
+/* ------------------------------------------------------------ Chat widget */
+
+.getbooqin-chat {
+	position: fixed;
+	bottom: 20px;
+	z-index: 99999;
+	font-family: inherit;
+	--getbooqin-chat-color: #2563eb;
+}
+
+.getbooqin-chat--right {
+	right: 20px;
+}
+
+.getbooqin-chat--left {
+	left: 20px;
+}
+
+.getbooqin-chat__launcher {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 13px 18px;
+	border: 0;
+	border-radius: 999px;
+	background: var(--getbooqin-chat-color);
+	color: #fff;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+	box-shadow: 0 8px 24px rgba(16, 24, 40, 0.18);
+}
+
+.getbooqin-chat__launcher:hover {
+	filter: brightness(0.94);
+}
+
+.getbooqin-chat__panel {
+	display: none;
+	flex-direction: column;
+	width: 360px;
+	max-width: calc(100vw - 32px);
+	height: 520px;
+	max-height: calc(100vh - 110px);
+	background: #fff;
+	border-radius: 14px;
+	overflow: hidden;
+	box-shadow: 0 16px 48px rgba(16, 24, 40, 0.22);
+	margin-bottom: 12px;
+}
+
+.getbooqin-chat.is-open .getbooqin-chat__panel {
+	display: flex;
+}
+
+.getbooqin-chat__header {
+	background: var(--getbooqin-chat-color);
+	color: #fff;
+	padding: 16px 18px;
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+}
+
+.getbooqin-chat__header h3 {
+	margin: 0;
+	font-size: 1em;
+	color: #fff;
+}
+
+.getbooqin-chat__header p {
+	margin: 2px 0 0;
+	font-size: 0.82em;
+	opacity: 0.85;
+}
+
+.getbooqin-chat__close {
+	background: transparent;
+	border: 0;
+	color: #fff;
+	font-size: 1.3em;
+	line-height: 1;
+	cursor: pointer;
+	padding: 0 2px;
+}
+
+.getbooqin-chat__log {
+	flex: 1;
+	overflow-y: auto;
+	padding: 16px;
+	background: #f7f8fa;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.getbooqin-msg {
+	max-width: 84%;
+	padding: 10px 13px;
+	border-radius: 14px;
+	font-size: 0.92em;
+	line-height: 1.45;
+	white-space: pre-wrap;
+	word-wrap: break-word;
+}
+
+.getbooqin-msg--bot {
+	align-self: flex-start;
+	background: #fff;
+	border: 1px solid #e6e8ec;
+	border-bottom-left-radius: 4px;
+}
+
+.getbooqin-msg--visitor {
+	align-self: flex-end;
+	background: var(--getbooqin-chat-color);
+	color: #fff;
+	border-bottom-right-radius: 4px;
+}
+
+.getbooqin-chat__quick {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 10px 16px 0;
+	background: #f7f8fa;
+}
+
+.getbooqin-chat__quick button {
+	padding: 8px 12px;
+	border: 1px solid var(--getbooqin-chat-color);
+	border-radius: 999px;
+	background: #fff;
+	color: var(--getbooqin-chat-color);
+	font: inherit;
+	font-size: 0.86em;
+	cursor: pointer;
+}
+
+.getbooqin-chat__quick button:hover {
+	background: var(--getbooqin-chat-color);
+	color: #fff;
+}
+
+.getbooqin-chat__form {
+	display: flex;
+	gap: 8px;
+	padding: 12px 16px;
+	background: #f7f8fa;
+	border-top: 1px solid #e6e8ec;
+}
+
+.getbooqin-chat__form textarea {
+	flex: 1;
+	padding: 10px 12px;
+	border: 1px solid #e6e8ec;
+	border-radius: 18px;
+	font: inherit;
+	background: #fff;
+	resize: vertical;
+	min-height: 42px;
+}
+
+.getbooqin-chat__form input:disabled,
+.getbooqin-chat__form textarea:disabled,
+.getbooqin-chat__form button:disabled,
+.getbooqin-chat__quick button:disabled {
+	opacity: .55;
+	cursor: not-allowed;
+}
+
+.getbooqin-chat__form input {
+	flex: 1;
+	padding: 10px 12px;
+	border: 1px solid #e6e8ec;
+	border-radius: 999px;
+	font: inherit;
+	background: #fff;
+}
+
+.getbooqin-chat__form button {
+	border: 0;
+	border-radius: 999px;
+	padding: 0 16px;
+	background: var(--getbooqin-chat-color);
+	color: #fff;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.getbooqin-chat__typing {
+	align-self: flex-start;
+	color: #6b7280;
+	font-size: 0.85em;
+	padding: 4px 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.getbooqin-option {
+		transition: none;
+	}
+}
+
+/* --------------------------------------------------------- Payments & video */
+
+.getbooqin-pay {
+	margin: 18px 0;
+	padding: 16px;
+	border: 1px solid var(--getbooqin-line, #e3e6ea);
+	border-radius: var(--getbooqin-radius, 10px);
+}
+
+.getbooqin-pay__methods {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.getbooqin-pay__msg {
+	margin-top: 10px;
+	font-size: 0.92em;
+	color: var(--getbooqin-muted, #6b7280);
+}
+
+.getbooqin-notice {
+	padding: 10px 14px;
+	border-radius: 8px;
+	font-size: 0.94em;
+	margin: 12px 0;
+}
+
+.getbooqin-notice--ok {
+	background: #dcfae6;
+	color: #067647;
+}
+
+.getbooqin-notice--bad {
+	background: #fee4e2;
+	color: #b42318;
+}
+
+/* Offline payment instructions on the confirmation screen. */
+.getbooqin-instructions {
+	margin: 12px auto;
+	max-width: 34rem;
+	padding: 12px 14px;
+	border: 1px solid #e6e8ec;
+	border-left: 3px solid var(--getbooqin-chat-color, #2563eb);
+	border-radius: 8px;
+	background: #f7f8fa;
+	text-align: left;
+	white-space: pre-line;
+	line-height: 1.55;
+}

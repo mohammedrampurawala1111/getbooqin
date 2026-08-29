@@ -1,0 +1,73 @@
+<section class="cart-page">
+  <h1 class="cart-page__title">Your cart</h1>
+
+  {% if cart.item_count == 0 %}
+    <div class="cart-page__empty">
+      <p>Your cart is empty.</p>
+      <a href="{{ routes.all_products_collection_url }}" class="button button--accent">Continue shopping</a>
+    </div>
+  {% else %}
+    {% form 'cart', cart, data-cart-form: '' %}
+      <table class="cart-table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Price</th>
+            <th>Quantity</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in cart.items %}
+            <tr class="cart-table__row">
+              <td class="cart-table__product">
+                <a href="{{ item.url }}" class="cart-table__image">
+                  {% if item.image %}
+                    <img
+                      src="{{ item.image | image_url: width: 200 }}"
+                      alt="{{ item.title | escape }}"
+                      width="{{ item.image.width }}"
+                      height="{{ item.image.height }}"
+                      loading="lazy"
+                    >
+                  {% endif %}
+                </a>
+                <div>
+                  <a href="{{ item.url }}" class="cart-table__name">{{ item.product.title }}</a>
+                  {% if item.variant.title != 'Default Title' %}
+                    <p class="cart-table__variant">{{ item.variant.title }}</p>
+                  {% endif %}
+                  <button type="button" class="cart-table__remove" data-cart-remove="{{ forloop.index0 }}">Remove</button>
+                </div>
+              </td>
+              <td>{{ item.original_price | money }}</td>
+              <td>
+                <input
+                  type="number"
+                  min="0"
+                  value="{{ item.quantity }}"
+                  class="cart-table__qty"
+                  data-cart-qty="{{ forloop.index0 }}"
+                  aria-label="Quantity for {{ item.product.title | escape }}"
+                >
+              </td>
+              <td>{{ item.final_line_price | money }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div class="cart-page__footer">
+        <p class="cart-page__subtotal">Subtotal: <strong>{{ cart.total_price | money }}</strong></p>
+        <p class="cart-page__note">Taxes and shipping calculated at checkout.</p>
+        <button type="submit" name="checkout" class="button button--accent button--lg">Checkout</button>
+      </div>
+    {% endform %}
+  {% endif %}
+</section>
+
+{% schema %}
+{
+  "name": "Cart"
+}
+{% endschema %}

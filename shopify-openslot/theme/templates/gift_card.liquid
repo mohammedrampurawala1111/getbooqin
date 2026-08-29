@@ -1,0 +1,149 @@
+{% layout none %}
+<!doctype html>
+<html lang="{{ request.locale.iso_code }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>{{ shop.name }} gift card</title>
+  <style>
+    {{ settings.font_heading | font_face: font_display: 'swap' }}
+    {{ settings.font_body | font_face: font_display: 'swap' }}
+
+    :root {
+      --color-background: {{ settings.color_background }};
+      --color-text: {{ settings.color_text }};
+      --color-text-muted: {{ settings.color_text_muted }};
+      --color-accent: {{ settings.color_accent }};
+      --color-accent-text: {{ settings.color_accent_text }};
+      --color-border: {{ settings.color_border }};
+      --font-heading: {{ settings.font_heading.family }}, serif;
+      --font-heading-weight: {{ settings.font_heading.weight }};
+      --font-body: {{ settings.font_body.family }}, sans-serif;
+      --radius: {{ settings.corner_radius }}px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 48px 20px;
+      background: var(--color-background);
+      color: var(--color-text);
+      font-family: var(--font-body);
+      display: flex;
+      justify-content: center;
+    }
+    .gift-card {
+      width: 100%;
+      max-width: 460px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      padding: 40px 32px;
+      text-align: center;
+      background: #fff;
+    }
+    .gift-card__shop {
+      font-family: var(--font-heading);
+      font-weight: var(--font-heading-weight);
+      font-size: 1.3rem;
+      margin: 0 0 28px;
+    }
+    .gift-card__eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 0.75rem;
+      color: var(--color-accent);
+      font-weight: 600;
+      margin: 0 0 8px;
+    }
+    .gift-card__value {
+      font-family: var(--font-heading);
+      font-weight: var(--font-heading-weight);
+      font-size: 2.6rem;
+      margin: 0 0 4px;
+    }
+    .gift-card__balance-note {
+      color: var(--color-text-muted);
+      font-size: 0.85rem;
+      margin: 0 0 28px;
+    }
+    .gift-card__code {
+      display: inline-block;
+      font-family: monospace;
+      font-size: 1.15rem;
+      letter-spacing: 0.06em;
+      padding: 12px 18px;
+      border: 1px dashed var(--color-border);
+      border-radius: 10px;
+      margin-bottom: 24px;
+    }
+    .gift-card__status {
+      display: inline-block;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-bottom: 20px;
+    }
+    .gift-card__status--active { background: #dcfae6; color: #067647; }
+    .gift-card__status--inactive { background: #fee4e2; color: #b42318; }
+    .gift-card__expiry { color: var(--color-text-muted); font-size: 0.85rem; margin: 0 0 24px; }
+    .gift-card__actions { display: flex; gap: 10px; justify-content: center; }
+    .gift-card__button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 22px;
+      border-radius: var(--radius);
+      font-weight: 600;
+      font-size: 0.92rem;
+      text-decoration: none;
+      cursor: pointer;
+      border: 1px solid var(--color-border);
+      background: transparent;
+      color: var(--color-text);
+    }
+    .gift-card__button--accent {
+      background: var(--color-accent);
+      color: var(--color-accent-text);
+      border-color: transparent;
+    }
+    @media print {
+      .gift-card__actions { display: none; }
+      body { padding: 0; }
+      .gift-card { border: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="gift-card">
+    <p class="gift-card__shop">{{ shop.name }}</p>
+
+    <p class="gift-card__eyebrow">Gift card</p>
+    <p class="gift-card__value">{{ gift_card.initial_value | money }}</p>
+    <p class="gift-card__balance-note">
+      {% if gift_card.enabled and gift_card.expired == false %}
+        {{ gift_card.balance | money }} remaining
+      {% else %}
+        This gift card is no longer active
+      {% endif %}
+    </p>
+
+    <div>
+      <span class="gift-card__status {% if gift_card.enabled and gift_card.expired == false %}gift-card__status--active{% else %}gift-card__status--inactive{% endif %}">
+        {% if gift_card.enabled and gift_card.expired == false %}Active{% elsif gift_card.expired %}Expired{% else %}Disabled{% endif %}
+      </span>
+    </div>
+
+    <p class="gift-card__code">{{ gift_card.code | format_code }}</p>
+
+    {% if gift_card.expires_on %}
+      <p class="gift-card__expiry">Expires {{ gift_card.expires_on | date: '%B %d, %Y' }}</p>
+    {% endif %}
+
+    <div class="gift-card__actions">
+      <button type="button" class="gift-card__button" onclick="window.print()">Print</button>
+      <a href="{{ shop.url }}" class="gift-card__button gift-card__button--accent">Shop {{ shop.name }}</a>
+    </div>
+  </div>
+</body>
+</html>

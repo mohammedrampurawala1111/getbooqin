@@ -1,0 +1,44 @@
+{{ 'getbooqin.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'booking.js' | asset_url }}" defer></script>
+
+{%- comment -%}
+  ?getbooqin_booking=UID switches this block to the "manage an existing
+  booking" view — the same convention the WordPress shortcode used, so
+  confirmation emails can link straight back to this page. booking.js reads
+  the uid off data-uid and fetches the details itself; Liquid has no way to
+  call the app's API while rendering the page.
+{%- endcomment -%}
+{%- assign booking_uid = blank -%}
+{%- if request.query_string contains 'getbooqin_booking=' -%}
+  {%- assign parts = request.query_string | split: 'getbooqin_booking=' -%}
+  {%- assign after = parts[1] | split: '&' -%}
+  {%- assign booking_uid = after[0] -%}
+{%- endif -%}
+
+{%- if booking_uid != blank -%}
+  <div class="getbooqin-card getbooqin-manage" data-uid="{{ booking_uid }}" data-getbooqin-manage {{ block.shopify_attributes }}></div>
+{%- else -%}
+  <div class="getbooqin-booking"
+    data-service-id="{{ block.settings.service_id | default: 0 }}"
+    data-resource-id="{{ block.settings.resource_id | default: 0 }}"
+    {{ block.shopify_attributes }}>
+    {%- if block.settings.title != blank -%}
+      <h3 class="getbooqin-booking__title">{{ block.settings.title | escape }}</h3>
+    {%- endif -%}
+    <div class="getbooqin-booking__body" aria-live="polite">
+      <p class="getbooqin-muted">Loading…</p>
+    </div>
+  </div>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "GetBooqin Booking",
+  "target": "section",
+  "settings": [
+    { "type": "text", "id": "title", "label": "Heading", "default": "Book an appointment" },
+    { "type": "number", "id": "service_id", "label": "Pre-selected service ID (optional)" },
+    { "type": "number", "id": "resource_id", "label": "Pre-selected staff ID (optional)" }
+  ]
+}
+{% endschema %}

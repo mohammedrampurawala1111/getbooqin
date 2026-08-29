@@ -1,0 +1,39 @@
+{
+  "name": "getbooqin-cloud",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "GetBooqin Cloud's standalone web app — signup/login and the Shopify connect flow, served alongside (not instead of) the embedded shopify-openslot admin.",
+  "scripts": {
+    "build": "react-router build",
+    "dev": "react-router dev",
+    "start": "react-router-serve ./build/server/index.js",
+    "typecheck": "react-router typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "@clerk/react-router": "^3.6.17",
+    "@react-router/node": "^7.1.1",
+    "getbooqin-core": "*",
+    "isbot": "^5.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router": "^7.1.1"
+  },
+  "devDependencies": {
+    "@react-router/dev": "^7.1.1",
+    "@react-router/serve": "^7.1.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.2.5",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "dotenv": "^16.4.5",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.2.2",
+    "vite": "^6.0.0",
+    "vite-tsconfig-paths": "^5.0.1"
+  },
+  "engines": {
+    "node": "^18.20 || ^20.10 || >=21.0.0"
+  },
+  "author": "GetBooqin"
+}
