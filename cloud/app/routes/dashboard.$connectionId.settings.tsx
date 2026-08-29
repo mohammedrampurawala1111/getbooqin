@@ -3,9 +3,10 @@ import { Form, redirect, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.settings";
 import { Settings, PaymentManager, FeatureFlags, listUserConnections, disconnectConnection } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
-import { PageHeader, Field, Input, Toggle, Badge, TimezoneSelect } from "~/components/ui";
+import { Badge, TimezoneSelect, Toggle } from "~/components/ui";
 import { IntegrationRow } from "~/components/onboarding";
 import { TemplateConfig, overviewCards, type OverviewCardKey } from "~/components/account";
+import { SettingsShell, Row, RowInput, ToggleRow, SettingsCard, type SettingsKey } from "~/components/settings";
 import { INTEGRATIONS, type PresetId } from "~/lib/presets";
 import { PHONE_PATTERN } from "~/lib/validation";
 
@@ -47,6 +48,9 @@ export async function action({ request, params }: Route.ActionArgs) {
       currency: String(form.get("currency") ?? "USD"),
       currency_symbol: String(form.get("currency_symbol") ?? "$"),
       timezone: String(form.get("timezone") ?? "UTC"),
+    });
+  } else if (section === "rules") {
+    await Settings.setSettings(shop, platform, {
       slot_interval: Number(form.get("slot_interval") ?? 30),
       min_notice_hours: Number(form.get("min_notice_hours") ?? 2),
       max_advance_days: Number(form.get("max_advance_days") ?? 60),
@@ -112,173 +116,106 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
   // dashboard.$connectionId.tsx).
   const businessNameValue = isManual && settings.business_name === shop ? "" : settings.business_name;
   const [searchParams] = useSearchParams();
-  const tab = searchParams.get("tab") || "general";
+  const page = (searchParams.get("page") || "general") as SettingsKey;
+  const savedAt = actionData?.saved ? "just now" : undefined;
 
   return (
-    <div className="flex flex-col gap-[18px]">
-      <PageHeader title="Settings" />
+    <SettingsShell active={page} hide={paymentsEnabled ? [] : ["payments"]}>
+      {page === "general" && (
+        <SettingsCard saveLabel="Save changes" savedAt={savedAt}>
+          <input type="hidden" name="_section" value="general" />
+          <Row label="Business name">
+            <RowInput name="business_name" defaultValue={businessNameValue} placeholder={isManual ? "e.g. Kapsalon Vondel" : undefined} cap={9999} />
+          </Row>
+          <Row label="Business email">
+            <RowInput name="business_email" type="email" defaultValue={settings.business_email} />
+          </Row>
+          <Row label="Business phone">
+            <RowInput type="tel" name="business_phone" defaultValue={settings.business_phone} pattern={PHONE_PATTERN} />
+          </Row>
+          <Row label="Currency code">
+            <RowInput name="currency" defaultValue={settings.currency} cap={120} />
+          </Row>
+          <Row label="Currency symbol">
+            <RowInput name="currency_symbol" defaultValue={settings.currency_symbol} cap={120} />
+          </Row>
+          <Row label="Timezone" hint="All times shown in this zone">
+            <TimezoneSelect defaultValue={settings.timezone} />
+          </Row>
+        </SettingsCard>
+      )}
 
-      <div className="card">
-        {/* "Integrations" ran 16px past a 389px viewport with nowhere to
-            scroll to reach it — the one tab a merchant needs to connect
-            Shopify or Stripe (UX audit's M6 finding). overflow-x-auto plus
-            shrink-0 on each tab lets it scroll into view instead of
-            clipping or wrapping. */}
-        <div className="flex overflow-x-auto border-b border-line px-[6px]">
-          <a href="?tab=general" className={`tab shrink-0 ${tab === "general" ? "tab-active" : ""}`}>
-            General
-          </a>
-          <a href="?tab=template" className={`tab shrink-0 ${tab === "template" ? "tab-active" : ""}`}>
-            Template
-          </a>
-          <a href="?tab=notifications" className={`tab shrink-0 ${tab === "notifications" ? "tab-active" : ""}`}>
-            Notifications
-          </a>
-          {paymentsEnabled && (
-            <a href="?tab=payments" className={`tab shrink-0 ${tab === "payments" ? "tab-active" : ""}`}>
-              Payments
-            </a>
-          )}
-          <a href="?tab=integrations" className={`tab shrink-0 ${tab === "integrations" ? "tab-active" : ""}`}>
-            Integrations
-          </a>
-        </div>
+      {page === "template" && (
+        <Form id="template-form" method="post" className="flex flex-col gap-[14px]">
+          <input type="hidden" name="_section" value="template" />
+          <TemplateTab presetId={settings.preset} initialHidden={settings.hidden_overview_cards} saved={!!actionData?.saved} />
+        </Form>
+      )}
 
-        {tab === "general" && (
-          <Form method="post">
-            <input type="hidden" name="_section" value="general" />
-            {/* [&_.field-label]:min-h-[38px] reserves two lines' worth of
-                label height on every field here — "Minimum notice (hours)"
-                wraps while "Slot interval (minutes)" doesn't, which put the
-                two inputs 19px out of vertical alignment in the same row
-                (UX audit's M7 finding). Scoped to this grid rather than
-                Field globally, since most of the app's fields are single-
-                column and don't need the extra reserved space. */}
-            <div className="card-body grid grid-cols-2 gap-x-4 gap-y-[14px] [&_.field-label]:min-h-[38px]">
-              <div className="col-span-2">
-                <Field label="Business name">
-                  <Input name="business_name" defaultValue={businessNameValue} placeholder={isManual ? "e.g. Kapsalon Vondel" : undefined} />
-                </Field>
-              </div>
-              <Field label="Business email">
-                <Input name="business_email" type="email" defaultValue={settings.business_email} />
-              </Field>
-              <Field label="Business phone">
-                <Input type="tel" name="business_phone" defaultValue={settings.business_phone} pattern={PHONE_PATTERN} />
-              </Field>
-              <Field label="Currency code">
-                <Input name="currency" defaultValue={settings.currency} />
-              </Field>
-              <Field label="Currency symbol">
-                <Input name="currency_symbol" defaultValue={settings.currency_symbol} />
-              </Field>
-              <div className="col-span-2">
-                <Field label="Timezone">
-                  <TimezoneSelect defaultValue={settings.timezone} />
-                </Field>
-              </div>
-              <Field label="Slot interval (minutes)" hint="The spacing between bookable start times.">
-                <Input type="number" name="slot_interval" min={5} defaultValue={settings.slot_interval} />
-              </Field>
-              <Field label="Minimum notice (hours)" hint="How soon before a slot someone can still book it.">
-                <Input type="number" name="min_notice_hours" min={0} defaultValue={settings.min_notice_hours} />
-              </Field>
-              <Field label="Max advance booking (days)" hint="How far ahead your calendar opens up.">
-                <Input type="number" name="max_advance_days" min={1} defaultValue={settings.max_advance_days} />
-              </Field>
-              <Field label="Cancellation cutoff (hours before start)" hint="How late a customer can still cancel.">
-                <Input type="number" name="cancel_cutoff_hours" min={0} defaultValue={settings.cancel_cutoff_hours} />
-              </Field>
-              <div className="col-span-2 flex flex-col gap-3">
-                <Toggle name="auto_confirm" defaultChecked={settings.auto_confirm} label="Auto-confirm new bookings" />
-                <Toggle name="allow_cancel" defaultChecked={settings.allow_cancel} label="Allow customers to cancel" />
-              </div>
-            </div>
-            <div className="card-footer">
-              {actionData?.saved && <span className="alert-success">Saved.</span>}
-              <button type="submit" className="btn-pri ml-auto">
-                Save general settings
-              </button>
-            </div>
-          </Form>
-        )}
+      {page === "rules" && (
+        <SettingsCard saveLabel="Save booking rules" savedAt={savedAt}>
+          <input type="hidden" name="_section" value="rules" />
+          <Row label="Slot interval (minutes)" hint="The spacing between bookable start times.">
+            <RowInput type="number" name="slot_interval" min={5} defaultValue={settings.slot_interval} cap={140} />
+          </Row>
+          <Row label="Minimum notice (hours)" hint="How soon before a slot someone can still book it.">
+            <RowInput type="number" name="min_notice_hours" min={0} defaultValue={settings.min_notice_hours} cap={140} />
+          </Row>
+          <Row label="Max advance booking (days)" hint="How far ahead your calendar opens up.">
+            <RowInput type="number" name="max_advance_days" min={1} defaultValue={settings.max_advance_days} cap={140} />
+          </Row>
+          <Row label="Cancellation cutoff (hours before start)" hint="How late a customer can still cancel.">
+            <RowInput type="number" name="cancel_cutoff_hours" min={0} defaultValue={settings.cancel_cutoff_hours} cap={140} />
+          </Row>
+          <ToggleRow name="auto_confirm" label="Auto-confirm new bookings" hint="Skip manual approval for new bookings" defaultChecked={settings.auto_confirm} />
+          <ToggleRow name="allow_cancel" label="Allow customers to cancel" hint="Let customers cancel their own bookings" defaultChecked={settings.allow_cancel} />
+        </SettingsCard>
+      )}
 
-        {tab === "notifications" && (
-          <Form method="post">
-            <input type="hidden" name="_section" value="notifications" />
-            <div className="card-body flex flex-col gap-[14px]">
-              <Toggle name="notify_customer" defaultChecked={settings.notify_customer} label="Email the customer on booking events" />
-              <Toggle name="notify_admin" defaultChecked={settings.notify_admin} label="Email the business on booking events" />
-              <div className="max-w-[360px]">
-                <Field label="Admin notification email">
-                  <Input name="admin_email" type="email" defaultValue={settings.admin_email} />
-                </Field>
-              </div>
-              <Toggle name="reminder_enabled" defaultChecked={settings.reminder_enabled} label="Send reminder emails" />
-              <div className="max-w-[220px]">
-                <Field label="Reminder lead time (hours)">
-                  <Input type="number" name="reminder_hours" min={1} defaultValue={settings.reminder_hours} />
-                </Field>
-              </div>
-            </div>
-            <div className="card-footer">
-              {actionData?.saved && <span className="alert-success">Saved.</span>}
-              <button type="submit" className="btn-pri ml-auto">
-                Save notification settings
-              </button>
-            </div>
-          </Form>
-        )}
+      {page === "notifications" && (
+        <SettingsCard saveLabel="Save notification settings" savedAt={savedAt}>
+          <input type="hidden" name="_section" value="notifications" />
+          <ToggleRow name="notify_customer" label="Email the customer" hint="Sent on booking events" defaultChecked={settings.notify_customer} />
+          <ToggleRow name="notify_admin" label="Email the business" hint="Sent on booking events" defaultChecked={settings.notify_admin} />
+          <Row label="Admin notification email">
+            <RowInput name="admin_email" type="email" defaultValue={settings.admin_email} />
+          </Row>
+          <ToggleRow name="reminder_enabled" label="Send reminder emails" hint="Cuts no-shows by around a third" defaultChecked={settings.reminder_enabled} />
+          <Row label="Reminder lead time (hours)">
+            <RowInput type="number" name="reminder_hours" min={1} defaultValue={settings.reminder_hours} cap={140} />
+          </Row>
+        </SettingsCard>
+      )}
 
-        {tab === "payments" && paymentsEnabled && (
-          <Form method="post">
-            <input type="hidden" name="_section" value="payments" />
-            <div className="card-body flex flex-col gap-3">
-              {gatewayFields.map((g) => (
-                <div key={g.id} className="rounded-[9px] border border-line p-3">
-                  <div className="mb-2">
-                    <Toggle
-                      name="enabled_gateways"
-                      value={g.id}
-                      defaultChecked={settings.enabled_gateways.includes(g.id)}
-                      label={g.label}
+      {page === "payments" && paymentsEnabled && (
+        <SettingsCard saveLabel="Save payment settings" savedAt={savedAt}>
+          <input type="hidden" name="_section" value="payments" />
+          {gatewayFields.map((g) => (
+            <div key={g.id}>
+              <Row label={g.label} hint="Accept payments through this gateway">
+                <Toggle name="enabled_gateways" value={g.id} defaultChecked={settings.enabled_gateways.includes(g.id)} label="Enabled" />
+              </Row>
+              {g.fields.map((field) => (
+                <Row key={field.key} label={field.label}>
+                  {field.type === "checkbox" ? (
+                    <Toggle name={`gateway_${g.id}_${field.key}`} defaultChecked={Boolean(settings.gateways[g.id]?.[field.key])} />
+                  ) : (
+                    <RowInput
+                      type={field.type === "password" ? "password" : "text"}
+                      name={`gateway_${g.id}_${field.key}`}
+                      defaultValue={settings.gateways[g.id]?.[field.key] as string | undefined}
                     />
-                  </div>
-                  {g.fields.map((field) =>
-                    field.type === "checkbox" ? (
-                      <div key={field.key} className="mb-2">
-                        <Toggle
-                          name={`gateway_${g.id}_${field.key}`}
-                          defaultChecked={Boolean(settings.gateways[g.id]?.[field.key])}
-                          label={field.label}
-                        />
-                      </div>
-                    ) : (
-                      <div key={field.key} className="mb-2">
-                        <Field label={field.label}>
-                          <Input
-                            type={field.type === "password" ? "password" : "text"}
-                            name={`gateway_${g.id}_${field.key}`}
-                            defaultValue={settings.gateways[g.id]?.[field.key] as string | undefined}
-                          />
-                        </Field>
-                      </div>
-                    )
                   )}
-                </div>
+                </Row>
               ))}
             </div>
-            <div className="card-footer">
-              {actionData?.saved && <span className="alert-success">Saved.</span>}
-              <button type="submit" className="btn-pri ml-auto">
-                Save payment settings
-              </button>
-            </div>
-          </Form>
-        )}
+          ))}
+        </SettingsCard>
+      )}
 
-        {tab === "integrations" && (
-          <div className="flex flex-col">
+      {page === "integrations" && (
+        <>
+          <div className="card">
             {INTEGRATIONS.map((integ) => {
               if (integ.id === "shopify") {
                 return (
@@ -319,7 +256,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
                     disabled={!paymentsEnabled}
                     action={
                       paymentsEnabled ? (
-                        <a href="?tab=payments" className="btn-sec no-underline hover:no-underline">
+                        <a href="?page=payments" className="btn-sec no-underline hover:no-underline">
                           {connected ? "Manage" : "Configure"}
                         </a>
                       ) : undefined
@@ -343,63 +280,65 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
               );
             })}
           </div>
-        )}
-      </div>
 
-      {tab === "template" && (
-        <Form id="template-form" method="post" className="flex flex-col gap-[14px]">
-          <input type="hidden" name="_section" value="template" />
-          <TemplateTab presetId={settings.preset} initialHidden={settings.hidden_overview_cards} saved={!!actionData?.saved} />
-        </Form>
+          <div className="card">
+            <div className="card-header">
+              <h2 className="card-title">Connected stores</h2>
+            </div>
+            {connections.map((c) => (
+              <div key={c.id} className="trow" style={{ gridTemplateColumns: "32px 1fr auto auto" }}>
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-600">
+                  {c.platform === "manual" ? "M" : c.shop.slice(0, 1).toUpperCase()}
+                </span>
+                {c.id === currentConnectionId || c.status !== "active" ? (
+                  <span className="min-w-0 truncate font-medium">
+                    {c.platform === "manual" ? "Manual setup (no store connected)" : c.shop}
+                  </span>
+                ) : (
+                  // The only way to reach a second store used to be pasting its
+                  // URL — this list showed every connection but none of them,
+                  // besides the current one, were actually clickable (UX
+                  // audit's D1 finding: a store created here became invisible
+                  // and unreachable from the UI the moment a newer one existed).
+                  <a href={`/dashboard/${c.id}`} className="min-w-0 truncate font-medium text-ink hover:underline">
+                    {c.platform === "manual" ? "Manual setup (no store connected)" : c.shop}
+                  </a>
+                )}
+                <span className="flex items-center gap-2">
+                  {c.id === currentConnectionId && <Badge status="confirmed" label="Current" />}
+                  {c.status !== "active" && <Badge status="cancelled" label={c.status} />}
+                </span>
+                {c.status === "active" ? (
+                  <Form method="post">
+                    <input type="hidden" name="_section" value="disconnect_store" />
+                    <input type="hidden" name="connection_id" value={c.id} />
+                    <button type="submit" className="btn-del">Disconnect</button>
+                  </Form>
+                ) : (
+                  <span />
+                )}
+              </div>
+            ))}
+            <div className="card-footer">
+              <a href="/connect/shopify" className="btn-sec no-underline hover:no-underline">
+                + Connect a Shopify store
+              </a>
+            </div>
+          </div>
+        </>
       )}
 
-      {tab === "integrations" && (
+      {page === "team" && (
         <div className="card">
-          <div className="card-header">
-            <h2 className="card-title">Connected stores</h2>
-          </div>
-          {connections.map((c) => (
-            <div key={c.id} className="trow" style={{ gridTemplateColumns: "32px 1fr auto auto" }}>
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-600">
-                {c.platform === "manual" ? "M" : c.shop.slice(0, 1).toUpperCase()}
-              </span>
-              {c.id === currentConnectionId || c.status !== "active" ? (
-                <span className="min-w-0 truncate font-medium">
-                  {c.platform === "manual" ? "Manual setup (no store connected)" : c.shop}
-                </span>
-              ) : (
-                // The only way to reach a second store used to be pasting its
-                // URL — this list showed every connection but none of them,
-                // besides the current one, were actually clickable (UX
-                // audit's D1 finding: a store created here became invisible
-                // and unreachable from the UI the moment a newer one existed).
-                <a href={`/dashboard/${c.id}`} className="min-w-0 truncate font-medium text-ink hover:underline">
-                  {c.platform === "manual" ? "Manual setup (no store connected)" : c.shop}
-                </a>
-              )}
-              <span className="flex items-center gap-2">
-                {c.id === currentConnectionId && <Badge status="confirmed" label="Current" />}
-                {c.status !== "active" && <Badge status="cancelled" label={c.status} />}
-              </span>
-              {c.status === "active" ? (
-                <Form method="post">
-                  <input type="hidden" name="_section" value="disconnect_store" />
-                  <input type="hidden" name="connection_id" value={c.id} />
-                  <button type="submit" className="btn-del">Disconnect</button>
-                </Form>
-              ) : (
-                <span />
-              )}
-            </div>
-          ))}
-          <div className="card-footer">
-            <a href="/connect/shopify" className="btn-sec no-underline hover:no-underline">
-              + Connect a Shopify store
-            </a>
+          <div className="flex flex-col items-center gap-2 px-[18px] py-14 text-center">
+            <span className="text-[13px] font-medium text-ink-2">Team accounts are coming soon</span>
+            <p className="m-0 max-w-[360px] text-meta text-subtle">
+              For now, whoever connects a store manages it as the owner. We'll let you invite staff with their own sign-in and permissions here.
+            </p>
           </div>
         </div>
       )}
-    </div>
+    </SettingsShell>
   );
 }
 

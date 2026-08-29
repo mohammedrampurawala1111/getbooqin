@@ -63,7 +63,7 @@ export const PRESETS: Preset[] = [
       { name: "Gel manicure", minutes: 45 },
       { name: "Beard trim", minutes: 20 },
     ],
-    hours: "Tue–Sat 09:00–18:00",
+    hours: "Tue–Sat 09:00–18:00, late Thursdays",
     open: [false, true, true, true, true, true, false], range: "09:00–18:00",
   },
   {
@@ -211,9 +211,9 @@ export function setupTasks(f: SetupFacts) {
   const v = vocabFor(f.presetId);
   return [
     { key: "preset", name: "Choose your industry preset", hint: "Sets services, vocabulary and reminders", done: !!f.presetId },
-    { key: "services", name: `Add your ${v.services.toLowerCase()}`, hint: `${f.serviceCount} added`, done: f.serviceCount > 0 },
+    { key: "services", name: `Add your ${v.services.toLowerCase()}`, hint: `${f.serviceCount} scaffolded from the preset`, done: f.serviceCount > 0 },
     { key: "resources", name: `Add ${v.resources.toLowerCase()}`, hint: `At least one person or room must take ${v.bookingMany}`, done: f.resourceCount > 0 },
-    { key: "channel", name: "Connect a channel", hint: f.connectedChannels > 0 ? `${f.connectedChannels} connected` : "Shopify or Stripe", done: f.connectedChannels > 0 },
+    { key: "channel", name: "Connect a channel", hint: f.connectedChannels > 0 ? `${f.connectedChannels} connected` : "Shopify, WhatsApp or WordPress", done: f.connectedChannels > 0 },
     { key: "reminders", name: "Turn on reminders", hint: "Cuts no-shows by around a third", done: f.remindersOn },
   ];
 }
