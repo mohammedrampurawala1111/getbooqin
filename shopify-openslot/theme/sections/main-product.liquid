@@ -149,10 +149,14 @@
         {% when '@app' %}
           {% comment %}
             This is the slot the GetBooqin app's "GetBooqin Button" block plugs
-            into — add it here (Add block → GetBooqin Button) to show a
-            "Book now" button on this product's page once it's linked to a
-            service in the GetBooqin admin. Position it anywhere in this list,
-            e.g. right after Buy buttons.
+            into. The schema's default block list below already includes it
+            right after Buy buttons — via the app block's own
+            shopify://apps/getbooqin/blocks/product-book-button/<extension-uuid>
+            reference, the standard way a theme auto-installs an app block
+            instead of requiring the merchant to add it by hand — so this only
+            renders nothing here if that block was removed (Add block →
+            GetBooqin Button to bring it back, or reposition it anywhere in
+            this list).
           {% endcomment %}
           {% render block %}
 
@@ -179,6 +183,7 @@
       { "type": "price" },
       { "type": "variant_picker" },
       { "type": "buy_buttons" },
+      { "type": "shopify://apps/getbooqin/blocks/product-book-button/01a01b3e-1772-76da-bb29-f4fe08409b1d" },
       { "type": "description" },
       { "type": "share" }
     ]
