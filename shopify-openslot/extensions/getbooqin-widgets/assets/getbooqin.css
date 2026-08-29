@@ -257,9 +257,15 @@
 	text-align: right;
 }
 
-.getbooqin-calendar__submit {
-	width: 100%;
+.getbooqin-calendar__actions {
 	margin-top: 18px;
+}
+
+.getbooqin-calendar__submit {
+	/* Takes the remaining width next to Back's fixed-width button, rather
+	   than the old 100% (from when it had no sibling to share the row
+	   with, and stacked instead as its own full-width row above Back). */
+	flex: 1;
 }
 
 .getbooqin-calendar__time-list {

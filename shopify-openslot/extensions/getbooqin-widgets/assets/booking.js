@@ -259,6 +259,7 @@
 		var serviceLabel = options.serviceLabel || '';
 		var resourceLabel = options.resourceLabel || t.anyAvailable;
 		var onSelect = options.onSelect;
+		var onBack = options.onBack;
 
 		var now = new Date();
 		var todayUtc = new Date( Date.UTC( now.getFullYear(), now.getMonth(), now.getDate() ) );
@@ -304,13 +305,21 @@
 				onSelect( selectedDate, selectedDateLabel, selectedTime, selectedTimeLabel );
 			}
 		} );
+		// One action row, Back beside Book now rather than stacked below it
+		// as two separate rows — Back stays a fixed-width secondary action,
+		// submitBtn takes the rest via getbooqin-calendar__submit's flex: 1.
 		// Appended after `columns` (not into leftCol) so it comes after the
 		// time list in DOM order everywhere — on the stacked mobile layout
 		// that puts the action last, after the thing that enables it,
 		// instead of a disabled button sitting above the time list it's
 		// waiting on. On desktop's two-column layout it renders as a
 		// full-width row spanning both columns.
-		container.appendChild( submitBtn );
+		var actionsRow = el( 'div', { class: 'getbooqin-actions getbooqin-calendar__actions' } );
+		if ( onBack ) {
+			actionsRow.appendChild( el( 'button', { type: 'button', class: 'getbooqin-btn getbooqin-btn--ghost', text: t.back, onClick: onBack } ) );
+		}
+		actionsRow.appendChild( submitBtn );
+		container.appendChild( actionsRow );
 
 		var timesEl = el( 'div', { class: 'getbooqin-calendar-times' } );
 		rightCol.appendChild( timesEl );
@@ -787,12 +796,11 @@
 				self.state.time = time;
 				self.state.timeLabel = timeLabel;
 				self.stepDetails();
+			},
+			onBack: function () {
+				self.stepAddons();
 			}
 		} );
-
-		this.body.appendChild( this.backRow( function () {
-			self.stepAddons();
-		} ) );
 	};
 
 	Wizard.prototype.stepDetails = function () {
@@ -1239,7 +1247,6 @@
 		focusHeading( rescheduleHeading );
 		var pickerContainer = el( 'div', { class: 'getbooqin-calendar-picker' } );
 		card.appendChild( pickerContainer );
-		card.appendChild( backRowStandalone( function () { renderManageCard( card ); } ) );
 
 		config().then( function ( cfg ) {
 			renderCalendarPicker( pickerContainer, {
@@ -1248,6 +1255,7 @@
 				timezone: cfg && cfg.timezone,
 				serviceLabel: serviceName,
 				resourceLabel: resourceName,
+				onBack: function () { renderManageCard( card ); },
 				onSelect: function ( date, dateLabel, time ) {
 				card.innerHTML = '';
 				card.appendChild( el( 'p', { class: 'getbooqin-muted', text: t.loading } ) );
