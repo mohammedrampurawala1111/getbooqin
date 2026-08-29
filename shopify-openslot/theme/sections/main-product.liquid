@@ -140,7 +140,9 @@
 
         {% when 'share' %}
           <div class="product-page__share" {{ block.shopify_attributes }}>
-            <a href="https://www.instagram.com/" target="_blank" rel="noopener" aria-label="Share on Instagram">{% render 'icon-instagram' %}</a>
+            {% if settings.social_instagram != blank %}
+              <a href="{{ settings.social_instagram }}" target="_blank" rel="noopener" aria-label="Visit us on Instagram">{% render 'icon-instagram' %}</a>
+            {% endif %}
             <a href="https://www.facebook.com/sharer/sharer.php?u={{ shop.url | append: product.url }}" target="_blank" rel="noopener" aria-label="Share on Facebook">{% render 'icon-facebook' %}</a>
           </div>
 

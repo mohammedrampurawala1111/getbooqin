@@ -178,10 +178,23 @@
 		return fetch( API_BASE + path, options ).then( function ( response ) {
 			return response.json().then( function ( json ) {
 				if ( ! response.ok || false === json.success ) {
-					throw new Error( ( json && json.message ) || t.genericError );
+					var err = new Error( ( json && json.message ) || t.genericError );
+					// initProductEmbed needs to tell "the proxy/app is down"
+					// (a real 5xx it should surface) apart from "clean 200
+					// answer, just nothing linked" (never throws here at all —
+					// see product-service.tsx, which returns { service: null }
+					// rather than an error for that case).
+					err.status = response.status;
+					throw err;
 				}
 				return json.data;
 			} );
+		}, function ( networkErr ) {
+			// fetch() itself rejected — offline, DNS, CORS, etc. No HTTP
+			// status exists yet, but this is exactly as real a failure as a
+			// 5xx from the app's point of view.
+			networkErr.status = 0;
+			throw networkErr;
 		} );
 	}
 
@@ -291,7 +304,13 @@
 				onSelect( selectedDate, selectedDateLabel, selectedTime, selectedTimeLabel );
 			}
 		} );
-		leftCol.appendChild( submitBtn );
+		// Appended after `columns` (not into leftCol) so it comes after the
+		// time list in DOM order everywhere — on the stacked mobile layout
+		// that puts the action last, after the thing that enables it,
+		// instead of a disabled button sitting above the time list it's
+		// waiting on. On desktop's two-column layout it renders as a
+		// full-width row spanning both columns.
+		container.appendChild( submitBtn );
 
 		var timesEl = el( 'div', { class: 'getbooqin-calendar-times' } );
 		rightCol.appendChild( timesEl );
@@ -336,6 +355,7 @@
 					}
 					var list = el( 'div', { class: 'getbooqin-calendar__time-list' } );
 					var buttons = [];
+					var hint = el( 'p', { class: 'getbooqin-muted getbooqin-calendar__hint', text: t.selectTimeHint } );
 					slots.forEach( function ( slot ) {
 						var slotBtn = el( 'button', {
 							type: 'button',
@@ -352,13 +372,19 @@
 								} );
 								slotBtn.classList.add( 'is-selected' );
 								slotBtn.setAttribute( 'aria-pressed', 'true' );
+								// The hint's job is done once a slot is picked —
+								// left as "Please select a time slot" it reads
+								// as an unresolved error on an otherwise-ready
+								// form, so it becomes the confirmation instead.
+								hint.textContent = slot.label + ' selected.';
+								hint.classList.add( 'is-confirmed' );
 							}
 						} );
 						buttons.push( slotBtn );
 						list.appendChild( slotBtn );
 					} );
 					timesEl.appendChild( list );
-					timesEl.appendChild( el( 'p', { class: 'getbooqin-muted getbooqin-calendar__hint', text: t.selectTimeHint } ) );
+					timesEl.appendChild( hint );
 				} )
 				.catch( function ( err ) {
 					loadingEl.remove();
@@ -511,7 +537,18 @@
 		if ( existing ) {
 			existing.remove();
 		}
-		this.body.appendChild( el( 'p', { class: 'getbooqin-error', role: 'alert', text: message } ) );
+		var errorEl = el( 'p', { class: 'getbooqin-error', id: 'getbooqin-error', role: 'alert', text: message } );
+		// A step's actions row (Confirm/Back) sits at the very end of body —
+		// appending the error after it put the message below the buttons,
+		// clipped by the modal's bottom edge on a step that scrolls. Insert
+		// it before that row instead, so it's visible without scrolling
+		// further than the buttons already required.
+		var actions = this.body.querySelector( '.getbooqin-actions' );
+		if ( actions ) {
+			actions.parentNode.insertBefore( errorEl, actions );
+		} else {
+			this.body.appendChild( errorEl );
+		}
 	};
 
 	Wizard.prototype.summary = function () {
@@ -867,6 +904,7 @@
 				var invalidFields = form.querySelectorAll( '[required]' );
 				for ( var i = 0; i < invalidFields.length; i++ ) {
 					if ( ! invalidFields[ i ].value.trim() ) {
+						invalidFields[ i ].setAttribute( 'aria-describedby', 'getbooqin-error' );
 						invalidFields[ i ].focus();
 						break;
 					}
@@ -905,6 +943,94 @@
 	};
 
 	/**
+	 * Escapes the handful of characters the iCalendar spec (RFC 5545) treats
+	 * as special in TEXT values. Nothing here is untrusted HTML — this file
+	 * is inserted into a .ics, not the DOM — but commas/semicolons in a
+	 * service or customer name would otherwise corrupt the file structure.
+	 */
+	function icsEscape( value ) {
+		return String( value || '' ).replace( /\\/g, '\\\\' ).replace( /[,;]/g, '\\$&' ).replace( /\n/g, '\\n' );
+	}
+
+	function icsTimestamp( iso ) {
+		// "2026-08-31T11:00:00.000Z" -> "20260831T110000Z"
+		return iso.replace( /[-:]/g, '' ).replace( /\.\d{3}/, '' );
+	}
+
+	/**
+	 * A same-page .ics download for the confirmation screen — the booking
+	 * record already has everything needed (start_utc/end_utc are real UTC
+	 * instants, so this needs no timezone data of its own to be correct).
+	 */
+	function icsDataUrl( booking ) {
+		if ( ! booking.start_utc || ! booking.end_utc ) {
+			return null;
+		}
+		var summary = booking.service || t.bookNow;
+		var descriptionBits = [];
+		if ( booking.resource ) {
+			descriptionBits.push( t.teamMemberLabel + ': ' + booking.resource );
+		}
+		if ( booking.manage_url ) {
+			descriptionBits.push( 'Manage this booking: ' + booking.manage_url );
+		}
+		var lines = [
+			'BEGIN:VCALENDAR',
+			'VERSION:2.0',
+			'PRODID:-//GetBooqin//Booking//EN',
+			'BEGIN:VEVENT',
+			'UID:' + icsEscape( booking.uid ) + '@getbooqin',
+			'DTSTAMP:' + icsTimestamp( new Date().toISOString() ),
+			'DTSTART:' + icsTimestamp( booking.start_utc ),
+			'DTEND:' + icsTimestamp( booking.end_utc ),
+			'SUMMARY:' + icsEscape( summary ),
+			'DESCRIPTION:' + icsEscape( descriptionBits.join( '\\n' ) ),
+			'END:VEVENT',
+			'END:VCALENDAR'
+		];
+		return 'data:text/calendar;charset=utf-8,' + encodeURIComponent( lines.join( '\r\n' ) );
+	}
+
+	/**
+	 * Everything a customer needs from this screen without having to find
+	 * the confirmation email: what they booked, with whom, for how much,
+	 * a reference to quote if they call, a link back to manage it, and a
+	 * calendar file. Shared between stepDone (paid/free path) and
+	 * stepInstructions (offline-payment path) so neither shortchanges it.
+	 */
+	function confirmationDetails( booking ) {
+		var nodes = [];
+		var bits = [];
+		if ( booking.service ) bits.push( booking.service );
+		if ( booking.resource ) bits.push( t.teamMemberLabel + ': ' + booking.resource );
+		if ( booking.date && booking.time ) {
+			bits.push( booking.date + ' · ' + booking.time + ( booking.timezone_label ? ' (' + booking.timezone_label + ')' : '' ) );
+		}
+		if ( booking.price_html ) bits.push( booking.price_html );
+		if ( bits.length ) {
+			nodes.push( el( 'ul', { class: 'getbooqin-confirmation-details' }, bits.map( function ( bit ) {
+				return el( 'li', { text: bit } );
+			} ) ) );
+		}
+		if ( booking.uid ) {
+			nodes.push( el( 'p', { class: 'getbooqin-muted', text: 'Reference: ' + booking.uid } ) );
+		}
+
+		var actions = [];
+		var icsUrl = icsDataUrl( booking );
+		if ( icsUrl ) {
+			actions.push( el( 'a', { class: 'getbooqin-btn getbooqin-btn--ghost', href: icsUrl, download: 'appointment.ics', text: 'Add to calendar' } ) );
+		}
+		if ( booking.manage_url ) {
+			actions.push( el( 'a', { class: 'getbooqin-btn getbooqin-btn--ghost', href: booking.manage_url, text: 'Manage this booking' } ) );
+		}
+		if ( actions.length ) {
+			nodes.push( el( 'div', { class: 'getbooqin-actions' }, actions ) );
+		}
+		return nodes;
+	}
+
+	/**
 	 * Shown after choosing an offline method. The booking is real but unpaid,
 	 * so this screen states that plainly instead of thanking them for a
 	 * payment that never happened.
@@ -916,15 +1042,12 @@
 			el( 'div', { class: 'getbooqin-done' }, [
 				el( 'div', { class: 'getbooqin-done__mark', text: '✓' } ),
 				el( 'h4', { text: t.booked } ),
-				booking.date && booking.time
-					? el( 'p', { text: booking.date + ' · ' + booking.time } )
-					: null,
 				message ? el( 'p', { class: 'getbooqin-instructions', text: message } ) : null,
 				el( 'p', { class: 'getbooqin-muted', text: t.bookedIntro } ),
 				booking.meeting && booking.meeting.is_video
 					? el( 'p', { class: 'getbooqin-muted', text: t.videoNote } )
 					: null
-			] )
+			].concat( confirmationDetails( booking ) ) )
 		);
 	};
 
@@ -1088,14 +1211,11 @@
 			el( 'div', { class: 'getbooqin-done' }, [
 				el( 'div', { class: 'getbooqin-done__mark', text: '✓' } ),
 				el( 'h4', { text: t.booked } ),
-				booking.date && booking.time
-					? el( 'p', { text: booking.date + ' · ' + booking.time } )
-					: null,
 				el( 'p', { class: 'getbooqin-muted', text: paid ? t.paymentDone : t.bookedIntro } ),
 				booking.meeting && booking.meeting.is_video
 					? el( 'p', { class: 'getbooqin-muted', text: t.videoNote } )
 					: null
-			] )
+			].concat( confirmationDetails( booking ) ) )
 		);
 	};
 
@@ -1431,10 +1551,15 @@
 				}
 				config().then( addLauncher ).catch( addLauncher );
 			} )
-			.catch( function () {
-				// No linked service, or a transient network error — either
-				// way, showing nothing is correct on a page that isn't
-				// bookable, so this is deliberately silent.
+			.catch( function ( err ) {
+				// product-service.tsx always answers 200 with
+				// { service: null } for "nothing linked" — it never throws
+				// for that case (handled above, in .then()). So anything
+				// that lands here is a real failure: the proxy route 5xx'd,
+				// or the request didn't complete at all (err.status === 0).
+				// Rendering nothing for that is indistinguishable from "not
+				// bookable" and hides an outage — show it instead.
+				container.appendChild( el( 'p', { class: 'getbooqin-error', role: 'alert', text: ( err && err.message ) || t.genericError } ) );
 			} );
 	}
 

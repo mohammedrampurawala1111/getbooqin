@@ -11,6 +11,25 @@
     <meta name="description" content="{{ page_description | escape }}">
   {% endif %}
 
+  {%- comment -%}
+    Falls back to the theme-settings image (Theme settings -> Social
+    sharing) whenever the current page has none of its own, so a shared
+    link never previews blank — e.g. the homepage, or a product with no
+    photos uploaded yet.
+  {%- endcomment -%}
+  {%- assign share_image = page_image | default: settings.social_image -%}
+  <meta property="og:title" content="{{ page_title }}">
+  <meta property="og:type" content="{% if template contains 'product' %}product{% else %}website{% endif %}">
+  <meta property="og:url" content="{{ canonical_url }}">
+  {% if page_description %}
+    <meta property="og:description" content="{{ page_description | escape }}">
+  {% endif %}
+  {% if share_image %}
+    <meta property="og:image" content="{{ share_image | image_url: width: 1200 }}">
+    <meta property="og:image:width" content="1200">
+    <meta name="twitter:card" content="summary_large_image">
+  {% endif %}
+
   <link rel="canonical" href="{{ canonical_url }}">
   {% if settings.favicon %}
     <link rel="icon" type="image/png" href="{{ settings.favicon | image_url: width: 32, height: 32 }}">

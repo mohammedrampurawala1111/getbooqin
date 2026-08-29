@@ -56,8 +56,8 @@
         {% render 'icon-cart' %}
         <span class="site-header__cart-count" data-cart-count{% if cart.item_count == 0 %} hidden{% endif %}>{{ cart.item_count }}</span>
       </a>
-      {% if section.settings.book_button_text != blank %}
-        <a href="{{ section.settings.book_button_link | default: '#' }}" class="button button--accent site-header__book-cta">
+      {% if section.settings.book_button_text != blank and section.settings.book_button_link != blank %}
+        <a href="{{ section.settings.book_button_link }}" class="button button--accent site-header__book-cta">
           {{ section.settings.book_button_text }}
         </a>
       {% endif %}

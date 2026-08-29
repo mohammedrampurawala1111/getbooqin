@@ -14,13 +14,20 @@
   </form>
 
   {% if search.performed %}
-    {% if search.results.size > 0 %}
+    {%- comment -%}
+      Same reasoning as the collection grid: services are booked, not
+      searched-and-added-to-cart, so keep them out of retail search results.
+    {%- endcomment -%}
+    {%- capture retail_results -%}
+      {% for item in search.results %}
+        {% if item.object_type == 'product' and item.type != 'Service' %}
+          {% render 'product-card', product: item %}
+        {% endif %}
+      {% endfor %}
+    {%- endcapture -%}
+    {% if retail_results != blank %}
       <div class="product-grid">
-        {% for item in search.results %}
-          {% if item.object_type == 'product' %}
-            {% render 'product-card', product: item %}
-          {% endif %}
-        {% endfor %}
+        {{ retail_results }}
       </div>
     {% else %}
       <p class="search-page__empty">No results — try a different search.</p>

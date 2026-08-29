@@ -61,7 +61,9 @@ export async function bookingPayload(shop: string, settings: Settings, booking: 
     email: customer?.email ?? "",
     date: Bookings.localDate(booking, settings.timezone),
     time: Bookings.localTime(booking, settings.timezone),
+    timezone_label: Bookings.localTzLabel(booking, settings.timezone) || settings.timezone,
     start_utc: booking.startUtc.toISOString(),
+    end_utc: booking.endUtc.toISOString(),
     price_html: booking.price > 0 ? `${settings.currency_symbol}${booking.price.toFixed(2)}` : "",
     addons: addons.map((a) => ({
       name: a.name,

@@ -116,6 +116,12 @@
 		document.querySelectorAll( '[data-cart-count]' ).forEach( function ( el ) {
 			el.textContent = String( count );
 			el.hidden = count === 0;
+			// Restart the CSS pulse (theme.css) so the header cart icon draws
+			// the eye on every add, not just the first one this page load.
+			el.classList.remove( 'is-pulsing' );
+			// eslint-disable-next-line no-unused-expressions
+			el.offsetWidth;
+			el.classList.add( 'is-pulsing' );
 		} );
 	}
 
@@ -159,6 +165,17 @@
 					.then( function ( cart ) {
 						updateCartCount( cart.item_count );
 						showFormMessage( form, 'Added to cart.', false );
+						// The message line is easy to miss under the fold on
+						// mobile — flash the button itself too, right where the
+						// customer is already looking.
+						var addButtonText = form.querySelector( '[data-add-to-cart-text]' );
+						if ( addButtonText ) {
+							var previousText = addButtonText.textContent;
+							addButtonText.textContent = 'Added ✓';
+							setTimeout( function () {
+								addButtonText.textContent = previousText;
+							}, 1800 );
+						}
 					} )
 					.catch( function ( err ) {
 						showFormMessage( form, err.message, true );
@@ -176,6 +193,15 @@
 		var form = document.querySelector( '[data-cart-form]' );
 		if ( ! form ) {
 			return;
+		}
+
+		// The "Update cart" button only exists so quantity changes still work
+		// with JS blocked (see main-cart.liquid) — once we know JS is running,
+		// data-cart-qty's change listener below handles updates instantly and
+		// this button is redundant.
+		var updateButton = form.querySelector( '[data-cart-update]' );
+		if ( updateButton ) {
+			updateButton.hidden = true;
 		}
 
 		form.querySelectorAll( '[data-cart-qty]' ).forEach( function ( input ) {

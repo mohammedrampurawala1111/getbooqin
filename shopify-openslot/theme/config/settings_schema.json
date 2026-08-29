@@ -125,5 +125,16 @@
         "label": "Favicon image"
       }
     ]
+  },
+  {
+    "name": "Social sharing",
+    "settings": [
+      {
+        "type": "image_picker",
+        "id": "social_image",
+        "label": "Social share image",
+        "info": "Used when a page is shared on social media or messaging apps and has no image of its own (e.g. the homepage, or a product with no photos yet)."
+      }
+    ]
   }
 ]

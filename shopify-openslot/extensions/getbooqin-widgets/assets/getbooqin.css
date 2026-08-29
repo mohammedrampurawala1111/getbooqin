@@ -305,6 +305,11 @@
 	font-size: 0.85em;
 }
 
+.getbooqin-calendar__hint.is-confirmed {
+	color: var(--getbooqin-accent, #2563eb);
+	font-weight: 600;
+}
+
 .getbooqin-addon {
 	display: flex;
 	align-items: flex-start;
@@ -469,6 +474,25 @@
 	margin-bottom: 8px;
 }
 
+.getbooqin-confirmation-details {
+	list-style: none;
+	margin: 18px 0 0;
+	padding: 0;
+	text-align: left;
+	border: 1px solid var(--getbooqin-line, #e3e6ea);
+	border-radius: var(--getbooqin-radius, 10px);
+	overflow: hidden;
+}
+
+.getbooqin-confirmation-details li {
+	padding: 10px 16px;
+	font-size: 0.92em;
+}
+
+.getbooqin-confirmation-details li + li {
+	border-top: 1px solid var(--getbooqin-line, #e3e6ea);
+}
+
 /* -------------------------------------------------------------- Card grids */
 
 .getbooqin-grid {
@@ -596,10 +620,21 @@
 		position: fixed;
 		left: 12px;
 		right: 12px;
+		/* left+right already define the width; a literal 100% here is
+		   measured against the viewport and then offset by `left`, pushing
+		   the button 12px past the right edge — the exact cause of the
+		   mobile horizontal-scroll bug this rule used to introduce. */
+		width: auto;
 		bottom: calc(12px + env(safe-area-inset-bottom, 0px));
 		z-index: 9998;
 		margin-top: 0;
 		box-shadow: 0 8px 24px rgba(16, 24, 40, 0.22);
+	}
+
+	/* The bar floats on top of the page's own content otherwise — reserve
+	   room for it so it doesn't sit over the product title and price. */
+	body:has(.getbooqin-product-embed__launcher) {
+		padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px));
 	}
 }
 

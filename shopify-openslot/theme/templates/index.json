@@ -2,7 +2,10 @@
   "sections": {
     "hero": {
       "type": "hero",
-      "settings": {}
+      "settings": {
+        "primary_link": "/pages/book",
+        "secondary_link": "/collections/all"
+      }
     },
     "services": {
       "type": "collection-list",
@@ -25,7 +28,9 @@
     },
     "booking": {
       "type": "booking-callout",
-      "settings": {}
+      "settings": {
+        "button_link": "/pages/book"
+      }
     },
     "reviews": {
       "type": "testimonials",
@@ -34,7 +39,7 @@
         "t2": {
           "type": "testimonial",
           "settings": {
-            "quote": "Booking online took thirty seconds and they text you a reminder. Love it.",
+            "quote": "Booking online took thirty seconds — so easy, and my confirmation email had everything I needed.",
             "author": "Priya S."
           }
         },

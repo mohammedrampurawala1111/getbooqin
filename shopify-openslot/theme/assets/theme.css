@@ -10,6 +10,10 @@ body {
   font-weight: var(--font-body-weight);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  /* Backstop against any element (theme or app) that overflows the
+     viewport horizontally on a narrow screen — a scrollable page should
+     never itself scroll sideways. */
+  overflow-x: clip;
 }
 img { max-width: 100%; display: block; }
 a { color: inherit; text-decoration: none; }
@@ -140,6 +144,7 @@ section {
   align-items: center;
   gap: 24px;
   padding: 18px 24px;
+  flex-wrap: wrap;
 }
 .site-header__menu-toggle {
   display: none;
@@ -182,7 +187,7 @@ section {
 .site-header__submenu li a { display: block; padding: 8px 10px; border-radius: 8px; }
 .site-header__submenu li a:hover { background: var(--color-background-secondary); }
 
-.site-header__actions { display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+.site-header__actions { display: flex; align-items: center; gap: 16px; flex-shrink: 1; min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
 .site-header__icon-link { position: relative; color: var(--color-text); display: inline-flex; }
 .site-header__cart-count {
   position: absolute;
@@ -222,6 +227,15 @@ section {
      visible; the account icon is the one thing worth dropping to make
      room, since customers rarely need it mid-booking. */
   .site-header__icon-link[aria-label="Account"] { display: none; }
+}
+
+@media (max-width: 480px) {
+  /* Last resort before things wrap to a second line: shrink the CTA to a
+     compact pill rather than let its full-length label force an overflow. */
+  .site-header__book-cta {
+    padding: 8px 12px;
+    font-size: 0.76rem;
+  }
 }
 
 /* ----------------------------------------------------------------- Hero */
@@ -485,6 +499,16 @@ section {
 }
 .product-form__add { flex: 1; min-width: 160px; }
 .product-form .shopify-payment-button { flex-basis: 100%; margin-top: 4px; }
+/* Apple Pay / Google Pay / PayPal render their own branded buttons Shopify
+   doesn't let a theme recolor — that's a wallet policy, not a bug here. The
+   plain "Buy it now" fallback (shown when no wallet is eligible) is a real
+   HTML button Shopify does expose for theming, and defaults to Shopify's
+   own blue rather than the store's accent color unless a theme sets this. */
+.shopify-payment-button__button--unbranded {
+  background-color: var(--color-accent) !important;
+  color: var(--color-accent-text) !important;
+  border-radius: var(--radius) !important;
+}
 .product-form__message {
   flex-basis: 100%;
   font-size: 0.85rem;
@@ -665,3 +689,48 @@ section {
   background: #fff;
   color: var(--color-text);
 }
+
+/* ------------------------------------------------------------- Contact */
+
+.contact__intro { max-width: 640px; margin-bottom: 8px; }
+.contact__text { color: var(--color-text-muted); }
+.contact__details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  margin: 20px 0 32px;
+  padding: 0;
+  font-weight: 600;
+}
+.contact__details a:hover { color: var(--color-accent); }
+
+.contact-form { max-width: 640px; display: flex; flex-direction: column; gap: 16px; }
+.contact-form__row { display: flex; gap: 16px; flex-wrap: wrap; }
+.contact-form__row .contact-form__field { flex: 1; min-width: 180px; }
+.contact-form__field { display: flex; flex-direction: column; gap: 6px; }
+.contact-form__field label { font-size: 0.85rem; font-weight: 600; }
+.contact-form__field input,
+.contact-form__field textarea {
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-background);
+  color: var(--color-text);
+  resize: vertical;
+}
+.contact-form__success { color: var(--color-accent); font-weight: 600; }
+.contact-form__error { background: #fbe4e1; color: #92271f; padding: 10px 14px; border-radius: 10px; }
+
+/* ------------------------------------------------------------ Cart feedback */
+
+.site-header__cart-count.is-pulsing { animation: getbooqin-cart-pulse 0.5s ease; }
+@keyframes getbooqin-cart-pulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+
+/* ---------------------------------------------------------- Service tiles */
+
+.service-card--static { cursor: default; }
+.service-card--static:hover { filter: none; }

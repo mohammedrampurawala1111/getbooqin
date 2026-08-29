@@ -10,11 +10,23 @@
 
   <div class="service-grid__items">
     {% for block in section.blocks %}
-      <a
-        href="{{ block.settings.collection.url | default: block.settings.link | default: '#' }}"
-        class="service-card"
-        {{ block.shopify_attributes }}
-      >
+      {%- assign card_url = block.settings.collection.url | default: block.settings.link -%}
+      {%- comment -%}
+        Prefer the linked collection's actual cheapest product over the
+        merchant-typed subtitle, so "from $X" can't quietly drift out of
+        sync with real prices the way a hand-typed number always can.
+      {%- endcomment -%}
+      {%- assign price_text = blank -%}
+      {%- if block.settings.collection != blank -%}
+        {%- assign cheapest = block.settings.collection.products | sort: 'price_min' | first -%}
+        {%- if cheapest -%}
+          {%- assign price_money = cheapest.price_min | money -%}
+          {%- assign price_text = 'from ' | append: price_money -%}
+        {%- endif -%}
+      {%- endif -%}
+      {%- assign price_text = price_text | default: block.settings.subtitle -%}
+
+      {%- capture card_inner -%}
         <div class="service-card__media">
           {% if block.settings.image %}
             <img
@@ -49,10 +61,21 @@
           {% endif %}
         </div>
         <h3 class="service-card__title">{{ block.settings.title | default: block.settings.collection.title }}</h3>
-        {% if block.settings.subtitle != blank %}
-          <p class="service-card__subtitle">{{ block.settings.subtitle }}</p>
+        {% if price_text != blank %}
+          <p class="service-card__subtitle">{{ price_text }}</p>
         {% endif %}
-      </a>
+      {%- endcapture -%}
+
+      {%- if card_url != blank -%}
+        <a href="{{ card_url }}" class="service-card" {{ block.shopify_attributes }}>{{ card_inner }}</a>
+      {%- else -%}
+        {%- comment -%}
+          No collection or link chosen yet — a card that goes nowhere is a
+          bigger failure than a card that just isn't clickable, so this
+          renders the same content without wrapping it in a dead anchor.
+        {%- endcomment -%}
+        <div class="service-card service-card--static" {{ block.shopify_attributes }}>{{ card_inner }}</div>
+      {%- endif -%}
     {% endfor %}
   </div>
 </section>

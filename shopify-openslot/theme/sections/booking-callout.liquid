@@ -14,8 +14,8 @@
     {% if section.settings.text != blank %}
       <p class="booking-callout__text">{{ section.settings.text }}</p>
     {% endif %}
-    {% if section.settings.button_text != blank %}
-      <a href="{{ section.settings.button_link | default: '#' }}" class="button button--light button--lg">{{ section.settings.button_text }}</a>
+    {% if section.settings.button_text != blank and section.settings.button_link != blank %}
+      <a href="{{ section.settings.button_link }}" class="button button--light button--lg">{{ section.settings.button_text }}</a>
     {% endif %}
   </div>
 </section>

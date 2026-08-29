@@ -20,10 +20,10 @@
         "settings": {
           "menu": "main-menu",
           "book_button_text": "Book now",
-          "book_button_link": "",
+          "book_button_link": "/pages/book",
           "show_announcement": true,
-          "announcement_text": "Now booking for the holiday season — reserve your spot",
-          "announcement_link": ""
+          "announcement_text": "Now booking — reserve your spot",
+          "announcement_link": "/pages/book"
         }
       },
       "footer": {
@@ -40,7 +40,7 @@
             "type": "text",
             "settings": {
               "heading": "Visit us",
-              "text": "<p>123 Studio Lane<br>Open Tue–Sat, 10am–7pm</p>"
+              "text": "<p>Open Tue–Sat, 10am–7pm</p>"
             }
           }
         },
@@ -50,7 +50,7 @@
         ],
         "settings": {
           "tagline": "Nails, done beautifully.",
-          "booking_page_link": "",
+          "booking_page_link": "/pages/book",
           "newsletter_heading": "Stay polished",
           "newsletter_text": "New shades, seasonal offers and appointment openings — straight to your inbox."
         }

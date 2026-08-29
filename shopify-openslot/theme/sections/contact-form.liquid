@@ -1,0 +1,73 @@
+<section class="contact">
+  <div class="contact__intro">
+    {% if section.settings.heading != blank %}
+      <h2 class="section-heading">{{ section.settings.heading }}</h2>
+    {% endif %}
+    {% if section.settings.text != blank %}
+      <p class="contact__text">{{ section.settings.text }}</p>
+    {% endif %}
+  </div>
+
+  {% if section.settings.phone != blank or section.settings.email != blank or section.settings.address != blank %}
+    <ul class="contact__details">
+      {% if section.settings.phone != blank %}
+        <li><a href="tel:{{ section.settings.phone | replace: ' ', '' }}">{{ section.settings.phone }}</a></li>
+      {% endif %}
+      {% if section.settings.email != blank %}
+        <li><a href="mailto:{{ section.settings.email }}">{{ section.settings.email }}</a></li>
+      {% endif %}
+      {% if section.settings.address != blank %}
+        <li>{{ section.settings.address }}</li>
+      {% endif %}
+    </ul>
+  {% endif %}
+
+  {% form 'contact', class: 'contact-form' %}
+    {% if form.posted_successfully? %}
+      <p class="contact-form__success" role="status">Thanks — we'll get back to you shortly.</p>
+    {% else %}
+      {% if form.errors %}
+        <p class="contact-form__error" role="alert">{{ form.errors | default_errors }}</p>
+      {% endif %}
+      <div class="contact-form__row">
+        <div class="contact-form__field">
+          <label for="contact-name">Name</label>
+          <input type="text" id="contact-name" name="contact[name]" value="{{ form.name }}" required>
+        </div>
+        <div class="contact-form__field">
+          <label for="contact-email">Email *</label>
+          <input type="email" id="contact-email" name="contact[email]" value="{{ form.email }}" required>
+        </div>
+      </div>
+      <div class="contact-form__field">
+        <label for="contact-phone">Phone</label>
+        <input type="tel" id="contact-phone" name="contact[phone]" value="{{ form.phone }}">
+      </div>
+      <div class="contact-form__field">
+        <label for="contact-body">Message *</label>
+        <textarea id="contact-body" name="contact[body]" rows="5" required>{{ form.body }}</textarea>
+      </div>
+      <button type="submit" class="button button--accent">Send message</button>
+    {% endif %}
+  {% endform %}
+</section>
+
+{% schema %}
+{
+  "name": "Contact form",
+  "settings": [
+    { "type": "text", "id": "heading", "label": "Heading", "default": "Get in touch" },
+    { "type": "textarea", "id": "text", "label": "Text", "default": "Questions about a booking, or something outside our usual hours? Reach out and we'll get back to you." },
+    {
+      "type": "header",
+      "content": "Contact details (shown above the form when filled in)"
+    },
+    { "type": "text", "id": "phone", "label": "Phone number" },
+    { "type": "text", "id": "email", "label": "Email address" },
+    { "type": "richtext", "id": "address", "label": "Address" }
+  ],
+  "presets": [
+    { "name": "Contact form" }
+  ]
+}
+{% endschema %}

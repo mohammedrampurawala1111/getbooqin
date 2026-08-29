@@ -22,11 +22,11 @@
       <p class="hero__subheading">{{ section.settings.subheading }}</p>
     {% endif %}
     <div class="hero__actions">
-      {% if section.settings.primary_text != blank %}
-        <a href="{{ section.settings.primary_link | default: '#' }}" class="button button--accent button--lg">{{ section.settings.primary_text }}</a>
+      {% if section.settings.primary_text != blank and section.settings.primary_link != blank %}
+        <a href="{{ section.settings.primary_link }}" class="button button--accent button--lg">{{ section.settings.primary_text }}</a>
       {% endif %}
-      {% if section.settings.secondary_text != blank %}
-        <a href="{{ section.settings.secondary_link | default: '#' }}" class="button button--outline button--lg">{{ section.settings.secondary_text }}</a>
+      {% if section.settings.secondary_text != blank and section.settings.secondary_link != blank %}
+        <a href="{{ section.settings.secondary_link }}" class="button button--outline button--lg">{{ section.settings.secondary_text }}</a>
       {% endif %}
     </div>
   </div>

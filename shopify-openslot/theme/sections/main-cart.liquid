@@ -45,6 +45,7 @@
                 <input
                   type="number"
                   min="0"
+                  name="updates[{{ forloop.index }}]"
                   value="{{ item.quantity }}"
                   class="cart-table__qty"
                   data-cart-qty="{{ forloop.index0 }}"
@@ -60,6 +61,14 @@
       <div class="cart-page__footer">
         <p class="cart-page__subtotal">Subtotal: <strong>{{ cart.total_price | money }}</strong></p>
         <p class="cart-page__note">Taxes and shipping calculated at checkout.</p>
+        {%- comment -%}
+          data-cart-qty (theme.js) updates quantities instantly via
+          /cart/change.js — this submit button is the fallback for when JS
+          hasn't run (or is blocked): a plain form POST with the updates[]
+          inputs above still resizes every line. theme.js hides it once it
+          confirms the JS path is live, so it never shows twice.
+        {%- endcomment -%}
+        <button type="submit" name="update" class="button button--outline" data-cart-update>Update cart</button>
         <button type="submit" name="checkout" class="button button--accent button--lg">Checkout</button>
       </div>
     {% endform %}

@@ -30,7 +30,8 @@
     "prisma": "prisma",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy"
+    "prisma:deploy": "prisma migrate deploy",
+    "test": "vitest run"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",
@@ -41,8 +42,10 @@
     "@types/luxon": "^3.4.2",
     "@types/node": "^22.2.5",
     "@types/nodemailer": "^8.0.1",
+    "dotenv": "^16.6.1",
     "prisma": "^6.1.0",
-    "typescript": "^5.2.2"
+    "typescript": "^5.2.2",
+    "vitest": "^3.2.7"
   },
   "engines": {
     "node": "^18.20 || ^20.10 || >=21.0.0"

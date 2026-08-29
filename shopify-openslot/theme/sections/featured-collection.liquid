@@ -19,7 +19,7 @@
         {% render 'product-card', product: product %}
       {% endfor %}
     </div>
-  {% else %}
+  {% elsif request.design_mode %}
     <p class="collection-strip__empty">Select a collection to display products here.</p>
   {% endif %}
 </section>
