@@ -30,6 +30,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     connections,
     currentConnectionId: connection.id,
     isManual,
+    shop,
   };
 }
 
@@ -102,7 +103,14 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function SettingsPage({ loaderData, actionData }: Route.ComponentProps) {
-  const { settings, gatewayFields, paymentsEnabled, connections, currentConnectionId, isManual } = loaderData;
+  const { settings, gatewayFields, paymentsEnabled, connections, currentConnectionId, isManual, shop } = loaderData;
+  // defaultSettings() seeds business_name to the connection's own opaque
+  // shop id, so a manual connection that never completed onboarding step 1
+  // shows that raw manual-<uuid> string as its "business name" instead of
+  // an empty field prompting the owner to set a real one (UX audit's D2
+  // finding, same root cause as the sidebar label fix in
+  // dashboard.$connectionId.tsx).
+  const businessNameValue = isManual && settings.business_name === shop ? "" : settings.business_name;
   const [searchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "general";
 
@@ -149,7 +157,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
             <div className="card-body grid grid-cols-2 gap-x-4 gap-y-[14px] [&_.field-label]:min-h-[38px]">
               <div className="col-span-2">
                 <Field label="Business name">
-                  <Input name="business_name" defaultValue={settings.business_name} />
+                  <Input name="business_name" defaultValue={businessNameValue} placeholder={isManual ? "e.g. Kapsalon Vondel" : undefined} />
                 </Field>
               </div>
               <Field label="Business email">
@@ -355,9 +363,20 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-600">
                 {c.platform === "manual" ? "M" : c.shop.slice(0, 1).toUpperCase()}
               </span>
-              <span className="min-w-0 truncate font-medium">
-                {c.platform === "manual" ? "Manual setup (no store connected)" : c.shop}
-              </span>
+              {c.id === currentConnectionId || c.status !== "active" ? (
+                <span className="min-w-0 truncate font-medium">
+                  {c.platform === "manual" ? "Manual setup (no store connected)" : c.shop}
+                </span>
+              ) : (
+                // The only way to reach a second store used to be pasting its
+                // URL — this list showed every connection but none of them,
+                // besides the current one, were actually clickable (UX
+                // audit's D1 finding: a store created here became invisible
+                // and unreachable from the UI the moment a newer one existed).
+                <a href={`/dashboard/${c.id}`} className="min-w-0 truncate font-medium text-ink hover:underline">
+                  {c.platform === "manual" ? "Manual setup (no store connected)" : c.shop}
+                </a>
+              )}
               <span className="flex items-center gap-2">
                 {c.id === currentConnectionId && <Badge status="confirmed" label="Current" />}
                 {c.status !== "active" && <Badge status="cancelled" label={c.status} />}

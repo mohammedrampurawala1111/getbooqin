@@ -81,6 +81,18 @@ export default function ServicesList({ loaderData, actionData, params }: Route.C
           <Badge status={s.status ? "confirmed" : "cancelled"} label={s.status ? "Active" : "Inactive"} />,
           <span className="text-faint">›</span>,
         ]}
+        mobileCard={(s) => (
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <span className="min-w-0 truncate font-medium">{s.name || `Service #${s.id}`}</span>
+              <span className="num shrink-0">{s.price > 0 ? `${currencySymbol}${s.price.toFixed(2)}` : "—"}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="num text-muted">{s.durationMin} min</span>
+              <Badge status={s.status ? "confirmed" : "cancelled"} label={s.status ? "Active" : "Inactive"} />
+            </div>
+          </>
+        )}
         empty={
           <EmptyState
             icon={

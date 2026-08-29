@@ -218,6 +218,7 @@ export function DataTable<T>({
   rows,
   rowKey,
   renderRow,
+  mobileCard,
   href,
   empty,
   footer,
@@ -228,6 +229,14 @@ export function DataTable<T>({
   rows: T[];
   rowKey: (row: T) => string;
   renderRow: (row: T) => ReactNode[];
+  // Opt-in stacked-card layout below 640px, swapped in for the grid row
+  // instead of it (rather than compressing every fixed-width column into a
+  // 382px screen — a five-column row wrapped mid-word and its chevron
+  // affordance sat half off the card edge, UX audit's S1 finding). Each
+  // <Row>/card pair below is one data row wrapped in its own visibility
+  // toggle, not a shared grid, so this can't disturb either layout's own
+  // column sizing.
+  mobileCard?: (row: T) => ReactNode;
   href?: (row: T) => string;
   empty?: ReactNode;
   footer?: ReactNode;
@@ -236,23 +245,36 @@ export function DataTable<T>({
   const Row = href ? "a" : "div";
   return (
     <div className="card">
-      <div className="thead" style={{ gridTemplateColumns: cols }}>
-        {columns.map((c) => (
-          <div key={c} className={c ? "th" : ""}>{c}</div>
-        ))}
+      <div className={mobileCard ? "hidden sm:block" : undefined}>
+        <div className="thead" style={{ gridTemplateColumns: cols }}>
+          {columns.map((c) => (
+            <div key={c} className={c ? "th" : ""}>{c}</div>
+          ))}
+        </div>
       </div>
 
       {rows.map((row) => (
-        <Row
-          key={rowKey(row)}
-          {...(href ? { href: href(row) } : {})}
-          className={`trow no-underline text-ink hover:no-underline ${compact ? "trow-compact" : ""} ${href ? "cursor-pointer" : ""}`}
-          style={{ gridTemplateColumns: cols }}
-        >
-          {renderRow(row).map((cell, i) => (
-            <div key={i} className="min-w-0">{cell}</div>
-          ))}
-        </Row>
+        <div key={rowKey(row)}>
+          <div className={mobileCard ? "hidden sm:block" : undefined}>
+            <Row
+              {...(href ? { href: href(row) } : {})}
+              className={`trow no-underline text-ink hover:no-underline ${compact ? "trow-compact" : ""} ${href ? "cursor-pointer" : ""}`}
+              style={{ gridTemplateColumns: cols }}
+            >
+              {renderRow(row).map((cell, i) => (
+                <div key={i} className="min-w-0">{cell}</div>
+              ))}
+            </Row>
+          </div>
+          {mobileCard && (
+            <Row
+              {...(href ? { href: href(row) } : {})}
+              className={`flex sm:hidden flex-col gap-1 no-underline text-ink hover:no-underline border-b border-row px-4 py-[13px] text-[13px] hover:bg-canvas-alt ${href ? "cursor-pointer" : ""}`}
+            >
+              {mobileCard(row)}
+            </Row>
+          )}
+        </div>
       ))}
 
       {rows.length === 0 ? empty : null}

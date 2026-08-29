@@ -25,7 +25,13 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId)?.emailAddress ??
     clerkUser.emailAddresses[0]?.emailAddress ??
     "";
-  const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || email || "Account";
+  // Falling back to the full email here used to mean the account menu's
+  // title line and its email line below rendered the exact same string
+  // whenever no first/last name was set (UX audit's D4 finding) — the
+  // local part alone still reads as a name-shaped label without repeating
+  // the line underneath it verbatim.
+  const name =
+    [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || email.split("@")[0] || "Account";
   const initials = name
     .split(" ")
     .filter(Boolean)
@@ -43,8 +49,19 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // A manual connection's "shop" is an opaque generated id (core/src/
   // connections.ts's createManualConnection), not something to show a
   // merchant — lead with their business name instead, same as a real
-  // Shopify domain would read here.
-  const label = platform === "manual" ? settings.business_name || "Manual setup" : connection.shop;
+  // Shopify domain would read here. defaultSettings() seeds business_name
+  // to that same opaque shop id (core/src/booking/settings.ts), so
+  // `|| "Manual setup"` never actually fires — a connection that never
+  // completed step 1 (every account from before onboarding's persistence
+  // fix) shows its raw manual-<uuid> shop id verbatim instead (UX audit's
+  // D2 finding). Comparing against `shop` catches that untouched default
+  // without needing a data migration.
+  const label =
+    platform === "manual"
+      ? settings.business_name && settings.business_name !== shop
+        ? settings.business_name
+        : "Manual setup"
+      : connection.shop;
 
   return data(
     { connection, channelCount, label, preset: settings.preset, user: { name, email, initials } },

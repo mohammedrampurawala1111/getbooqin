@@ -39,9 +39,13 @@ export default function Account({ loaderData }: Route.ComponentProps) {
         <PageHeader title="Account" />
 
         <div className="card">
-          <div className="flex border-b border-line px-[6px]">
-            <a href="?tab=profile" className={`tab ${tab === "profile" ? "tab-active" : ""}`}>Profile</a>
-            <a href="?tab=security" className={`tab ${tab === "security" ? "tab-active" : ""}`}>Password &amp; security</a>
+          {/* Same overflow-x-auto/shrink-0 treatment as the Settings tab
+              strip (dashboard.$connectionId.settings.tsx, UX audit's M6
+              finding) — this one hadn't been touched yet and would clip
+              the same way on a narrow phone. */}
+          <div className="flex overflow-x-auto border-b border-line px-[6px]">
+            <a href="?tab=profile" className={`tab shrink-0 ${tab === "profile" ? "tab-active" : ""}`}>Profile</a>
+            <a href="?tab=security" className={`tab shrink-0 ${tab === "security" ? "tab-active" : ""}`}>Password &amp; security</a>
           </div>
         </div>
 

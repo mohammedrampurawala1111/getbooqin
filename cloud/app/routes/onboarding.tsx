@@ -2,13 +2,13 @@ import { randomUUID } from "node:crypto";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { redirect, useFetcher, useSearchParams } from "react-router";
 import type { Route } from "./+types/onboarding";
-import { requireUserSession } from "~/session.server";
+import { getClerkClient, requireUserSession } from "~/session.server";
 import { AlertError, Field, Input, Toggle, TimezoneSelect } from "~/components/ui";
 import { OnboardingShell, PresetTiles, PresetScaffold, IntegrationRow } from "~/components/onboarding";
 import { INTEGRATIONS, getPreset, type PresetId } from "~/lib/presets";
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 import { CURRENCIES, guessCurrency } from "~/lib/currency";
-import { Data, Settings, createManualConnection, getUserConnection } from "getbooqin-core";
+import { Data, Settings, createManualConnection, getUserConnection, listUserConnections } from "getbooqin-core";
 
 // Two ways to leave this wizard with a working account: connect a real
 // Shopify store (ShopifyConnectForm below — answers ride through the OAuth
@@ -30,16 +30,42 @@ export const meta: Route.MetaFunction = () => [{ title: "Set up your business ·
 export async function loader({ request }: Route.LoaderArgs) {
   const session = await requireUserSession(request);
   const url = new URL(request.url);
+
+  // No `cid` means this isn't a draft already in progress — if the account
+  // already has a store, this is a stale/bookmarked link or the Back
+  // button after finishing, and letting step 1's Continue run again would
+  // silently mint a second manual Connection with no way back to the first
+  // (UX audit's D1 finding). Same "active connections" definition
+  // dashboard.tsx's loader uses, so the two routes agree on what "already
+  // set up" means. Deliberately adding another store is Settings ›
+  // Integrations' own "+ Connect a Shopify store" flow, not this wizard.
+  if (!url.searchParams.get("cid")) {
+    const connections = await listUserConnections(session.userId);
+    const active = connections.find((c) => c.status === "active");
+    if (active) throw redirect(`/dashboard/${active.id}`);
+  }
+
   // Best-effort carry from signup.tsx's own business-name/preset/phone
   // fields (query params, not sessionStorage — a mismatched storage key
   // between signup.tsx and this route used to mean that data never arrived
   // here at all, UX audit's N1 finding). Only read once, on the very first
   // render of step 1; every step past that already has its own Continue
   // saving real values, so there's nothing left to seed from the URL.
+  const clerkUser = await getClerkClient().users.getUser(session.userId);
+  const email =
+    clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId)?.emailAddress ??
+    clerkUser.emailAddresses[0]?.emailAddress ??
+    "";
+
   const seed = {
     businessName: url.searchParams.get("business_name") || "",
     preset: (url.searchParams.get("preset") as PresetId) || undefined,
     phone: url.searchParams.get("phone") || "",
+    // The account already has this — retyping it two screens after signing
+    // up was a regression from an earlier version that did prefill it (UX
+    // audit's D3 finding). Still editable: a merchant's booking contact
+    // address is often not the login email.
+    email,
   };
   return { userId: session.userId, seed };
 }
@@ -192,7 +218,7 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
     return {
       businessName: seed.businessName,
       preset: seed.preset ?? "generic",
-      email: "",
+      email: seed.email,
       phone: seed.phone,
       timezone,
       currency: guessed.code,
