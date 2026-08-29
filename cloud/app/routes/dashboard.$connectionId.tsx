@@ -244,7 +244,7 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
               {item.icon}
               <span className="min-w-0 flex-1 truncate">{item.label}</span>
               {item.badge ? (
-                <span className="num shrink-0 rounded-full bg-brand-500 px-[6px] py-[1px] text-[11px] font-semibold text-white">
+                <span className="num shrink-0 rounded-full bg-brand-fill px-[6px] py-[1px] text-[11px] font-semibold text-white">
                   {item.badge}
                 </span>
               ) : null}
@@ -269,6 +269,7 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
         <div className="flex items-center gap-3 border-b border-line bg-surface px-4 py-3 md:hidden">
           <label
             htmlFor="nav-toggle"
+            role="button"
             aria-label="Toggle navigation"
             aria-expanded={navOpen}
             aria-controls="dashboard-nav"

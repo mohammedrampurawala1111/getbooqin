@@ -46,6 +46,7 @@ export default function Signup() {
   const { isLoaded, signUp, setActive } = useSignUp();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const [firstName, setFirstName] = useState("");
   const [businessName, setBusinessName] = useState("");
   const [preset, setPreset] = useState<PresetId>((searchParams.get("preset") as PresetId) || "generic");
   const [email, setEmail] = useState("");
@@ -103,7 +104,7 @@ export default function Signup() {
     setSubmitting(true);
     setError(null);
     try {
-      const result = await signUp.create({ emailAddress: email, password });
+      const result = await signUp.create({ emailAddress: email, password, firstName });
       if (result.status === "complete") {
         await setActive({ session: result.createdSessionId });
         await saveProfilePhone();
@@ -194,6 +195,14 @@ export default function Signup() {
                 <span className="h-px flex-1 bg-line" />
               </div>
               <form onSubmit={handleSignup} className="flex flex-col gap-[14px]">
+                {/* Nothing in signup or setup ever asked for a person's
+                    name — the sidebar/account menu fell back to printing
+                    an email address instead (UX audit's D3/D4 finding).
+                    Google sign-up already gets this for free from the
+                    OAuth profile; this is the gap on the password path. */}
+                <Field label="First name">
+                  <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} required autoComplete="given-name" />
+                </Field>
                 <Field label="Business name">
                   <Input value={businessName} onChange={(e) => setBusinessName(e.target.value)} required autoComplete="organization" />
                 </Field>

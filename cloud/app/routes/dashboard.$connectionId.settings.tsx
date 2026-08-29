@@ -3,6 +3,7 @@ import { Form, redirect, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.settings";
 import { Settings, PaymentManager, FeatureFlags, listUserConnections, disconnectConnection } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
+import { getClerkClient } from "~/session.server";
 import { Badge, TimezoneSelect, Toggle } from "~/components/ui";
 import { IntegrationRow } from "~/components/onboarding";
 import { TemplateConfig, overviewCards, type OverviewCardKey } from "~/components/account";
@@ -24,6 +25,20 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     fields: g.settingsFields(),
   }));
 
+  // getSettings() always seeds business_email/admin_email blank (core's
+  // defaultSettings() has no way to know the account's real address at
+  // read time) even though the account holding this connection already
+  // has one — a fresh account showed two empty email fields it had no
+  // reason to (UX audit's D3 finding). Presentation-layer prefill only,
+  // same as businessNameValue below — doesn't touch stored settings, so a
+  // merchant who deliberately wants a different notification address
+  // still just types over it and saves.
+  const clerkUser = await getClerkClient().users.getUser(userId);
+  const accountEmail =
+    clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId)?.emailAddress ??
+    clerkUser.emailAddresses[0]?.emailAddress ??
+    "";
+
   return {
     settings,
     gatewayFields,
@@ -32,6 +47,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     currentConnectionId: connection.id,
     isManual,
     shop,
+    accountEmail,
   };
 }
 
@@ -107,7 +123,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function SettingsPage({ loaderData, actionData }: Route.ComponentProps) {
-  const { settings, gatewayFields, paymentsEnabled, connections, currentConnectionId, isManual, shop } = loaderData;
+  const { settings, gatewayFields, paymentsEnabled, connections, currentConnectionId, isManual, shop, accountEmail } = loaderData;
   // defaultSettings() seeds business_name to the connection's own opaque
   // shop id, so a manual connection that never completed onboarding step 1
   // shows that raw manual-<uuid> string as its "business name" instead of
@@ -115,6 +131,8 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
   // finding, same root cause as the sidebar label fix in
   // dashboard.$connectionId.tsx).
   const businessNameValue = isManual && settings.business_name === shop ? "" : settings.business_name;
+  const businessEmailValue = settings.business_email || accountEmail;
+  const adminEmailValue = settings.admin_email || accountEmail;
   const [searchParams] = useSearchParams();
   const page = (searchParams.get("page") || "general") as SettingsKey;
   const savedAt = actionData?.saved ? "just now" : undefined;
@@ -129,7 +147,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
             <RowInput name="business_name" defaultValue={businessNameValue} placeholder={isManual ? "e.g. Kapsalon Vondel" : undefined} cap={9999} />
           </Row>
           <Row label="Business email">
-            <RowInput name="business_email" type="email" defaultValue={settings.business_email} />
+            <RowInput name="business_email" type="email" defaultValue={businessEmailValue} />
           </Row>
           <Row label="Business phone">
             <RowInput type="tel" name="business_phone" defaultValue={settings.business_phone} pattern={PHONE_PATTERN} />
@@ -179,7 +197,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
           <ToggleRow name="notify_customer" label="Email the customer" hint="Sent on booking events" defaultChecked={settings.notify_customer} />
           <ToggleRow name="notify_admin" label="Email the business" hint="Sent on booking events" defaultChecked={settings.notify_admin} />
           <Row label="Admin notification email">
-            <RowInput name="admin_email" type="email" defaultValue={settings.admin_email} />
+            <RowInput name="admin_email" type="email" defaultValue={adminEmailValue} />
           </Row>
           <ToggleRow name="reminder_enabled" label="Send reminder emails" hint="Cuts no-shows by around a third" defaultChecked={settings.reminder_enabled} />
           <Row label="Reminder lead time (hours)">

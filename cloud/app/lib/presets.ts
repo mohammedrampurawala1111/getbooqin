@@ -201,6 +201,7 @@ export const INTEGRATIONS: {
 /* ------------------------------------------------------------------ */
 export type SetupFacts = {
   presetId: string | null;
+  businessNamed: boolean;
   serviceCount: number;
   resourceCount: number;
   connectedChannels: number;
@@ -210,6 +211,11 @@ export type SetupFacts = {
 export function setupTasks(f: SetupFacts) {
   const v = vocabFor(f.presetId);
   return [
+    // Accounts from before onboarding persisted a real name see their raw
+    // manual-<uuid> connection id as their business name with no prompt
+    // telling them it's editable (UX audit's D2 finding) — this surfaces
+    // that as a real checklist item instead of a silent gap.
+    { key: "name", name: "Name your business", hint: "Shown in the sidebar and on booking confirmations", done: f.businessNamed },
     { key: "preset", name: "Choose your industry preset", hint: "Sets services, vocabulary and reminders", done: !!f.presetId },
     { key: "services", name: `Add your ${v.services.toLowerCase()}`, hint: `${f.serviceCount} scaffolded from the preset`, done: f.serviceCount > 0 },
     { key: "resources", name: `Add ${v.resources.toLowerCase()}`, hint: `At least one person or room must take ${v.bookingMany}`, done: f.resourceCount > 0 },

@@ -34,6 +34,12 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
   const setupFacts = {
     presetId: settings.preset,
+    // Same "still carries its raw manual-<uuid> connection id" check as
+    // the sidebar label and Settings' business-name field use — surfaced
+    // here as an actual checklist item instead of a silent gap for
+    // accounts that never got a real name at setup (UX audit's D2
+    // finding).
+    businessNamed: !(platform === "manual" && settings.business_name === shop),
     serviceCount: allServices.length,
     resourceCount: allResources.length,
     // A manual connection isn't itself a "channel" the way a real Shopify
@@ -246,11 +252,15 @@ function EmptyOverview({
   const base = `/dashboard/${connectionId}`;
   const summary = setupSummary(setupFacts);
   const hrefs: Record<string, string> = {
-    preset: `${base}/settings?tab=template`,
+    // Was ?tab=… — stale since Settings moved off tabs onto the rail
+    // (?page=…); every one of these silently landed on General instead of
+    // the section it claimed to deep-link to.
+    name: `${base}/settings?page=general`,
+    preset: `${base}/settings?page=template`,
     services: `${base}/services`,
     resources: `${base}/resources/new`,
-    channel: `${base}/settings?tab=integrations`,
-    reminders: `${base}/settings?tab=notifications`,
+    channel: `${base}/settings?page=integrations`,
+    reminders: `${base}/settings?page=notifications`,
   };
   const firstUnfinished = summary.tasks.find((t) => !t.done);
 

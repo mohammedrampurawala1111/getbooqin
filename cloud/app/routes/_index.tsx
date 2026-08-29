@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Route } from "./+types/_index";
 import { getUserSession } from "~/session.server";
 import { LogoMark, PlanCard } from "~/components/onboarding";
@@ -43,6 +44,7 @@ const PLANS = [
 
 export default function Home({ loaderData }: Route.ComponentProps) {
   const { loggedIn } = loaderData;
+  const [navOpen, setNavOpen] = useState(false);
 
   return (
     <div className="mkt-shell">
@@ -68,7 +70,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             {loggedIn ? (
               <>
                 <a href="/dashboard" className="mkt-cta text-[13px] no-underline hover:no-underline">Go to dashboard</a>
-                <LogoutButton className="mkt-link" />
+                {/* "Go to dashboard" + "Log out" + the hamburger need 341px
+                    together — below that the header gained a horizontal
+                    scroll and clipped Log out outright (UX audit's K3
+                    finding). Below 400px it moves into the mobile nav panel
+                    instead of just disappearing. */}
+                <LogoutButton className="mkt-link hidden min-[400px]:inline-flex" />
               </>
             ) : (
               <>
@@ -76,10 +83,26 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 <a href="/signup" className="mkt-cta text-[13px] no-underline hover:no-underline">Sign up free</a>
               </>
             )}
-            <input type="checkbox" id="mkt-nav-toggle" className="peer sr-only md:hidden" />
+            <input
+              type="checkbox"
+              id="mkt-nav-toggle"
+              className="peer sr-only md:hidden"
+              checked={navOpen}
+              onChange={(e) => setNavOpen(e.currentTarget.checked)}
+            />
+            {/* role="button" because aria-expanded/aria-controls aren't
+                allowed on a bare <label> — browsers silently drop them, so
+                a screen-reader user has no way to tell the menu's open
+                state (same fix as the dashboard sidebar's toggle, UX
+                audit's K2 finding). Still a real <label htmlFor>, so this
+                keeps working with JS disabled — navOpen is a client-side
+                enhancement layered on top, not a requirement. */}
             <label
               htmlFor="mkt-nav-toggle"
+              role="button"
               aria-label="Toggle menu"
+              aria-expanded={navOpen}
+              aria-controls="mkt-mobile-nav"
               className="btn-sec cursor-pointer px-[10px] py-[6px] md:hidden"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -88,11 +111,14 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </label>
           </div>
         </div>
-        <nav className="hidden flex-col gap-1 border-t border-line px-7 py-3 group-has-checked:flex md:hidden">
+        <nav id="mkt-mobile-nav" className="hidden flex-col gap-1 border-t border-line px-7 py-3 group-has-checked:flex md:hidden">
           <a href="#product" className="mkt-link py-[9px]">Product</a>
           <a href="#integrations" className="mkt-link py-[9px]">Integrations</a>
           <a href="#industries" className="mkt-link py-[9px]">Industries</a>
           <a href="#pricing" className="mkt-link py-[9px]">Pricing</a>
+          {loggedIn ? (
+            <LogoutButton className="mkt-link py-[9px] text-left min-[400px]:hidden" />
+          ) : null}
         </nav>
       </div>
 

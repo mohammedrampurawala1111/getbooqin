@@ -236,8 +236,9 @@ export function IntegrationRow({
 
 /* ==================================================================
    5. Empty dashboard — setup checklist card.
-   Feed it setupSummary(facts) so the headline and the "N of 5 done"
-   label can never disagree, and an hrefs map (keyed by task.key)
+   Feed it setupSummary(facts) so the headline and the "N of total done"
+   label can never disagree — never hardcode the task count here, it's
+   setupTasks()'s own length. An hrefs map (keyed by task.key)
    pointing each row at the real page that edits that fact.
    ================================================================== */
 export function SetupChecklist({
@@ -318,13 +319,13 @@ export function PlanCard({
       <div className="flex flex-col gap-2">
         {features.map((f) => (
           <div key={f} className="flex items-center gap-2 text-[13px]">
-            <span className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-brand-500 text-[8px] text-white">✓</span>
+            <span className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-brand-fill text-[8px] text-white">✓</span>
             {f}
           </div>
         ))}
       </div>
       <a href={href} className={`mt-auto rounded-[9px] px-[14px] py-[10px] text-center text-[13px] font-semibold no-underline hover:no-underline ${
-        featured ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-line-strong text-ink hover:bg-canvas"
+        featured ? "bg-brand-fill text-white hover:bg-brand-700" : "border border-line-strong text-ink hover:bg-canvas"
       }`}>
         {cta}
       </a>

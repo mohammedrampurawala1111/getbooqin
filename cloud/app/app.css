@@ -11,6 +11,14 @@
   --color-brand-200: #e0bced;   /* chart bars (non-highlighted) */
   --color-brand-500: #b05fc9;   /* the logo orchid: mark, accents, bars, toggles */
   --color-brand-600: #8f3aa9;   /* filled buttons w/ white text (AA-safe, 5:1) */
+  /* Same value as brand-600 in light mode — exists only so dark mode can
+     diverge them (UX audit's K1 finding). brand-600 as *text* on a dark
+     canvas needs to get lighter to clear 4.5:1; brand-600 as a *fill*
+     under white button/badge text needs to stay dark to clear 4.5:1 the
+     other way. One token can't do both once the canvas goes dark, so
+     white-on-fill call sites (.btn-pri, .mkt-cta, .ob-dot-done, …) use
+     this one instead and it holds its light-mode value in the dark block. */
+  --color-brand-fill: #8f3aa9;
   --color-brand-700: #7c3193;   /* button hover / active */
   --color-brand-950: #131118;   /* logo plate, dark sidebar, auth panel */
 
@@ -133,7 +141,7 @@
   .card-footer { @apply flex items-center justify-between gap-4 border-t border-line bg-canvas-alt px-[18px] py-[13px]; }
 
   /* buttons — 13px/600, 8px radius, 8px/14px padding */
-  .btn-pri  { @apply btn bg-brand-600 font-semibold text-white shadow-raised hover:bg-brand-700; }
+  .btn-pri  { @apply btn bg-brand-fill font-semibold text-white shadow-raised hover:bg-brand-700; }
   .btn-sec  { @apply btn border border-line-strong bg-surface hover:bg-canvas; }
   .btn-del  { @apply btn border border-danger-line bg-surface text-danger hover:bg-danger-bg; }
   .btn-ghost{ @apply btn text-muted hover:bg-row hover:text-ink; }
@@ -171,13 +179,15 @@
   .side-dark { @apply bg-brand-950 text-[#ece9f0]; }
   .side-dark .nav-item { @apply text-[#a49caf] hover:bg-white/5; }
   .side-dark .nav-item-active {
-    color: color-mix(in oklch, var(--color-brand-500), white 50%);
-    background: color-mix(in oklch, var(--color-brand-500) 22%, transparent);
+    /* Mixed from the literal light-mode brand-500 hex, not the token —
+       .side-dark is always a dark plate regardless of page theme, so this
+       needs one fixed lightened accent. Referencing var(--color-brand-500)
+       instead would, once brand-500 itself gets a lighter dark-mode value
+       (K1 fix above), mix light-on-already-light into a washed-out pale
+       lavender that loses the accent's colour identity. */
+    color: color-mix(in oklch, #b05fc9, white 50%);
+    background: color-mix(in oklch, #b05fc9 22%, transparent);
   }
-
-  /* tabs */
-  .tab        { @apply cursor-pointer border-b-2 border-transparent px-[13px] py-[9px] text-body font-medium text-muted hover:text-ink; }
-  .tab-active { @apply border-brand-600 text-brand-600; }
 
   /* misc */
   .alert-error   { @apply flex items-center gap-3 rounded-[10px] border border-danger-line bg-danger-bg px-[15px] py-[13px] text-[13px] text-[#7a1c14]; }
@@ -199,7 +209,7 @@
   .mkt-h2      { @apply m-0 text-[24px] font-semibold tracking-[-0.02em]; }
   .mkt-lede    { @apply m-0 max-w-[480px] text-[16.5px] leading-relaxed text-ink-3 text-pretty; }
   .mkt-eyebrow { @apply inline-flex items-center gap-[7px] self-start rounded-full bg-brand-50 px-[11px] py-[5px] text-[12px] font-medium text-brand-600; }
-  .mkt-cta     { @apply cursor-pointer rounded-[9px] px-[18px] py-[11px] text-[14px] font-semibold text-white shadow-raised bg-brand-600 hover:bg-brand-700; }
+  .mkt-cta     { @apply cursor-pointer rounded-[9px] px-[18px] py-[11px] text-[14px] font-semibold text-white shadow-raised bg-brand-fill hover:bg-brand-700; }
   .mkt-cta-alt { @apply cursor-pointer rounded-[9px] border border-line-strong px-[18px] py-[11px] text-[14px] font-medium hover:bg-canvas; }
   .mkt-band    { @apply flex flex-wrap items-center justify-between gap-7 rounded-[16px] bg-brand-950 p-11 text-white; }
   .plan-card   { @apply flex flex-col gap-4 rounded-modal border border-line bg-surface p-[22px] shadow-card; }
@@ -220,7 +230,7 @@
   .ob-step-done   { @apply text-ink-2; }
   .ob-dot      { @apply inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface font-mono text-[10.5px] font-medium text-subtle; }
   .ob-dot-active { @apply border-brand-600 text-brand-600; }
-  .ob-dot-done   { @apply border-brand-600 bg-brand-600 text-white; }
+  .ob-dot-done   { @apply border-brand-600 bg-brand-fill text-white; }
   .ob-h1       { @apply m-0 text-[24px] font-semibold tracking-[-0.02em]; }
 
   /* selectable tile — industry preset, payment mode, preset service */
@@ -234,7 +244,7 @@
   /* setup checklist (empty dashboard) */
   .task-row    { @apply flex cursor-pointer items-center gap-[13px] border-b border-row px-[18px] py-[14px] hover:bg-canvas-alt; }
   .task-dot    { @apply inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface text-[11px] text-white; }
-  .task-dot-done { @apply border-brand-600 bg-brand-600; }
+  .task-dot-done { @apply border-brand-600 bg-brand-fill; }
 }
 
 /* Deliberately outside every @layer: Tailwind v4's cascade layers put
@@ -266,6 +276,15 @@
                                     selected nav/tiles readable as "filled"
                                     instead of flashing white on a dark page */
     --color-brand-200: #4a3457;
+    /* brand-500/600 as *text* (links, .nav-item-active, .btn-link, …) sat
+       at 2.78–3.01:1 on this canvas/surface before this — axe flagged it on
+       every page, always a different element, because it's the token, not
+       one stray rule (UX audit's K1 finding). Lightened to clear 4.5:1;
+       brand-fill stays pinned to the original value below so white-on-fill
+       buttons/badges don't inherit this and wash out. */
+    --color-brand-500: #c69ce2; /* 8.33:1 on canvas, 7.69:1 on surface */
+    --color-brand-600: #b98cd6; /* 7.00:1 on canvas, 6.47:1 on surface */
+    --color-brand-fill: #8f3aa9; /* unchanged — white text needs 6.28:1 here, not a lighter fill */
 
     --color-canvas:      #121016;
     --color-canvas-alt:  #19151f;
