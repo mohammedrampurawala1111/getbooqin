@@ -262,6 +262,7 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
           role="Owner"
           initials={user.initials}
           dark
+          base={base}
         />
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">

@@ -118,9 +118,10 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
   const [searchParams] = useSearchParams();
   const page = (searchParams.get("page") || "general") as SettingsKey;
   const savedAt = actionData?.saved ? "just now" : undefined;
+  const base = `/dashboard/${currentConnectionId}`;
 
   return (
-    <SettingsShell active={page} hide={paymentsEnabled ? [] : ["payments"]}>
+    <SettingsShell active={page} base={base} hide={paymentsEnabled ? [] : ["payments"]}>
       {page === "general" && (
         <SettingsCard saveLabel="Save changes" savedAt={savedAt}>
           <input type="hidden" name="_section" value="general" />

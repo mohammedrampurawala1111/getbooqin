@@ -13,24 +13,27 @@ import type { ReactNode } from "react";
    needs `w-full min-w-0`, or intrinsic input width overflows the track.
 
    Account items (Profile, Password & security) render in the same rail
-   for visual continuity but link out to /dashboard/account — that route
-   is identity-scoped (one user, many stores), this one is per-connection,
-   see components/account.tsx's UserMenu comment for why they're split.
+   for visual continuity — Account's own data is identity-scoped (one
+   user, many stores), but the *route* now lives nested under the current
+   connection (dashboard.$connectionId.account.tsx) precisely so it stays
+   inside this same shell instead of dropping to a bare topbar the moment
+   you click over to it. Every item's path is relative to that connection,
+   so this shell always needs a `base` ("/dashboard/:connectionId").
    ================================================================== */
 
 export const SETTINGS_NAV = [
   { group: "Account", items: [
-    { key: "profile", label: "Profile", href: "/dashboard/account", title: "Account", subtitle: "Your personal details. Business-wide settings are below." },
-    { key: "security", label: "Password & security", href: "/dashboard/account?tab=security", title: "Account", subtitle: "Your personal details. Business-wide settings are below." },
+    { key: "profile", label: "Profile", path: "/account", title: "Account", subtitle: "Your personal details. Business-wide settings are below." },
+    { key: "security", label: "Password & security", path: "/account?tab=security", title: "Account", subtitle: "Your personal details. Business-wide settings are below." },
   ]},
   { group: "Business", items: [
-    { key: "general", label: "General", title: "General", subtitle: "Business identity and how time is displayed." },
-    { key: "template", label: "Business template", title: "Business template", subtitle: "Industry preset, vocabulary and which Overview cards show." },
-    { key: "rules", label: "Booking rules", title: "Booking rules", subtitle: "When customers can book, and what happens automatically." },
-    { key: "notifications", label: "Notifications", title: "Notifications", subtitle: "Emails sent to customers and staff." },
-    { key: "payments", label: "Payments", title: "Payments", subtitle: "How money is collected for bookings." },
-    { key: "integrations", label: "Integrations", title: "Integrations", subtitle: "Connected channels and Shopify stores." },
-    { key: "team", label: "Team", title: "Team", subtitle: "Who can access this dashboard, and what they can do." },
+    { key: "general", label: "General", path: "/settings?page=general", title: "General", subtitle: "Business identity and how time is displayed." },
+    { key: "template", label: "Business template", path: "/settings?page=template", title: "Business template", subtitle: "Industry preset, vocabulary and which Overview cards show." },
+    { key: "rules", label: "Booking rules", path: "/settings?page=rules", title: "Booking rules", subtitle: "When customers can book, and what happens automatically." },
+    { key: "notifications", label: "Notifications", path: "/settings?page=notifications", title: "Notifications", subtitle: "Emails sent to customers and staff." },
+    { key: "payments", label: "Payments", path: "/settings?page=payments", title: "Payments", subtitle: "How money is collected for bookings." },
+    { key: "integrations", label: "Integrations", path: "/settings?page=integrations", title: "Integrations", subtitle: "Connected channels and Shopify stores." },
+    { key: "team", label: "Team", path: "/settings?page=team", title: "Team", subtitle: "Who can access this dashboard, and what they can do." },
   ]},
 ] as const;
 
@@ -45,19 +48,8 @@ export function settingsMeta(key: string) {
 }
 
 export function SettingsShell({
-  active, hide, businessBaseHref = "", children,
-}: {
-  active: SettingsKey; hide?: SettingsKey[];
-  // Business-group items have no explicit href — they link with a plain
-  // `?page=key`, which only resolves correctly when this shell is already
-  // rendered from the settings route itself. Rendered from the identity-
-  // scoped /dashboard/account instead (see the Account-item comment
-  // above), that same relative link would just tack ?page= onto /dashboard/
-  // account — pass the current store's settings base ("/dashboard/:id/
-  // settings") here so those links resolve to the right place.
-  businessBaseHref?: string;
-  children: ReactNode;
-}) {
+  active, base, hide, children,
+}: { active: SettingsKey; base: string; hide?: SettingsKey[]; children: ReactNode }) {
   const meta = settingsMeta(active);
   return (
     <div className="flex flex-col gap-5">
@@ -74,7 +66,7 @@ export function SettingsShell({
               {g.items
                 .filter((i) => !hide?.includes(i.key))
                 .map((i) => (
-                  <a key={i.key} href={"href" in i ? i.href : `${businessBaseHref}?page=${i.key}`}
+                  <a key={i.key} href={`${base}${i.path}`}
                     className={`rounded-field px-[10px] py-[7px] text-[13px] font-medium no-underline hover:no-underline ${
                       i.key === active ? "bg-brand-50 text-brand-600" : "text-ink-2 hover:bg-canvas-alt"
                     }`}>

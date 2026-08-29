@@ -23,6 +23,7 @@ export default [
     route("services/:serviceId", "routes/dashboard.$connectionId.services.$serviceId.tsx"),
     route("customers", "routes/dashboard.$connectionId.customers.tsx"),
     route("settings", "routes/dashboard.$connectionId.settings.tsx"),
+    route("account", "routes/dashboard.$connectionId.account.tsx"),
   ]),
   route("connect/shopify", "routes/connect.shopify.tsx"),
   route("connect/shopify/callback", "routes/connect.shopify.callback.tsx"),

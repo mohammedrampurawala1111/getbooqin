@@ -6,14 +6,14 @@ import { LogoutButton } from "./ui";
    1. User menu — sidebar footer popover
    The popover itself is <details>, which needs no state and closes on
    outside click in modern browsers via the `name` attribute (exclusive
-   accordion) or Escape. Profile/security live under the top-level
-   /dashboard/account route (one identity, many stores) rather than nested
-   under :connectionId, so those two links are absolute; only "Business
-   settings" is per-store.
+   accordion) or Escape. Profile/security render nested under the current
+   connection (dashboard.$connectionId.account.tsx) so they share this
+   same sidebar shell rather than dropping to a different layout — `base`
+   builds both that link and Business settings'.
    ================================================================== */
 export function UserMenu({
-  name, email, role, initials, dark = false,
-}: { name: string; email: string; role: string; initials: string; dark?: boolean }) {
+  name, email, role, initials, dark = false, base,
+}: { name: string; email: string; role: string; initials: string; dark?: boolean; base: string }) {
   return (
     <details className="group relative mt-auto border-t border-line open:bg-row/50 [&_summary::-webkit-details-marker]:hidden">
       <summary className="flex cursor-pointer list-none items-center gap-[9px] rounded-[9px] p-[10px]">
@@ -38,9 +38,13 @@ export function UserMenu({
             (dashboard.$connectionId.tsx), so listing them a second time
             here was pure duplication. Profile settings and Password &
             security stay: Account isn't in that nav at all, so this menu
-            is still the only route to either. */}
-        <MenuLink href="/dashboard/account">Profile settings</MenuLink>
-        <MenuLink href="/dashboard/account?tab=security">Password &amp; security</MenuLink>
+            is still the only route to either. Both are connection-scoped
+            paths, not a bare /dashboard/account — Account renders nested
+            under the current store (dashboard.$connectionId.account.tsx)
+            precisely so it stays inside this same sidebar shell instead of
+            dropping to a different layout the moment you click over. */}
+        <MenuLink href={`${base}/account`}>Profile settings</MenuLink>
+        <MenuLink href={`${base}/account?tab=security`}>Password &amp; security</MenuLink>
         <div className="my-[2px] h-px bg-row" />
         {/* Was a raw <form method="post" action="/logout">, which crashed:
             logout.tsx only exports a loader, not an action, and (worse)

@@ -510,33 +510,6 @@ export function LegalShell({
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* AccountShell — chrome for /dashboard/account, which sits above any
-   single connection (profile/security are per-user, not per-store) and
-   so gets no sidebar from dashboard.$connectionId.tsx. It used to render
-   with no header, no nav and no logout at all (UX audit's R4 finding) —
-   this gives it the same top bar every other authenticated surface has. */
-/* ------------------------------------------------------------------ */
-export function AccountShell({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex min-h-dvh flex-col bg-canvas">
-      <header className="border-b border-line bg-surface">
-        <div className="mx-auto flex max-w-[1240px] items-center gap-[14px] px-[30px] py-[14px]">
-          <a href="/dashboard" className="flex items-center gap-[9px] no-underline hover:no-underline">
-            <LogoMark size={28} />
-            <span className="text-[14px] font-semibold text-ink">GetBooqin</span>
-          </a>
-          <a href="/dashboard" className="ml-auto flex items-center text-meta font-medium text-muted no-underline max-md:min-h-[44px] hover:text-ink">
-            &larr; Back to dashboard
-          </a>
-          <LogoutButton className="btn-ghost px-[10px] py-[6px] text-meta" />
-        </div>
-      </header>
-      <div className="page">{children}</div>
-    </div>
-  );
-}
-
 export function LegalFooter() {
   return (
     <footer className="border-t border-line">
