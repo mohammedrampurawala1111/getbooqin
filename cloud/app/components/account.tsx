@@ -12,8 +12,8 @@ import { LogoutButton } from "./ui";
    settings" is per-store.
    ================================================================== */
 export function UserMenu({
-  name, email, role, initials, dark = false, settingsHref = "/dashboard",
-}: { name: string; email: string; role: string; initials: string; dark?: boolean; settingsHref?: string }) {
+  name, email, role, initials, dark = false,
+}: { name: string; email: string; role: string; initials: string; dark?: boolean }) {
   return (
     <details className="group relative mt-auto border-t border-line open:bg-row/50 [&_summary::-webkit-details-marker]:hidden">
       <summary className="flex cursor-pointer list-none items-center gap-[9px] rounded-[9px] p-[10px]">
@@ -33,15 +33,14 @@ export function UserMenu({
           <span className="text-[11.5px] text-subtle">{email}</span>
         </div>
         <div className="my-[2px] h-px bg-row" />
+        {/* Business settings and Help & support dropped from here — both
+            now have their own entry in the main sidebar nav
+            (dashboard.$connectionId.tsx), so listing them a second time
+            here was pure duplication. Profile settings and Password &
+            security stay: Account isn't in that nav at all, so this menu
+            is still the only route to either. */}
         <MenuLink href="/dashboard/account">Profile settings</MenuLink>
         <MenuLink href="/dashboard/account?tab=security">Password &amp; security</MenuLink>
-        <MenuLink href={settingsHref}>Business settings</MenuLink>
-        <div className="my-[2px] h-px bg-row" />
-        {/* Nothing signed-in linked here at all — no Help, no Support, no
-            FAQ, no contact. A merchant stuck at 7pm had no route to a
-            human even though /support already exists (UX audit's U3
-            finding). */}
-        <MenuLink href="/support">Help &amp; support</MenuLink>
         <div className="my-[2px] h-px bg-row" />
         {/* Was a raw <form method="post" action="/logout">, which crashed:
             logout.tsx only exports a loader, not an action, and (worse)
