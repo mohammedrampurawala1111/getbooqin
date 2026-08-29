@@ -250,10 +250,10 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
               ) : null}
             </NavLink>
           ))}
-          <a href="/support" className="nav-item">
+          <NavLink to={`${base}/support`} className={navItemClass}>
             {NAV_ICONS.help}
             <span className="min-w-0 flex-1 truncate">Help &amp; support</span>
-          </a>
+          </NavLink>
         </nav>
 
         <UserMenu
