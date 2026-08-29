@@ -2,7 +2,7 @@ import { Form, data, redirect } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.services.$serviceId";
 import { Data, ShopifyAdmin, ServiceMetafields, decryptCredentials } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
-import { Field, Input, Toggle, CheckCard } from "~/components/ui";
+import { AlertError, Field, Input, Toggle, CheckCard } from "~/components/ui";
 
 const SWATCHES = ["#b05fc9", "#2563eb", "#0f7a4f", "#92600b", "#b42318", "#545b68"];
 
@@ -60,6 +60,20 @@ export async function action({ request, params }: Route.ActionArgs) {
     id
   );
 
+  // Manual connections own their catalogue directly (no external platform
+  // product to defer to — see services.new.tsx), so name/price/description
+  // are editable right here instead of being a read-only sync target.
+  if (platform === "manual") {
+    await Data.upsertProductCache(shop, platform, {
+      productId: before.productId,
+      productHandle: before.productHandle,
+      title: String(form.get("title") ?? ""),
+      description: String(form.get("description") ?? ""),
+      category: String(form.get("category") ?? ""),
+      price: Number(form.get("price") ?? 0),
+    });
+  }
+
   // Write-through to the connected platform's product metafields, mirroring
   // the embedded admin's app.services_.$id.tsx — only push fields that
   // actually changed, and only for Shopify connections (the only platform
@@ -85,6 +99,7 @@ export default function ServiceDetail({ loaderData, actionData, params }: Route.
   const { config, product, resources, addons, resourceIds, addonIds } = loaderData;
   const base = `/dashboard/${params.connectionId}`;
   const swatches = SWATCHES.includes(config.color) ? SWATCHES : [config.color, ...SWATCHES];
+  const editable = config.platform === "manual";
 
   return (
     <div className="flex flex-col gap-[18px]">
@@ -94,25 +109,51 @@ export default function ServiceDetail({ loaderData, actionData, params }: Route.
         </a>
       </div>
       <h1 className="page-title">{product?.title || `Service #${config.id}`}</h1>
-      {actionData?.error && <div className="alert-error">{actionData.error}</div>}
-
-      <div className="readonly-panel">
-        <span className="readonly-tag">Read-only</span>
-        <div className="kv">
-          <span className="kv-key">Name</span>
-          <span className="kv-val">{product?.title || "—"} (from the connected store's product)</span>
-        </div>
-        <div className="kv">
-          <span className="kv-key">Price</span>
-          <span className="kv-val num">{product && product.price > 0 ? product.price.toFixed(2) : "—"}</span>
-        </div>
-        <div className="kv">
-          <span className="kv-key">Category</span>
-          <span className="kv-val">{product?.category || "—"}</span>
-        </div>
-      </div>
+      {actionData?.error && <AlertError>{actionData.error}</AlertError>}
 
       <Form method="post" className="flex flex-col gap-[14px]">
+        {editable ? (
+          <div className="card">
+            <div className="card-header">
+              <h2 className="card-title">Details</h2>
+            </div>
+            <div className="card-body grid grid-cols-2 gap-x-4 gap-y-[14px]">
+              <div className="col-span-2">
+                <Field label="Name">
+                  <Input name="title" defaultValue={product?.title} required />
+                </Field>
+              </div>
+              <Field label="Price">
+                <Input type="number" name="price" min={0} step="0.01" defaultValue={product?.price ?? 0} />
+              </Field>
+              <Field label="Category">
+                <Input name="category" defaultValue={product?.category} />
+              </Field>
+              <div className="col-span-2">
+                <Field label="Description">
+                  <textarea name="description" rows={3} className="input" defaultValue={product?.description} />
+                </Field>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="readonly-panel">
+            <span className="readonly-tag">Read-only</span>
+            <div className="kv">
+              <span className="kv-key">Name</span>
+              <span className="kv-val">{product?.title || "—"} (from the connected store's product)</span>
+            </div>
+            <div className="kv">
+              <span className="kv-key">Price</span>
+              <span className="kv-val num">{product && product.price > 0 ? product.price.toFixed(2) : "—"}</span>
+            </div>
+            <div className="kv">
+              <span className="kv-key">Category</span>
+              <span className="kv-val">{product?.category || "—"}</span>
+            </div>
+          </div>
+        )}
+
         <div className="card">
           <div className="card-header">
             <h2 className="card-title">Booking settings</h2>

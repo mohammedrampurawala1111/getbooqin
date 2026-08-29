@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs } from "react-router";
 import { prisma } from "getbooqin-core";
 import { getUserSession, getClerkClient } from "~/session.server";
+import { isValidPhone } from "~/lib/validation";
 
 // Resource route only — no UI. Called once from signup.tsx right after a
 // session goes active, to record the phone number the user typed in without
@@ -14,7 +15,13 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!session) return new Response("Unauthorized", { status: 401 });
 
   const { phone } = await request.json();
-  if (typeof phone !== "string" || !phone) return new Response("Bad Request", { status: 400 });
+  // The client already validates (signup.tsx, dashboard.account.tsx's
+  // PhoneCard), but this is the only server-side write path for the field —
+  // relying solely on client-side `pattern` let "abcdefg" save cleanly with
+  // a 200 (UX audit's V2 finding).
+  if (typeof phone !== "string" || !phone || !isValidPhone(phone)) {
+    return new Response("Bad Request", { status: 400 });
+  }
 
   const clerkUser = await getClerkClient().users.getUser(session.userId);
   const email =

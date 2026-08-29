@@ -1,4 +1,9 @@
-api_version = "2025-07"
+# Was 2025-07 (React, via @shopify/ui-extensions-react) — Shopify stopped
+# publishing React-bindings releases past 2025.7.x and blocks app updates
+# for extensions still on 2025-07 or older after October 1, 2026. Rebuilt
+# on Preact + Polaris web components (@shopify/ui-extensions) to move to a
+# current, actively-released API version.
+api_version = "2026-07"
 
 [[extensions]]
 name = "t:name"

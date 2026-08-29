@@ -2,7 +2,7 @@ import { Form, data, redirect } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.bookings.$bookingId";
 import { Bookings, Data, Settings } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
-import { Badge, Field, Input, ConfirmDialog } from "~/components/ui";
+import { AlertError, Badge, Field, Input, ConfirmDialog } from "~/components/ui";
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId);
@@ -102,7 +102,7 @@ export default function BookingDetail({ loaderData, actionData, params }: Route.
         )}
       </div>
 
-      {actionData?.error && <div className="alert-error">{actionData.error}</div>}
+      {actionData?.error && <AlertError>{actionData.error}</AlertError>}
 
       <div className="grid grid-cols-[1.35fr_1fr] gap-[14px]">
         <div className="flex flex-col gap-[14px]">

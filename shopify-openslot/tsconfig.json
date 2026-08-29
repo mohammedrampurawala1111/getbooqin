@@ -1,5 +1,9 @@
 {
   "include": ["**/*.ts", "**/*.tsx", ".react-router/types/**/*"],
+  // Each extension is its own mini-project with its own tsconfig.json,
+  // JSX pragma, and node_modules (see extensions/*/tsconfig.json) — this
+  // app's config shouldn't reach into them.
+  "exclude": ["extensions/**"],
   "compilerOptions": {
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
     "isolatedModules": true,

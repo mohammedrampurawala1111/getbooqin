@@ -82,6 +82,8 @@ export default function Privacy() {
         Questions about this policy or how GetBooqin handles data:{" "}
         {supportEmail ? <a href={`mailto:${supportEmail}`}>{supportEmail}</a> : "contact us via the Shopify App Store listing"}.
       </p>
+
+      <p>See also our <a href="/terms">Terms of Service</a>.</p>
     </div>
   );
 }

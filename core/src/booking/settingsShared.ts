@@ -89,6 +89,11 @@ export interface Settings {
   // Set once the post-install setup wizard is finished or explicitly
   // skipped, so it never blocks the dashboard again for this shop.
   onboarding_completed: boolean;
+
+  // Cloud dashboard's Business template card (Settings > Template): Overview
+  // card keys (cloud/app/components/account.tsx's OverviewCardKey) hidden
+  // from dashboard.$connectionId._index.tsx. Empty = everything shown.
+  hidden_overview_cards: string[];
 }
 
 export function term(settings: Settings, key: keyof Terms): string {

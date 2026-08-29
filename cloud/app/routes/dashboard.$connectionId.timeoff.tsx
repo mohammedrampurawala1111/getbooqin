@@ -2,7 +2,7 @@ import { Form, redirect } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.timeoff";
 import { Data } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
-import { PageHeader, Field, Input, DataTable, EmptyState } from "~/components/ui";
+import { AlertError, PageHeader, Field, Input, DataTable, EmptyState } from "~/components/ui";
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId);
@@ -35,7 +35,7 @@ export default function TimeOff({ loaderData, actionData }: Route.ComponentProps
   return (
     <div className="flex flex-col gap-[18px]">
       <PageHeader title="Time off" />
-      {actionData?.error && <div className="alert-error">{actionData.error}</div>}
+      {actionData?.error && <AlertError>{actionData.error}</AlertError>}
 
       <div className="card">
         <div className="card-body">

@@ -25,7 +25,9 @@
   --color-ink-2:       #3d4350; /* labels */
   --color-ink-3:       #545b68;
   --color-muted:       #6a7180; /* secondary copy */
-  --color-subtle:      #98a0ae; /* hints, timestamps */
+  /* was #98a0ae (2.63:1 on white, fails WCAG AA's 4.5:1 for the field
+     hints and captions that use it — UX audit's A1 finding). */
+  --color-subtle:      #5f6675; /* hints, timestamps */
   --color-faint:       #c4cad4; /* chevrons, disabled text */
 
   /* ---- status ---- */
@@ -65,8 +67,36 @@
     outline: 2px solid color-mix(in oklch, var(--color-brand-500) 45%, transparent);
     outline-offset: 1px;
   }
+  /* Card-based controls (industry/service tiles) hide their real input
+     behind sr-only and style the label instead, so the input's own
+     :focus-visible outline above is invisible to a keyboard user tabbing
+     through them — this makes the label itself show a ring whenever the
+     input inside it has focus. Fixes axe's "no visible focus indicator"
+     on every sr-only-input card (UX audit's A2 finding). */
+  .tile:has(:focus-visible) {
+    outline: 2px solid color-mix(in oklch, var(--color-brand-500) 45%, transparent);
+    outline-offset: 1px;
+  }
   /* tabular numbers everywhere we show counts/money */
   .num { @apply font-mono tabular-nums; }
+}
+
+/* Visually hidden until keyboard-focused — first focusable element on
+   every page, jumping straight to <main> (root.tsx). */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 8px;
+  z-index: 50;
+  background: var(--color-brand-600);
+  color: white;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.skip-link:focus {
+  top: 8px;
 }
 
 /* ------------------------------------------------------------------
@@ -75,7 +105,7 @@
    plain @layer components classes — so these two live here instead.
 ------------------------------------------------------------------ */
 @utility btn {
-  @apply inline-flex cursor-pointer items-center gap-[7px] rounded-field px-[14px] py-2 text-[13px] font-medium transition-colors;
+  @apply inline-flex cursor-pointer items-center gap-[7px] rounded-field px-[14px] py-2 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-55;
 }
 @utility badge {
   @apply inline-flex items-center gap-[5px] rounded-full px-2 py-[3px] text-[11.5px] font-medium;
@@ -110,7 +140,7 @@
   .field-label { @apply text-meta font-medium text-ink-2; }
   .input       { @apply w-full rounded-field border border-line-strong bg-surface px-[11px] py-[9px] text-body font-normal; }
   .input-error { @apply border-[#e0827a] bg-[#fffbfb]; }
-  .field-hint  { @apply text-[11.5px] font-normal text-subtle; }
+  .field-hint  { @apply text-[13px] font-normal text-subtle; }
   .field-error { @apply flex items-center gap-[5px] text-[11.5px] font-medium text-danger; }
 
   /* table */
@@ -172,8 +202,12 @@
   .ob-shell    { @apply flex min-h-screen flex-col bg-canvas; }
   .ob-progress { @apply h-[2px] bg-line; }
   .ob-progress > span { @apply block h-[2px] bg-brand-500 transition-[width] duration-300; }
-  .ob-grid     { @apply mx-auto grid w-full max-w-[940px] grid-cols-[196px_1fr] items-start gap-[34px] px-7 pt-[34px] pb-14; }
-  .ob-rail     { @apply sticky top-[34px] flex flex-col gap-[2px]; }
+  /* Single column (rail above content) below md; the fixed 196px rail only
+     kicks in at md+, where there's room for it beside the form. Previously
+     unconditional at every width, which crushed the form into a ~220px
+     column below md (UX audit's R1/P7 findings). */
+  .ob-grid     { @apply mx-auto grid w-full max-w-[940px] grid-cols-1 items-start gap-5 px-5 pt-6 pb-14 md:grid-cols-[196px_1fr] md:gap-[34px] md:px-7 md:pt-[34px]; }
+  .ob-rail     { @apply flex flex-row flex-wrap gap-[2px] md:sticky md:top-[34px] md:flex-col; }
   .ob-step     { @apply flex cursor-pointer items-center gap-[10px] rounded-[9px] px-[10px] py-[9px] text-[13px] font-medium text-subtle; }
   .ob-step-active { @apply bg-brand-50 text-brand-600; }
   .ob-step-done   { @apply text-ink-2; }

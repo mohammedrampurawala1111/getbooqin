@@ -2,7 +2,7 @@ import { Form } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.services";
 import { Data, ShopifyAdmin, decryptCredentials } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
-import { PageHeader, DataTable, EmptyState, Badge } from "~/components/ui";
+import { AlertError, PageHeader, DataTable, EmptyState, Badge } from "~/components/ui";
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform, connection } = await requireTenant(request, params.connectionId);
@@ -34,7 +34,11 @@ export default function ServicesList({ loaderData, actionData, params }: Route.C
     <div className="flex flex-col gap-[18px]">
       <PageHeader
         title="Services"
-        subtitle="Name, price, and description come from the connected store's product catalog. Click a service to configure booking settings only."
+        subtitle={
+          platform === "shopify"
+            ? "Name, price, and description come from the connected store's product catalog. Click a service to configure booking settings only."
+            : "Add and edit the services you offer, or configure booking settings for an existing one."
+        }
         actions={
           platform === "shopify" ? (
             <Form method="post">
@@ -42,11 +46,15 @@ export default function ServicesList({ loaderData, actionData, params }: Route.C
                 Sync products from Shopify
               </button>
             </Form>
-          ) : undefined
+          ) : (
+            <a href={`${base}/services/new`} className="btn-pri no-underline hover:no-underline">
+              + New service
+            </a>
+          )
         }
       />
 
-      {actionData?.error && <div className="alert-error">{actionData.error}</div>}
+      {actionData?.error && <AlertError>{actionData.error}</AlertError>}
       {actionData?.synced && (
         <div className="alert-success">
           Synced {actionData.synced.productsSynced} product{actionData.synced.productsSynced === 1 ? "" : "s"}, created{" "}
@@ -71,7 +79,18 @@ export default function ServicesList({ loaderData, actionData, params }: Route.C
         empty={
           <EmptyState
             title="No services yet"
-            body={'Sync products, then a product typed "Service" becomes bookable automatically.'}
+            body={
+              platform === "shopify"
+                ? 'Sync products, then a product typed "Service" becomes bookable automatically.'
+                : "Add your first service to start taking bookings."
+            }
+            action={
+              platform !== "shopify" ? (
+                <a href={`${base}/services/new`} className="btn-pri no-underline hover:no-underline">
+                  + New service
+                </a>
+              ) : undefined
+            }
           />
         }
       />

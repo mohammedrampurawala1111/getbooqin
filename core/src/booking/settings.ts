@@ -72,6 +72,8 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
 
     embed_last_seen_at: null,
     onboarding_completed: false,
+
+    hidden_overview_cards: [],
   };
 }
 

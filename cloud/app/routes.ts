@@ -5,6 +5,7 @@ export default [
   route("signup", "routes/signup.tsx"),
   route("onboarding", "routes/onboarding.tsx"),
   route("login", "routes/login.tsx"),
+  route("forgot-password", "routes/forgot-password.tsx"),
   route("logout", "routes/logout.tsx"),
   route("sso-callback", "routes/sso-callback.tsx"),
   route("dashboard", "routes/dashboard.tsx"),
@@ -18,6 +19,7 @@ export default [
     route("resources/:resourceId", "routes/dashboard.$connectionId.resources.$resourceId.tsx"),
     route("timeoff", "routes/dashboard.$connectionId.timeoff.tsx"),
     route("services", "routes/dashboard.$connectionId.services.tsx"),
+    route("services/new", "routes/dashboard.$connectionId.services.new.tsx"),
     route("services/:serviceId", "routes/dashboard.$connectionId.services.$serviceId.tsx"),
     route("customers", "routes/dashboard.$connectionId.customers.tsx"),
     route("settings", "routes/dashboard.$connectionId.settings.tsx"),
@@ -25,4 +27,10 @@ export default [
   route("connect/shopify", "routes/connect.shopify.tsx"),
   route("connect/shopify/callback", "routes/connect.shopify.callback.tsx"),
   route("webhooks/clerk", "routes/webhooks.clerk.tsx"),
+  // Not /privacy or /terms — shopify-openslot already owns those paths (its
+  // Shopify App Store submission) on the combined server. See
+  // server/combined.js's CLOUD_PREFIXES, kept in sync with this file.
+  route("legal/privacy", "routes/privacy.tsx"),
+  route("legal/terms", "routes/terms.tsx"),
+  route("support", "routes/support.tsx"),
 ] satisfies RouteConfig;

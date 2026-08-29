@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import prisma from "./db.js";
 import { encryptCredentials } from "./auth/encryption.js";
 
@@ -38,6 +39,23 @@ export async function connectShopifyStore({
 
   return prisma.connection.create({
     data: { userId, platform, shop, credentials, status: "active" },
+  });
+}
+
+// A Connection with no real platform behind it yet — lets a user finish
+// onboarding and reach a working dashboard without a Shopify store (see the
+// UX audit's B3 finding: every previous exit from the wizard required
+// Shopify). `shop` is just a generated opaque tenant key here rather than a
+// real domain — nothing downstream (Settings, sessions, ServiceConfig/
+// ProductCache/Resource/Booking) validates its format, only
+// isValidShopDomain()'s Shopify-OAuth-specific callers do. Connecting a
+// real Shopify store later (Settings › Integrations' "+ Connect another
+// store") creates a second, separate Connection rather than converting
+// this one — same multi-store model the app already supports.
+export async function createManualConnection({ userId }: { userId: string }) {
+  const shop = `manual-${randomUUID()}`;
+  return prisma.connection.create({
+    data: { userId, platform: "manual", shop, credentials: "", status: "active" },
   });
 }
 

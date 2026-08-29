@@ -2,7 +2,16 @@ import type { Route } from "./+types/_index";
 import { getUserSession } from "~/session.server";
 import { LogoMark, PlanCard } from "~/components/onboarding";
 import { PRESETS, INTEGRATIONS } from "~/lib/presets";
-import { Badge, LogoutButton } from "~/components/ui";
+import { Badge, LegalFooter, LogoutButton } from "~/components/ui";
+
+export const meta: Route.MetaFunction = () => [
+  { title: "GetBooqin — Bookings, staff and payments for every store" },
+  {
+    name: "description",
+    content:
+      "GetBooqin turns your product catalogue into bookable appointments, jobs or reservations, with staff schedules, deposits and reminders — start free, with or without Shopify.",
+  },
+];
 
 // Always renders the marketing page, logged in or not — a direct hit on
 // "/" should never bounce a visitor into onboarding or the dashboard (that
@@ -16,17 +25,17 @@ export async function loader({ request }: Route.LoaderArgs) {
 
 const PLANS = [
   {
-    name: "Starter", price: "$0", per: "/mo", featured: false, cta: "Start free",
-    blurb: "For a single store finding its feet.",
-    features: ["1 connected store", "Unlimited bookings", "Email reminders", "Shopify product sync"],
+    name: "Starter", price: "$0", per: "/mo", featured: false, cta: "Start free", href: "/signup",
+    blurb: "For a single business finding its feet — with or without Shopify.",
+    features: ["1 connected store or manual setup", "Unlimited bookings", "Email reminders", "Shopify product sync"],
   },
   {
-    name: "Growth", price: "$29", per: "/mo", featured: true, cta: "Start free trial",
+    name: "Growth", price: "$29", per: "/mo", featured: true, cta: "Start free trial", href: "/signup",
     blurb: "For a business juggling staff, resources and payments.",
     features: ["Everything in Starter", "Unlimited staff & resources", "Deposits & payments", "WhatsApp reminders (soon)"],
   },
   {
-    name: "Scale", price: "$79", per: "/mo", featured: false, cta: "Talk to us",
+    name: "Scale", price: "$79", per: "/mo", featured: false, cta: "Talk to us", href: "/support",
     blurb: "For multiple locations under one account.",
     features: ["Everything in Growth", "Unlimited connected stores", "Priority support", "Google Calendar sync (soon)"],
   },
@@ -39,7 +48,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     <div className="mkt-shell">
       <div className="mkt-bar">
         <div className="mkt-wrap flex h-[60px] items-center gap-7">
-          <a href="#" className="flex items-center gap-[9px] no-underline hover:no-underline">
+          <a href="/" className="flex items-center gap-[9px] no-underline hover:no-underline">
             <LogoMark size={26} />
             <span className="text-[14px] font-semibold text-ink">GetBooqin</span>
           </a>
@@ -72,8 +81,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             <span className="mkt-eyebrow">Booking software for any industry</span>
             <h1 className="mkt-h1">Bookings, staff and payments — one dashboard, every store.</h1>
             <p className="mkt-lede">
-              GetBooqin turns a Shopify catalogue into bookable appointments, jobs or reservations —
-              with staff schedules, deposits, and reminders that cut no-shows, all set up in minutes.
+              GetBooqin turns your product catalogue into bookable appointments, jobs or reservations —
+              with staff schedules, deposits, and reminders that cut no-shows. Start with Shopify, or go
+              live without it and connect a store later.
             </p>
             <div className="flex flex-wrap items-center gap-3">
               <a href="/signup" className="mkt-cta no-underline hover:no-underline">Start free</a>
@@ -188,22 +198,14 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           <div className="flex flex-col gap-2">
             <h2 className="m-0 text-[24px] font-semibold tracking-[-0.02em]">Ready to take your first booking?</h2>
             <p className="m-0 max-w-[420px] text-[14px] text-[#c9c2d4]">
-              Connect your Shopify store and be live in minutes.
+              Be live in minutes — with your Shopify store, or without one.
             </p>
           </div>
           <a href="/signup" className="mkt-cta no-underline hover:no-underline">Start free</a>
         </div>
       </div>
 
-      <footer className="border-t border-line">
-        <div className="mkt-wrap flex items-center justify-between gap-4 py-7">
-          <span className="flex items-center gap-[9px]">
-            <LogoMark size={22} />
-            <span className="text-[13px] font-medium text-muted">GetBooqin</span>
-          </span>
-          <span className="text-[12.5px] text-subtle">© {new Date().getFullYear()} GetBooqin</span>
-        </div>
-      </footer>
+      <LegalFooter />
     </div>
   );
 }

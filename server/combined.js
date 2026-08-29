@@ -32,11 +32,17 @@ const CLOUD_PREFIXES = [
   "/signup",
   "/onboarding",
   "/login",
+  "/forgot-password",
   "/logout",
   "/dashboard",
   "/connect",
   "/sso-callback",
   "/webhooks/clerk",
+  // Cloud's own account-surface legal pages — deliberately not "/privacy"
+  // or "/terms", which shopify-openslot already owns (its Shopify App
+  // Store submission). Keep in sync with cloud/app/routes.ts.
+  "/legal",
+  "/support",
 ];
 
 // React Router's client runtime fetches "<path>.data" instead of "<path>"

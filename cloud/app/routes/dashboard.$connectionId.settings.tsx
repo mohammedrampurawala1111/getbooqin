@@ -1,15 +1,21 @@
+import { useState } from "react";
 import { Form, redirect, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.settings";
-import { Settings, PaymentManager, FeatureFlags, Presets, listUserConnections, disconnectConnection } from "getbooqin-core";
+import { Settings, PaymentManager, FeatureFlags, listUserConnections, disconnectConnection } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
-import { PageHeader, Field, Input, Toggle, Badge } from "~/components/ui";
+import { PageHeader, Field, Input, Toggle, Badge, TimezoneSelect } from "~/components/ui";
 import { IntegrationRow } from "~/components/onboarding";
-import { INTEGRATIONS } from "~/lib/presets";
+import { TemplateConfig, overviewCards, type OverviewCardKey } from "~/components/account";
+import { INTEGRATIONS, type PresetId } from "~/lib/presets";
+import { PHONE_PATTERN } from "~/lib/validation";
+
+export const meta: Route.MetaFunction = () => [{ title: "Settings · GetBooqin" }];
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { userId, connection, shop, platform } = await requireTenant(request, params.connectionId);
   const settings = await Settings.getSettings(shop, platform);
   const connections = await listUserConnections(userId);
+  const isManual = platform === "manual";
 
   const gatewayFields = Object.entries(PaymentManager.gateways()).map(([id, g]) => ({
     id,
@@ -21,9 +27,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     settings,
     gatewayFields,
     paymentsEnabled: FeatureFlags.PAYMENTS_ENABLED,
-    presetChoices: Presets.presetChoices(),
     connections,
     currentConnectionId: connection.id,
+    isManual,
   };
 }
 
@@ -33,11 +39,6 @@ export async function action({ request, params }: Route.ActionArgs) {
   const section = String(form.get("_section") ?? "");
 
   if (section === "general") {
-    const preset = String(form.get("preset") ?? "");
-    const current = await Settings.getSettings(shop, platform);
-    if (preset && preset !== current.preset) {
-      await Settings.applyPreset(shop, platform, preset);
-    }
     await Settings.setSettings(shop, platform, {
       business_name: String(form.get("business_name") ?? ""),
       business_email: String(form.get("business_email") ?? ""),
@@ -52,6 +53,19 @@ export async function action({ request, params }: Route.ActionArgs) {
       allow_cancel: form.get("allow_cancel") === "on",
       cancel_cutoff_hours: Number(form.get("cancel_cutoff_hours") ?? 24),
     });
+  } else if (section === "template") {
+    const preset = String(form.get("preset") ?? "");
+    const current = await Settings.getSettings(shop, platform);
+    if (preset && preset !== current.preset) {
+      await Settings.applyPreset(shop, platform, preset);
+    }
+    // Checked "cards" are the visible ones; anything in the full card list
+    // that didn't come through in this submit was switched off.
+    const visible = new Set(form.getAll("cards").map(String));
+    const hidden = overviewCards(preset || current.preset)
+      .map((c) => c.key)
+      .filter((key) => !visible.has(key));
+    await Settings.setSettings(shop, platform, { hidden_overview_cards: hidden });
   } else if (section === "disconnect_store") {
     const targetId = String(form.get("connection_id") ?? "");
     await disconnectConnection(userId, targetId);
@@ -88,7 +102,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function SettingsPage({ loaderData, actionData }: Route.ComponentProps) {
-  const { settings, gatewayFields, paymentsEnabled, presetChoices, connections, currentConnectionId } = loaderData;
+  const { settings, gatewayFields, paymentsEnabled, connections, currentConnectionId, isManual } = loaderData;
   const [searchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "general";
 
@@ -100,6 +114,9 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
         <div className="flex border-b border-line px-[6px]">
           <a href="?tab=general" className={`tab ${tab === "general" ? "tab-active" : ""}`}>
             General
+          </a>
+          <a href="?tab=template" className={`tab ${tab === "template" ? "tab-active" : ""}`}>
+            Template
           </a>
           <a href="?tab=notifications" className={`tab ${tab === "notifications" ? "tab-active" : ""}`}>
             Notifications
@@ -123,20 +140,11 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
                   <Input name="business_name" defaultValue={settings.business_name} />
                 </Field>
               </div>
-              <div className="col-span-2">
-                <Field label="Industry preset" hint="Changing this resets your terminology and scheduling defaults to that industry's.">
-                  <select name="preset" defaultValue={settings.preset} className="input cursor-pointer">
-                    {presetChoices.map((p) => (
-                      <option key={p.value} value={p.value}>{p.label}</option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
               <Field label="Business email">
                 <Input name="business_email" type="email" defaultValue={settings.business_email} />
               </Field>
               <Field label="Business phone">
-                <Input name="business_phone" defaultValue={settings.business_phone} />
+                <Input type="tel" name="business_phone" defaultValue={settings.business_phone} pattern={PHONE_PATTERN} />
               </Field>
               <Field label="Currency code">
                 <Input name="currency" defaultValue={settings.currency} />
@@ -146,7 +154,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
               </Field>
               <div className="col-span-2">
                 <Field label="Timezone">
-                  <Input name="timezone" defaultValue={settings.timezone} />
+                  <TimezoneSelect defaultValue={settings.timezone} />
                 </Field>
               </div>
               <Field label="Slot interval (minutes)">
@@ -173,6 +181,15 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
               </button>
             </div>
           </Form>
+        )}
+
+        {tab === "template" && (
+          <div className="card-footer">
+            {actionData?.saved && <span className="alert-success">Saved.</span>}
+            <button form="template-form" type="submit" className="btn-pri ml-auto">
+              Save template
+            </button>
+          </div>
         )}
 
         {tab === "notifications" && (
@@ -262,10 +279,16 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
                     tint={integ.tint}
                     tag={integ.tag}
                     blurb={integ.blurb}
-                    detail={settings.business_name || undefined}
-                    connected
+                    detail={isManual ? undefined : settings.business_name || undefined}
+                    connected={!isManual}
                     variant="settings"
-                    action={<span className="btn-sec pointer-events-none opacity-60">Connected</span>}
+                    action={
+                      isManual ? (
+                        <a href="/connect/shopify" className="btn-sec no-underline hover:no-underline">Connect</a>
+                      ) : (
+                        <span className="btn-sec pointer-events-none opacity-60">Connected</span>
+                      )
+                    }
                   />
                 );
               }
@@ -312,17 +335,26 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
         )}
       </div>
 
+      {tab === "template" && (
+        <Form id="template-form" method="post" className="flex flex-col gap-[14px]">
+          <input type="hidden" name="_section" value="template" />
+          <TemplateTab presetId={settings.preset} initialHidden={settings.hidden_overview_cards} />
+        </Form>
+      )}
+
       {tab === "integrations" && (
         <div className="card">
           <div className="card-header">
-            <h2 className="card-title">Connected Shopify stores</h2>
+            <h2 className="card-title">Connected stores</h2>
           </div>
           {connections.map((c) => (
             <div key={c.id} className="trow" style={{ gridTemplateColumns: "32px 1fr auto auto" }}>
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-600">
-                {c.shop.slice(0, 1).toUpperCase()}
+                {c.platform === "manual" ? "M" : c.shop.slice(0, 1).toUpperCase()}
               </span>
-              <span className="min-w-0 truncate font-medium">{c.shop}</span>
+              <span className="min-w-0 truncate font-medium">
+                {c.platform === "manual" ? "Manual setup (no store connected)" : c.shop}
+              </span>
               <span className="flex items-center gap-2">
                 {c.id === currentConnectionId && <Badge status="confirmed" label="Current" />}
                 {c.status !== "active" && <Badge status="cancelled" label={c.status} />}
@@ -340,11 +372,30 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
           ))}
           <div className="card-footer">
             <a href="/connect/shopify" className="btn-sec no-underline hover:no-underline">
-              + Connect another store
+              + Connect a Shopify store
             </a>
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+// Local controlled state drives TemplateConfig's live renames/cards preview
+// on pick/toggle; its inputs are still real named radios/checkboxes so the
+// #template-form submit above works whether or not this state ever changes.
+function TemplateTab({ presetId, initialHidden }: { presetId: string; initialHidden: string[] }) {
+  const [preset, setPreset] = useState<PresetId>(presetId as PresetId);
+  const [hidden, setHidden] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(initialHidden.map((key) => [key, true]))
+  );
+
+  return (
+    <TemplateConfig
+      presetId={preset}
+      hidden={hidden}
+      onPick={setPreset}
+      onToggle={(key: OverviewCardKey) => setHidden((prev) => ({ ...prev, [key]: !prev[key] }))}
+    />
   );
 }

@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useClerk } from "@clerk/react-router";
+import { LogoMark } from "./onboarding";
 
 /* ------------------------------------------------------------------ */
 /* Button — <Button variant="primary">Save</Button> or as={Link}      */
@@ -156,6 +157,55 @@ export function Input({
   ...props
 }: React.InputHTMLAttributes<HTMLInputElement> & { error?: boolean }) {
   return <input {...props} className={`input ${error ? "input-error" : ""} ${className}`} />;
+}
+
+/* ------------------------------------------------------------------ */
+/* AlertError — every form's failure banner. role="alert" +            */
+/* aria-live so a screen reader actually hears it (axe: A4), and it    */
+/* scrolls itself into view on mount so a banner that renders above    */
+/* the fold — with the submit button below it — doesn't look like the  */
+/* click did nothing (see the UX audit's B5 finding).                  */
+/* ------------------------------------------------------------------ */
+export function AlertError({ children, className = "" }: { children: ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, []);
+  return (
+    <div ref={ref} role="alert" aria-live="assertive" className={`alert-error ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* TimezoneSelect — replaces free-text timezone entry (onboarding,     */
+/* Settings › General). A typo like "banana/notatimezone" used to save */
+/* silently (UX audit's V1) — a <select> of real IANA zones makes that */
+/* impossible, and it defaults to the browser's own zone.              */
+/* ------------------------------------------------------------------ */
+const TIMEZONES: string[] =
+  typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : ["UTC"];
+
+export function TimezoneSelect({
+  name = "timezone",
+  value,
+  onChange,
+  defaultValue,
+}: { name?: string; value?: string; onChange?: (tz: string) => void; defaultValue?: string }) {
+  return (
+    <select
+      name={name}
+      className="input cursor-pointer"
+      {...(value !== undefined ? { value } : { defaultValue })}
+      onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+    >
+      {value && !TIMEZONES.includes(value) ? <option value={value}>{value}</option> : null}
+      {TIMEZONES.map((tz) => (
+        <option key={tz} value={tz}>{tz.replace(/_/g, " ")}</option>
+      ))}
+    </select>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -395,5 +445,86 @@ export function ConfirmDialog({
         </div>
       </div>
     </dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* LegalShell — chrome shared by privacy.tsx / terms.tsx / support.tsx.
+   Same .mkt-* marketing tokens as _index.tsx so these public pages read
+   as one site, not a bolted-on legal doc.                              */
+/* ------------------------------------------------------------------ */
+export function LegalShell({
+  title, updated, children,
+}: { title: string; updated?: string; children: ReactNode }) {
+  return (
+    <div className="mkt-shell">
+      <div className="mkt-bar">
+        <div className="mkt-wrap flex h-[60px] items-center gap-7">
+          <a href="/" className="flex items-center gap-[9px] no-underline hover:no-underline">
+            <LogoMark size={26} />
+            <span className="text-[14px] font-semibold text-ink">GetBooqin</span>
+          </a>
+          <a href="/" className="mkt-link ml-auto">← Back to home</a>
+        </div>
+      </div>
+
+      <div className="mkt-wrap flex flex-col gap-6 py-16">
+        <div className="flex max-w-[680px] flex-col gap-1">
+          <h1 className="mkt-h2 text-[28px]">{title}</h1>
+          {updated ? <p className="m-0 text-meta text-subtle">Last updated: {updated}</p> : null}
+        </div>
+        <div className="legal-copy flex max-w-[680px] flex-col gap-4 text-[14.5px] leading-relaxed text-ink-3">
+          {children}
+        </div>
+      </div>
+
+      <LegalFooter />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* AccountShell — chrome for /dashboard/account, which sits above any
+   single connection (profile/security are per-user, not per-store) and
+   so gets no sidebar from dashboard.$connectionId.tsx. It used to render
+   with no header, no nav and no logout at all (UX audit's R4 finding) —
+   this gives it the same top bar every other authenticated surface has. */
+/* ------------------------------------------------------------------ */
+export function AccountShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex min-h-screen flex-col bg-canvas">
+      <header className="border-b border-line bg-surface">
+        <div className="mx-auto flex max-w-[1240px] items-center gap-[14px] px-[30px] py-[14px]">
+          <a href="/dashboard" className="flex items-center gap-[9px] no-underline hover:no-underline">
+            <LogoMark size={28} />
+            <span className="text-[14px] font-semibold text-ink">GetBooqin</span>
+          </a>
+          <a href="/dashboard" className="ml-auto text-meta font-medium text-muted no-underline hover:text-ink">
+            &larr; Back to dashboard
+          </a>
+          <LogoutButton className="btn-ghost px-[10px] py-[6px] text-meta" />
+        </div>
+      </header>
+      <div className="page">{children}</div>
+    </div>
+  );
+}
+
+export function LegalFooter() {
+  return (
+    <footer className="border-t border-line">
+      <div className="mkt-wrap flex items-center justify-between gap-4 py-7">
+        <span className="flex items-center gap-[9px]">
+          <LogoMark size={22} />
+          <span className="text-[13px] font-medium text-muted">GetBooqin</span>
+        </span>
+        <div className="flex items-center gap-5">
+          <a href="/legal/privacy" className="mkt-link">Privacy</a>
+          <a href="/legal/terms" className="mkt-link">Terms</a>
+          <a href="/support" className="mkt-link">Support</a>
+          <span className="text-[12.5px] text-subtle">© {new Date().getFullYear()} GetBooqin</span>
+        </div>
+      </div>
+    </footer>
   );
 }

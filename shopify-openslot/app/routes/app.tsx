@@ -90,13 +90,44 @@ export function ErrorBoundary() {
   const error = useRouteError();
 
   if (isAppBridgeBootstrapResponse(error)) {
+    // Same "deliberately no automatic recovery" reasoning as the comment
+    // above — only the presentation changed here (UX audit's R6 finding:
+    // this rendered in the browser's default serif on a plain grey field,
+    // with no branding). Plain inline styles, not Polaris — this can
+    // render before AppProvider/PolarisAppProvider mount.
     return (
-      <div style={{ padding: 40, fontFamily: "sans-serif", textAlign: "center" }}>
-        <p style={{ marginBottom: 16 }}>This page lost its connection to Shopify admin. Reload to reconnect.</p>
+      <div
+        style={{
+          display: "flex",
+          minHeight: "100vh",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 12,
+          padding: 40,
+          textAlign: "center",
+          fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+          color: "#1a1620",
+        }}
+      >
+        <img src="/favicon.png" alt="" width={40} height={40} style={{ borderRadius: 8 }} />
+        <p style={{ margin: 0, maxWidth: 340, color: "#545b68", fontSize: 14 }}>
+          This page lost its connection to Shopify admin. Reload to reconnect.
+        </p>
         <button
           type="button"
           onClick={() => window.location.reload()}
-          style={{ padding: "8px 20px", fontSize: 14, cursor: "pointer" }}
+          style={{
+            marginTop: 8,
+            padding: "9px 16px",
+            borderRadius: 8,
+            border: "none",
+            background: "#8f3aa9",
+            color: "white",
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
         >
           Reload
         </button>

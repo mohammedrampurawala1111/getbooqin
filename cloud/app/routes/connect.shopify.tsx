@@ -2,7 +2,10 @@ import { Form, redirect } from "react-router";
 import type { Route } from "./+types/connect.shopify";
 import { buildAuthorizationUrl, isValidShopDomain, signOAuthState } from "getbooqin-core";
 import { requireUserSession } from "~/session.server";
-import { Field, Input } from "~/components/ui";
+import { AlertError, Field, Input } from "~/components/ui";
+import { LogoMark } from "~/components/onboarding";
+
+export const meta: Route.MetaFunction = () => [{ title: "Connect Shopify · GetBooqin" }];
 
 function getAppUrl(): string {
   const appUrl = process.env.APP_URL;
@@ -65,20 +68,29 @@ export async function action({ request }: Route.ActionArgs) {
   throw redirect(authorizationUrl);
 }
 
+// Reachable directly (Settings › Integrations' "+ Connect another store",
+// onboarding's "Finish later" link) as well as via the wizard's own
+// ShopifyConnectForm — a logo + way back so it doesn't read as a dead end
+// when someone lands here on its own (UX audit's B3/R6 findings).
 export default function ConnectShopify({ actionData }: Route.ComponentProps) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas px-8">
       <div className="card w-full max-w-[400px] p-[26px]">
+        <a href="/dashboard" className="mb-4 flex w-fit items-center gap-[9px] no-underline hover:no-underline">
+          <LogoMark size={28} />
+          <span className="text-[14px] font-semibold text-ink">GetBooqin</span>
+        </a>
         <h1 className="page-title">Connect Shopify store</h1>
-        {actionData?.error && <div className="alert-error mt-3">{actionData.error}</div>}
+        {actionData?.error && <AlertError className="mt-3">{actionData.error}</AlertError>}
         <Form method="post" className="mt-5 flex flex-col gap-[14px]">
           <Field label="Shop domain">
             <Input type="text" name="shop" placeholder="your-store.myshopify.com" required />
           </Field>
-          <button type="submit" className="btn-pri mt-1 justify-center">
+          <button type="submit" className="btn-pri mt-1 w-full justify-center">
             Connect
           </button>
         </Form>
+        <a href="/dashboard" className="mt-4 inline-block text-body text-muted">&larr; Back to dashboard</a>
       </div>
     </div>
   );

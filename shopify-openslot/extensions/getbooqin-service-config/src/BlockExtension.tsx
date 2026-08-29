@@ -1,26 +1,11 @@
-import { useEffect, useState } from "react";
-import {
-  reactExtension,
-  useApi,
-  AdminBlock,
-  BlockStack,
-  InlineStack,
-  Text,
-  NumberField,
-  Select,
-  Checkbox,
-  ChoiceList,
-  Banner,
-  Button,
-} from "@shopify/ui-extensions-react/admin";
-
-const TARGET = "admin.product-details.block.render";
+import { render } from "preact";
+import { useEffect, useState } from "preact/hooks";
 
 // Same namespace/keys app/lib/serviceMetafields.server.ts writes and reads —
 // duplicated here (not imported) because this extension bundles in an
 // isolated sandbox with no access to the app's server-only code; it talks to
-// Shopify directly via useApi().query, never through the app backend, for
-// the metafield read/write itself.
+// Shopify directly via the shopify:admin/api/graphql.json fetch below, never
+// through the app backend, for the metafield read/write itself.
 const METAFIELD_NAMESPACE = "getbooqin";
 
 // Must match shopify.app.production.toml's application_url — this extension
@@ -34,10 +19,23 @@ interface PickerOption {
   name: string;
 }
 
-export default reactExtension(TARGET, () => <App />);
+// Admin extensions talk to Shopify's Admin API directly through this
+// sandboxed URL — no auth header needed, the runtime signs it. See
+// shopify.auth.idToken() below for the *app's own* backend instead.
+async function adminQuery<T>(query: string, variables: Record<string, unknown>): Promise<{ data?: T }> {
+  const res = await fetch("shopify:admin/api/graphql.json", {
+    method: "POST",
+    body: JSON.stringify({ query, variables }),
+  });
+  return res.json();
+}
 
-function App() {
-  const { data, query, auth } = useApi(TARGET);
+export default async () => {
+  render(<Extension />, document.body);
+};
+
+function Extension() {
+  const { data, auth } = shopify;
   const productGid = data.selected[0]?.id ?? "";
 
   const [loading, setLoading] = useState(true);
@@ -65,7 +63,7 @@ function App() {
     async function load() {
       setLoading(true);
       try {
-        const result = await query<{
+        const result = await adminQuery<{
           product: { metafields: { nodes: { key: string; value: string }[] } } | null;
         }>(
           `#graphql
@@ -74,7 +72,7 @@ function App() {
               metafields(namespace: $namespace, first: 20) { nodes { key value } }
             }
           }`,
-          { variables: { id: productGid, namespace: METAFIELD_NAMESPACE } }
+          { id: productGid, namespace: METAFIELD_NAMESPACE }
         );
         if (cancelled) return;
 
@@ -101,7 +99,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [productGid, query]);
+  }, [productGid]);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,15 +125,6 @@ function App() {
     };
   }, [auth]);
 
-  // ChoiceList's onChange is typed (value: string | string[]) => void
-  // regardless of `multiple` — normalize to an array either way.
-  function handleResourceIdsChange(value: string | string[]) {
-    setResourceIds(Array.isArray(value) ? value : [value]);
-  }
-  function handleAddonIdsChange(value: string | string[]) {
-    setAddonIds(Array.isArray(value) ? value : [value]);
-  }
-
   async function save() {
     setSaving(true);
     setError("");
@@ -154,12 +143,12 @@ function App() {
         { key: "addon_ids", type: "json", value: JSON.stringify(addonIds.map(Number)) },
       ].map((m) => ({ ownerId: productGid, namespace: METAFIELD_NAMESPACE, ...m }));
 
-      const result = await query<{ metafieldsSet: { userErrors: { field: string[]; message: string }[] } }>(
+      const result = await adminQuery<{ metafieldsSet: { userErrors: { field: string[]; message: string }[] } }>(
         `#graphql
         mutation SetServiceConfigMetafields($metafields: [MetafieldsSetInput!]!) {
           metafieldsSet(metafields: $metafields) { userErrors { field message } }
         }`,
-        { variables: { metafields } }
+        { metafields }
       );
 
       const userErrors = result.data?.metafieldsSet?.userErrors ?? [];
@@ -177,66 +166,106 @@ function App() {
 
   if (loading) {
     return (
-      <AdminBlock title="Booking config">
-        <Text>Loading…</Text>
-      </AdminBlock>
+      <s-admin-block heading="Booking config">
+        <s-text>Loading…</s-text>
+      </s-admin-block>
     );
   }
 
   return (
-    <AdminBlock title="Booking config" collapsedSummary={`${durationMin} min · ${status ? "Active" : "Inactive"}`}>
-      <BlockStack>
-        {error && <Banner tone="critical" title={error} />}
-        {saved && <Banner tone="success" title="Saved — synced with GetBooqin." />}
+    <s-admin-block
+      heading="Booking config"
+      collapsed-summary={`${durationMin} min · ${status ? "Active" : "Inactive"}`}
+    >
+      <s-stack direction="block" gap="base">
+        {error && <s-banner tone="critical">{error}</s-banner>}
+        {saved && <s-banner tone="success">Saved — synced with GetBooqin.</s-banner>}
 
-        <NumberField label="Duration (minutes)" value={durationMin} onChange={setDurationMin} min={5} />
-        <InlineStack>
-          <NumberField label="Buffer before (minutes)" value={bufferBeforeMin} onChange={setBufferBeforeMin} min={0} />
-          <NumberField label="Buffer after (minutes)" value={bufferAfterMin} onChange={setBufferAfterMin} min={0} />
-        </InlineStack>
-        <NumberField label="Capacity" value={capacity} onChange={setCapacity} min={1} />
-        <Select
+        <s-number-field
+          label="Duration (minutes)"
+          value={String(durationMin)}
+          min={5}
+          onChange={(e: Event) => setDurationMin(Number((e.currentTarget as HTMLInputElement).value))}
+        />
+        <s-stack direction="inline" gap="base">
+          <s-number-field
+            label="Buffer before (minutes)"
+            value={String(bufferBeforeMin)}
+            min={0}
+            onChange={(e: Event) => setBufferBeforeMin(Number((e.currentTarget as HTMLInputElement).value))}
+          />
+          <s-number-field
+            label="Buffer after (minutes)"
+            value={String(bufferAfterMin)}
+            min={0}
+            onChange={(e: Event) => setBufferAfterMin(Number((e.currentTarget as HTMLInputElement).value))}
+          />
+        </s-stack>
+        <s-number-field
+          label="Capacity"
+          value={String(capacity)}
+          min={1}
+          onChange={(e: Event) => setCapacity(Number((e.currentTarget as HTMLInputElement).value))}
+        />
+        <s-select
           label="Location"
           value={locationType}
-          onChange={setLocationType}
-          options={[
-            { value: "onsite", label: "On site" },
-            { value: "video", label: "Video call" },
-            { value: "phone", label: "Phone" },
-          ]}
+          onChange={(e: Event) => setLocationType((e.currentTarget as HTMLSelectElement).value)}
+        >
+          <s-option value="onsite">On site</s-option>
+          <s-option value="video">Video call</s-option>
+          <s-option value="phone">Phone</s-option>
+        </s-select>
+        <s-checkbox
+          label="Payment required to hold the booking"
+          checked={paymentRequired}
+          onChange={(e: Event) => setPaymentRequired((e.currentTarget as HTMLInputElement).checked)}
         />
-        <Checkbox checked={paymentRequired} onChange={setPaymentRequired} label="Payment required to hold the booking" />
-        <NumberField label="Deposit (% of price)" value={depositPercent} onChange={setDepositPercent} min={1} max={100} />
-        <Checkbox checked={status} onChange={setStatus} label="Active" />
+        <s-number-field
+          label="Deposit (% of price)"
+          value={String(depositPercent)}
+          min={1}
+          max={100}
+          onChange={(e: Event) => setDepositPercent(Number((e.currentTarget as HTMLInputElement).value))}
+        />
+        <s-checkbox
+          label="Active"
+          checked={status}
+          onChange={(e: Event) => setStatus((e.currentTarget as HTMLInputElement).checked)}
+        />
 
         {resourceOptions.length > 0 && (
-          <BlockStack>
-            <Text fontWeight="bold">Who can deliver this</Text>
-            <ChoiceList
-              multiple
-              value={resourceIds}
-              onChange={handleResourceIdsChange}
-              choices={resourceOptions.map((r) => ({ id: String(r.id), label: r.name }))}
-            />
-          </BlockStack>
+          <s-choice-list
+            label="Who can deliver this"
+            name="resource_ids"
+            multiple
+            values={resourceIds}
+            onChange={(e: Event) => setResourceIds((e.currentTarget as unknown as { values: string[] }).values)}
+          >
+            {resourceOptions.map((r) => (
+              <s-choice key={r.id} value={String(r.id)}>{r.name}</s-choice>
+            ))}
+          </s-choice-list>
         )}
         {addonOptions.length > 0 && (
-          <BlockStack>
-            <Text fontWeight="bold">Add-ons offered</Text>
-            <ChoiceList
-              multiple
-              value={addonIds}
-              onChange={handleAddonIdsChange}
-              choices={addonOptions.map((a) => ({ id: String(a.id), label: a.name }))}
-            />
-          </BlockStack>
+          <s-choice-list
+            label="Add-ons offered"
+            name="addon_ids"
+            multiple
+            values={addonIds}
+            onChange={(e: Event) => setAddonIds((e.currentTarget as unknown as { values: string[] }).values)}
+          >
+            {addonOptions.map((a) => (
+              <s-choice key={a.id} value={String(a.id)}>{a.name}</s-choice>
+            ))}
+          </s-choice-list>
         )}
 
-        <Button onClick={save} disabled={saving}>
+        <s-button onClick={save} disabled={saving}>
           {saving ? "Saving…" : "Save"}
-        </Button>
-      </BlockStack>
-    </AdminBlock>
+        </s-button>
+      </s-stack>
+    </s-admin-block>
   );
 }
 

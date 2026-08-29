@@ -8,6 +8,8 @@ import { PageHeader, StatCard, BarChart, MeterRow, EmptyState } from "~/componen
 import { SetupChecklist, EmptyStat } from "~/components/onboarding";
 import { setupSummary } from "~/lib/presets";
 
+export const meta: Route.MetaFunction = () => [{ title: "Overview · GetBooqin" }];
+
 const RANGE_DAYS_BACK = 30;
 const RANGE_DAYS_FORWARD = 30;
 
@@ -34,11 +36,24 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     presetId: settings.preset,
     serviceCount: allServices.length,
     resourceCount: allResources.length,
-    connectedChannels: 1 + (settings.enabled_gateways.includes("stripe") ? 1 : 0),
+    // A manual connection isn't itself a "channel" the way a real Shopify
+    // or Stripe integration is — counting it here made the checklist mark
+    // "Connect a channel" done for every manual account with nothing
+    // actually connected.
+    connectedChannels: (platform === "shopify" ? 1 : 0) + (settings.enabled_gateways.includes("stripe") ? 1 : 0),
     remindersOn: settings.reminder_enabled,
+    isManual: platform === "manual",
   };
 
-  return { overview, pendingCount, activeServiceCount, range, allTimeBookingCount, setupFacts };
+  return {
+    overview,
+    pendingCount,
+    activeServiceCount,
+    range,
+    allTimeBookingCount,
+    setupFacts,
+    hiddenCards: settings.hidden_overview_cards,
+  };
 }
 
 const PAYMENT_TINT: Record<string, string> = {
@@ -49,8 +64,15 @@ const PAYMENT_TINT: Record<string, string> = {
   failed: "bg-danger",
 };
 
+// Column count for the stats row — "stats" (bookings/pending/active
+// services) and "noShow" are two separately toggleable Business template
+// cards (see components/account.tsx's overviewCards) sharing one grid, so
+// the count of literal grid-cols-N classes below has to cover every
+// combination: 0 (skip the row), 3, or 4.
+const STAT_GRID: Record<number, string> = { 3: "grid-cols-3", 4: "grid-cols-4" };
+
 export default function Overview({ loaderData, params }: Route.ComponentProps) {
-  const { overview, pendingCount, activeServiceCount, range, allTimeBookingCount, setupFacts } = loaderData;
+  const { overview, pendingCount, activeServiceCount, range, allTimeBookingCount, setupFacts, hiddenCards } = loaderData;
   const totalBookings = overview.bookingsSeries.reduce((sum, d) => sum + d.count, 0);
   const paymentLabels = paymentStatusLabels();
   const paymentTotal = overview.paymentBreakdown.reduce((sum, p) => sum + p.count, 0);
@@ -58,6 +80,15 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
   if (allTimeBookingCount === 0) {
     return <EmptyOverview connectionId={params.connectionId} setupFacts={setupFacts} />;
   }
+
+  const hidden = new Set(hiddenCards);
+  const showStats = !hidden.has("stats");
+  const showNoShow = !hidden.has("noShow");
+  const showChart = !hidden.has("chart");
+  const showRevenue = !hidden.has("revenue");
+  const showTopServices = !hidden.has("topServices");
+  const showUtilisation = !hidden.has("utilisation");
+  const statCount = (showStats ? 3 : 0) + (showNoShow ? 1 : 0);
 
   return (
     <div className="flex flex-col gap-[18px]">
@@ -73,110 +104,128 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
         subtitle={`${new Date(range.from).toLocaleDateString("en-US")} – ${new Date(range.to).toLocaleDateString("en-US")}`}
       />
 
-      <div className="grid grid-cols-4 gap-[14px]">
-        <StatCard label="Bookings in range" value={String(totalBookings)} />
-        <StatCard label="Pending approval" value={String(pendingCount)} tone={pendingCount > 0 ? "warn" : "muted"} />
-        <StatCard label="Active services" value={String(activeServiceCount)} />
-        <StatCard
-          label="No-show rate"
-          value={`${Math.round(overview.noShow.rate * 100)}%`}
-          tone={overview.noShow.rate > 0.1 ? "danger" : "muted"}
-        />
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <h2 className="card-title">Bookings</h2>
-        </div>
-        <div className="card-body">
-          <BarChart data={overview.bookingsSeries} />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-[1.15fr_1fr] gap-[14px]">
-        <div className="card">
-          <div className="card-header">
-            <h2 className="card-title">Revenue</h2>
-          </div>
-          <div className="card-body flex flex-col gap-4">
-            {overview.revenueByCurrency.length === 0 ? (
-              <p className="m-0 text-body text-muted">No settled payments in range.</p>
-            ) : (
-              <div className="flex flex-wrap gap-5">
-                {overview.revenueByCurrency.map((r) => (
-                  <div key={r.currency} className="flex flex-col gap-[2px]">
-                    <span className="text-[12px] font-medium text-muted">{r.currency}</span>
-                    <span className="num text-stat font-medium tracking-[-0.03em]">{r.amount.toFixed(2)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {overview.paymentBreakdown.length > 0 && paymentTotal > 0 && (
-              <div className="flex flex-col gap-[7px]">
-                <div className="flex h-2 overflow-hidden rounded-[5px] bg-row">
-                  {overview.paymentBreakdown.map((p) => (
-                    <div
-                      key={p.status}
-                      className={PAYMENT_TINT[p.status] ?? "bg-chart-off"}
-                      style={{ width: `${(p.count / paymentTotal) * 100}%` }}
-                    />
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-muted">
-                  {overview.paymentBreakdown.map((p) => (
-                    <span key={p.status} className="num">
-                      {paymentLabels[p.status] ?? p.status}: {p.count}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <h2 className="card-title">Top services</h2>
-          </div>
-          <div className="card-body">
-            {overview.topServices.length === 0 ? (
-              <p className="m-0 text-body text-muted">No bookings in range yet.</p>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {overview.topServices.map((s) => (
-                  <div key={s.serviceId} className="flex items-center justify-between gap-3 text-[13px]">
-                    <span className="min-w-0 truncate font-medium">{s.name || `Service #${s.serviceId}`}</span>
-                    <span className="num shrink-0 text-subtle">
-                      {s.bookings} booking{s.bookings === 1 ? "" : "s"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <h2 className="card-title">Resource utilization</h2>
-        </div>
-        <div className="card-body flex flex-col gap-4">
-          {overview.resourceUtilization.length === 0 ? (
-            <p className="m-0 text-body text-muted">No active resources.</p>
-          ) : (
-            overview.resourceUtilization.map((r) => (
-              <MeterRow
-                key={r.resourceId}
-                name={r.resourceName}
-                meta={`${Math.round(r.bookedMinutes)} of ${Math.round(r.availableMinutes)} min`}
-                ratio={r.utilization}
-              />
-            ))
+      {statCount > 0 && (
+        <div className={`grid gap-[14px] ${STAT_GRID[statCount]}`}>
+          {showStats && (
+            <>
+              <StatCard label="Bookings in range" value={String(totalBookings)} />
+              <StatCard label="Pending approval" value={String(pendingCount)} tone={pendingCount > 0 ? "warn" : "muted"} />
+              <StatCard label="Active services" value={String(activeServiceCount)} />
+            </>
+          )}
+          {showNoShow && (
+            <StatCard
+              label="No-show rate"
+              value={`${Math.round(overview.noShow.rate * 100)}%`}
+              tone={overview.noShow.rate > 0.1 ? "danger" : "muted"}
+            />
           )}
         </div>
-      </div>
+      )}
+
+      {showChart && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="card-title">Bookings</h2>
+          </div>
+          <div className="card-body">
+            <BarChart data={overview.bookingsSeries} />
+          </div>
+        </div>
+      )}
+
+      {(showRevenue || showTopServices) && (
+        <div className={`grid gap-[14px] ${showRevenue && showTopServices ? "grid-cols-[1.15fr_1fr]" : "grid-cols-1"}`}>
+          {showRevenue && (
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Revenue</h2>
+              </div>
+              <div className="card-body flex flex-col gap-4">
+                {overview.revenueByCurrency.length === 0 ? (
+                  <p className="m-0 text-body text-muted">No settled payments in range.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-5">
+                    {overview.revenueByCurrency.map((r) => (
+                      <div key={r.currency} className="flex flex-col gap-[2px]">
+                        <span className="text-[12px] font-medium text-muted">{r.currency}</span>
+                        <span className="num text-stat font-medium tracking-[-0.03em]">{r.amount.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {overview.paymentBreakdown.length > 0 && paymentTotal > 0 && (
+                  <div className="flex flex-col gap-[7px]">
+                    <div className="flex h-2 overflow-hidden rounded-[5px] bg-row">
+                      {overview.paymentBreakdown.map((p) => (
+                        <div
+                          key={p.status}
+                          className={PAYMENT_TINT[p.status] ?? "bg-chart-off"}
+                          style={{ width: `${(p.count / paymentTotal) * 100}%` }}
+                        />
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-muted">
+                      {overview.paymentBreakdown.map((p) => (
+                        <span key={p.status} className="num">
+                          {paymentLabels[p.status] ?? p.status}: {p.count}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {showTopServices && (
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Top services</h2>
+              </div>
+              <div className="card-body">
+                {overview.topServices.length === 0 ? (
+                  <p className="m-0 text-body text-muted">No bookings in range yet.</p>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {overview.topServices.map((s) => (
+                      <div key={s.serviceId} className="flex items-center justify-between gap-3 text-[13px]">
+                        <span className="min-w-0 truncate font-medium">{s.name || `Service #${s.serviceId}`}</span>
+                        <span className="num shrink-0 text-subtle">
+                          {s.bookings} booking{s.bookings === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showUtilisation && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="card-title">Resource utilization</h2>
+          </div>
+          <div className="card-body flex flex-col gap-4">
+            {overview.resourceUtilization.length === 0 ? (
+              <p className="m-0 text-body text-muted">No active resources.</p>
+            ) : (
+              overview.resourceUtilization.map((r) => (
+                <MeterRow
+                  key={r.resourceId}
+                  name={r.resourceName}
+                  meta={`${Math.round(r.bookedMinutes)} of ${Math.round(r.availableMinutes)} min`}
+                  ratio={r.utilization}
+                />
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -194,7 +243,7 @@ function EmptyOverview({
   const base = `/dashboard/${connectionId}`;
   const summary = setupSummary(setupFacts);
   const hrefs: Record<string, string> = {
-    preset: `${base}/settings?tab=general`,
+    preset: `${base}/settings?tab=template`,
     services: `${base}/services`,
     resources: `${base}/resources/new`,
     channel: `${base}/settings?tab=integrations`,
@@ -209,7 +258,11 @@ function EmptyOverview({
       <div className="grid grid-cols-4 gap-[14px]">
         <EmptyStat label="Bookings" value="0" note="Waiting on setup" />
         <EmptyStat label="Pending approval" value="0" note="Waiting on setup" />
-        <EmptyStat label="Active services" value={String(setupFacts.serviceCount)} note="From your store catalogue" />
+        <EmptyStat
+          label="Active services"
+          value={String(setupFacts.serviceCount)}
+          note={setupFacts.isManual ? "Added from Services" : "From your store catalogue"}
+        />
         <EmptyStat label="No-show rate" value="—" note="Needs bookings first" />
       </div>
 

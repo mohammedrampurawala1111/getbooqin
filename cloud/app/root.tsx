@@ -23,6 +23,15 @@ export async function loader(args: Route.LoaderArgs) {
   return rootAuthLoader(args);
 }
 
+// Fallback only — every route below is expected to export its own `meta`
+// (see signup.tsx etc.) so browser tabs/history/bookmarks are
+// distinguishable (UX audit's P1 finding: every page used to share this
+// one title with no description at all).
+export const meta: Route.MetaFunction = () => [
+  { title: "GetBooqin Cloud" },
+  { name: "description", content: "Bookings, staff schedules and payments for every store you connect." },
+];
+
 export default function Root({ loaderData }: Route.ComponentProps) {
   return (
     <ClerkProvider loaderData={loaderData}>
@@ -30,12 +39,20 @@ export default function Root({ loaderData }: Route.ComponentProps) {
         <head>
           <meta charSet="utf-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
-          <title>GetBooqin Cloud</title>
           <Meta />
           <Links />
         </head>
         <body>
-          <Outlet />
+          <a href="#main" className="skip-link">Skip to content</a>
+          {/* Single <main> landmark for the whole app — every nested
+              route's chrome (sidebar, headers) renders inside it. One
+              landmark covering everything beats the zero the axe scan
+              found (UX audit's A3 finding); splitting nav out into its
+              own <nav> per layout is a further improvement, not required
+              to clear that violation. */}
+          <main id="main">
+            <Outlet />
+          </main>
           <ScrollRestoration />
           <Scripts />
         </body>

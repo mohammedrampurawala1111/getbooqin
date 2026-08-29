@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { PRESETS, DAY_ABBR, getPreset, type Preset, type PresetId } from "~/lib/presets";
 import { LogoutButton } from "~/components/ui";
 
@@ -126,34 +126,32 @@ export function LogoMark({ size = 30 }: { size?: number }) {
    ================================================================== */
 export function PresetScaffold({ presetId }: { presetId: PresetId }) {
   const preset = getPreset(presetId);
-  const [off, setOff] = useState<Record<string, boolean>>({});
-  const kept = preset.services.filter((s) => !off[s.name]).length;
 
   return (
     <>
       <div className="card">
         <div className="card-header">
           <h2 className="card-title">{preset.vocab.services}</h2>
-          <span className="text-meta text-subtle">{kept} of {preset.services.length} selected</span>
+          <span className="text-meta text-subtle">{preset.services.length} included</span>
         </div>
+        {/* Read-only — nothing here is actually configurable until there's a
+            real catalogue behind it (Shopify's product sync, or the manual
+            service editor once you go live without Shopify), so this used
+            to render as selectable tiles that quietly did nothing when
+            clicked. See the UX audit's P9 finding. */}
         <div className="grid grid-cols-2 gap-2 px-[18px] py-[14px]">
-          {preset.services.map((s) => {
-            const on = !off[s.name];
-            return (
-              <label key={s.name} className={`tile ${on ? "tile-on" : ""}`}
-                onClick={() => setOff((o) => ({ ...o, [s.name]: on }))}>
-                <input type="checkbox" name="services" value={s.name} defaultChecked className="peer sr-only" />
-                <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border border-[#c9cdd8] text-[10px] text-white peer-checked:border-brand-600 peer-checked:bg-brand-600 peer-checked:after:content-['✓']" />
-                <span className="text-body font-medium">{s.name}</span>
-                <span className="num ml-auto text-[11.5px] text-subtle">{s.minutes} min</span>
-              </label>
-            );
-          })}
+          {preset.services.map((s) => (
+            <div key={s.name} className="tile cursor-default">
+              <span className="text-body font-medium">{s.name}</span>
+              <span className="num ml-auto text-[11.5px] text-subtle">{s.minutes} min</span>
+            </div>
+          ))}
         </div>
         <div className="card-footer">
           <span className="text-meta text-muted">
             A preview of a typical {preset.label.split(" / ")[0].toLowerCase()} setup — your real{" "}
-            {preset.vocab.services.toLowerCase()} come from your store's product catalogue once it's connected.
+            {preset.vocab.services.toLowerCase()} come from your store's product catalogue once it's connected
+            (or from the service editor if you go live without one).
           </span>
         </div>
       </div>
@@ -294,10 +292,10 @@ export function EmptyStat({ label, value, note }: { label: string; value: string
    6. Marketing pricing card (routes/_index.tsx #pricing)
    ================================================================== */
 export function PlanCard({
-  name, price, per, blurb, features, featured, cta,
+  name, price, per, blurb, features, featured, cta, href = "/signup",
 }: {
   name: string; price: string; per: string; blurb: string;
-  features: string[]; featured?: boolean; cta: string;
+  features: string[]; featured?: boolean; cta: string; href?: string;
 }) {
   return (
     <div className={`plan-card ${featured ? "plan-card-featured" : ""}`}>
@@ -320,7 +318,7 @@ export function PlanCard({
           </div>
         ))}
       </div>
-      <a href="/signup" className={`mt-auto rounded-[9px] px-[14px] py-[10px] text-center text-[13px] font-semibold no-underline hover:no-underline ${
+      <a href={href} className={`mt-auto rounded-[9px] px-[14px] py-[10px] text-center text-[13px] font-semibold no-underline hover:no-underline ${
         featured ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-line-strong text-ink hover:bg-canvas"
       }`}>
         {cta}
