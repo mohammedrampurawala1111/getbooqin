@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { data, Outlet, NavLink, useLocation } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId";
-import { Settings } from "getbooqin-core";
+import { Settings, Bookings } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { tenantSelectHeaders, getClerkClient } from "~/session.server";
 import { UserMenu } from "~/components/account";
@@ -19,6 +19,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // core/src/connections.ts's createManualConnection) — only count Shopify
   // and Stripe, the two integrations with a real backend.
   const channelCount = (platform === "shopify" ? 1 : 0) + (settings.enabled_gateways.includes("stripe") ? 1 : 0);
+  const pendingCount = await Bookings.count(shop, platform, { status: "pending" });
 
   const clerkUser = await getClerkClient().users.getUser(connection.userId);
   const email =
@@ -64,10 +65,71 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       : connection.shop;
 
   return data(
-    { connection, channelCount, label, preset: settings.preset, user: { name, email, initials } },
+    { connection, channelCount, pendingCount, label, preset: settings.preset, user: { name, email, initials } },
     { headers: tenantSelectHeaders(tenantSession) }
   );
 }
+
+// 16px inline SVG, stroke-width 1.5, currentColor — same icon convention as
+// the rest of the design system (see components/ui.tsx's chevrons/toggles).
+function NavIcon({ path }: { path: ReactNode }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="shrink-0">
+      {path}
+    </svg>
+  );
+}
+
+const NAV_ICONS = {
+  overview: (
+    <NavIcon path={<>
+      <rect x="2" y="2" width="5" height="5" rx="1" />
+      <rect x="9" y="2" width="5" height="5" rx="1" />
+      <rect x="2" y="9" width="5" height="5" rx="1" />
+      <rect x="9" y="9" width="5" height="5" rx="1" />
+    </>} />
+  ),
+  bookings: (
+    <NavIcon path={<>
+      <rect x="2" y="3" width="12" height="11" rx="1.5" />
+      <path d="M2 6.5h12M5 2v3M11 2v3" strokeLinecap="round" />
+    </>} />
+  ),
+  resources: (
+    <NavIcon path={<>
+      <circle cx="8" cy="5.5" r="2.5" />
+      <path d="M3 14c0-2.76 2.24-5 5-5s5 2.24 5 5" strokeLinecap="round" />
+    </>} />
+  ),
+  timeoff: (
+    <NavIcon path={<>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 4.5V8l2.5 1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </>} />
+  ),
+  services: <NavIcon path={<path d="M8 1.5 14.5 8 8 14.5 1.5 8Z" strokeLinejoin="round" />} />,
+  customers: (
+    <NavIcon path={<>
+      <circle cx="6" cy="5.5" r="2.2" />
+      <path d="M1.8 14c0-2.3 1.9-4.2 4.2-4.2s4.2 1.9 4.2 4.2" strokeLinecap="round" />
+      <circle cx="11.5" cy="6" r="1.8" />
+      <path d="M10.3 9.6c1.9.2 3.4 1.8 3.5 3.7" strokeLinecap="round" />
+    </>} />
+  ),
+  settings: (
+    <NavIcon path={<>
+      <circle cx="8" cy="8" r="6" />
+      <circle cx="8" cy="8" r="2.3" />
+    </>} />
+  ),
+  help: (
+    <NavIcon path={<>
+      <circle cx="8" cy="8" r="6.25" />
+      <path d="M6.2 6.2a1.8 1.8 0 1 1 2.6 1.6c-.6.3-.8.6-.8 1.2v.2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="8" cy="11.4" r=".15" fill="currentColor" stroke="none" />
+    </>} />
+  ),
+} as const;
 
 // The setup flow already says "Add your first stylist" and labels
 // industries with "Chair time" and "Bay slots" — that warmth stopped at
@@ -75,16 +137,16 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 // "Bookings" / "Staff / Resources" regardless of industry (UX audit's U4
 // finding). vocabFor() already existed for exactly this; nothing here
 // used it yet.
-function navItems(preset: string | null) {
+function navItems(preset: string | null, pendingCount: number) {
   const v = vocabFor(preset);
   return [
-    { to: "", end: true, label: "Overview" },
-    { to: "/bookings", label: v.bookingTitle },
-    { to: "/resources", label: v.resources },
-    { to: "/timeoff", label: "Time off" },
-    { to: "/services", label: v.services },
-    { to: "/customers", label: v.customers },
-    { to: "/settings", label: "Settings" },
+    { to: "", end: true, label: "Overview", icon: NAV_ICONS.overview },
+    { to: "/bookings", label: v.bookingTitle, icon: NAV_ICONS.bookings, badge: pendingCount > 0 ? pendingCount : undefined },
+    { to: "/resources", label: v.resources, icon: NAV_ICONS.resources },
+    { to: "/timeoff", label: "Time off", icon: NAV_ICONS.timeoff },
+    { to: "/services", label: v.services, icon: NAV_ICONS.services },
+    { to: "/customers", label: v.customers, icon: NAV_ICONS.customers },
+    { to: "/settings", label: "Settings", icon: NAV_ICONS.settings },
   ];
 }
 
@@ -93,8 +155,8 @@ function navItemClass({ isActive }: { isActive: boolean }): string {
 }
 
 export default function ConnectionDashboard({ loaderData, params }: Route.ComponentProps) {
-  const { channelCount, label, preset, user } = loaderData;
-  const NAV_ITEMS = navItems(preset);
+  const { channelCount, pendingCount, label, preset, user } = loaderData;
+  const NAV_ITEMS = navItems(preset, pendingCount);
   const base = `/dashboard/${params.connectionId}`;
 
   // Below md: <aside> is an off-canvas drawer toggled by this checkbox (no
@@ -179,9 +241,19 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
         <nav className="mt-5 flex flex-col gap-[2px]">
           {NAV_ITEMS.map((item) => (
             <NavLink key={item.label} to={`${base}${item.to}`} end={item.end} className={navItemClass}>
-              {item.label}
+              {item.icon}
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              {item.badge ? (
+                <span className="num shrink-0 rounded-full bg-brand-500 px-[6px] py-[1px] text-[11px] font-semibold text-white">
+                  {item.badge}
+                </span>
+              ) : null}
             </NavLink>
           ))}
+          <a href="/support" className="nav-item">
+            {NAV_ICONS.help}
+            <span className="min-w-0 flex-1 truncate">Help &amp; support</span>
+          </a>
         </nav>
 
         <UserMenu
