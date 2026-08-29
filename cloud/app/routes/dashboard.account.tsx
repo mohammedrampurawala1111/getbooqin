@@ -3,10 +3,12 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useClerk, useReverification, useSession, useUser } from "@clerk/react-router";
 import { isClerkAPIResponseError, isReverificationCancelledError } from "@clerk/react-router/errors";
 import type { Route } from "./+types/dashboard.account";
-import { prisma } from "getbooqin-core";
+import { prisma, listUserConnections, Settings } from "getbooqin-core";
 import { requireUserSession } from "~/session.server";
-import { AccountShell, AlertError, PageHeader, Field, Input, Toggle } from "~/components/ui";
+import { AccountShell, AlertError, Badge, Field, Input, Toggle } from "~/components/ui";
 import { AuthMethodRow, GoogleGlyph, PasswordField, SessionRow } from "~/components/account";
+import { SettingsShell, SettingsCard, Row, RowInput } from "~/components/settings";
+import { getPreset, vocabFor } from "~/lib/presets";
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 
 export const meta: Route.MetaFunction = () => [{ title: "Account · GetBooqin" }];
@@ -22,11 +24,32 @@ function clerkMessage(err: unknown): string | undefined {
 
 // Profile/security are per-user, not per-store, so this route sits at the
 // top level (not nested under :connectionId like the rest of the
-// dashboard) — see README's "Account, auth and template config" note.
+// dashboard) — see README's "Account, auth and template config" note. The
+// Business-template summary below still needs *a* store to point "Change
+// template" at, and the settings rail's Business links need one to build
+// their href — both resolve to the same "most recently connected active
+// store" a bare /dashboard visit lands on.
 export async function loader({ request }: Route.LoaderArgs) {
   const session = await requireUserSession(request);
-  const dbUser = await prisma.user.findUnique({ where: { id: session.userId } });
-  return { phone: dbUser?.phone ?? "" };
+  const [dbUser, connections] = await Promise.all([
+    prisma.user.findUnique({ where: { id: session.userId } }),
+    listUserConnections(session.userId),
+  ]);
+
+  const active = connections.filter((c) => c.status === "active");
+  const primary = [...active].sort(
+    (a, b) => new Date(b.connectedAt).getTime() - new Date(a.connectedAt).getTime()
+  )[0];
+
+  const template = primary
+    ? { presetId: (await Settings.getSettings(primary.shop, primary.platform)).preset, href: `/dashboard/${primary.id}/settings?page=template` }
+    : null;
+
+  return {
+    phone: dbUser?.phone ?? "",
+    template,
+    businessBaseHref: primary ? `/dashboard/${primary.id}/settings` : "",
+  };
 }
 
 export default function Account({ loaderData }: Route.ComponentProps) {
@@ -35,51 +58,42 @@ export default function Account({ loaderData }: Route.ComponentProps) {
 
   return (
     <AccountShell>
-      <div className="flex flex-col gap-[18px]">
-        <PageHeader title="Account" />
-
-        <div className="card">
-          {/* Same overflow-x-auto/shrink-0 treatment as the Settings tab
-              strip (dashboard.$connectionId.settings.tsx, UX audit's M6
-              finding) — this one hadn't been touched yet and would clip
-              the same way on a narrow phone. */}
-          <div className="flex overflow-x-auto border-b border-line px-[6px]">
-            <a href="?tab=profile" className={`tab shrink-0 ${tab === "profile" ? "tab-active" : ""}`}>Profile</a>
-            <a href="?tab=security" className={`tab shrink-0 ${tab === "security" ? "tab-active" : ""}`}>Password &amp; security</a>
-          </div>
-        </div>
-
+      <SettingsShell active={tab} businessBaseHref={loaderData.businessBaseHref}>
         {tab === "profile" ? (
-          <ProfileTab phone={loaderData.phone} />
+          <ProfileTab phone={loaderData.phone} template={loaderData.template} />
         ) : (
           <SecurityTab />
         )}
-      </div>
+      </SettingsShell>
     </AccountShell>
   );
 }
 
 /* ==================================================================
-   Profile
+   Profile — one row-based card (photo, name, job title, email, phone)
+   plus a separate Business template summary, matching the rest of
+   Settings' rail+row layout instead of the old per-field card stack.
    ================================================================== */
-function ProfileTab({ phone }: { phone: string }) {
+function ProfileTab({
+  phone, template,
+}: { phone: string; template: { presetId: string; href: string } | null }) {
   const { isLoaded, user } = useUser();
   if (!isLoaded || !user) {
     return <div className="card px-[18px] py-6 text-body text-muted">Loading…</div>;
   }
   return (
     <div className="flex flex-col gap-[14px]">
-      <ProfileCard user={user} />
-      <EmailCard user={user} />
-      <PhoneCard initialPhone={phone} />
+      <ProfileCard user={user} initialPhone={phone} />
+      {template && <TemplateCard template={template} />}
     </div>
   );
 }
 
-function ProfileCard({ user }: { user: ClerkUser }) {
+function ProfileCard({ user, initialPhone }: { user: ClerkUser; initialPhone: string }) {
   const [firstName, setFirstName] = useState(user.firstName ?? "");
   const [lastName, setLastName] = useState(user.lastName ?? "");
   const [jobTitle, setJobTitle] = useState((user.unsafeMetadata?.jobTitle as string | undefined) ?? "");
+  const [phone, setPhone] = useState(initialPhone);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -99,11 +113,28 @@ function ProfileCard({ user }: { user: ClerkUser }) {
     }
   }
 
+  async function handleRemoveAvatar() {
+    setAvatarBusy(true);
+    setError(null);
+    try {
+      await user.setProfileImage({ file: null });
+    } catch (err) {
+      setError(clerkMessage(err) ?? "Couldn't remove your photo.");
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
   async function handleSave(event: FormEvent) {
     event.preventDefault();
     if (!firstName.trim() && !lastName.trim()) {
       setSaved(false);
       setError("Enter at least a first name — the account has no display name otherwise.");
+      return;
+    }
+    if (phone && !isValidPhone(phone)) {
+      setSaved(false);
+      setError("Enter a valid phone number.");
       return;
     }
     setSaving(true);
@@ -112,6 +143,14 @@ function ProfileCard({ user }: { user: ClerkUser }) {
     try {
       await user.update({ firstName, lastName });
       await user.updateMetadata({ unsafeMetadata: { jobTitle } });
+      if (phone) {
+        const res = await fetch("/dashboard/profile-phone", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phone }),
+        });
+        if (!res.ok) throw new Error("phone save failed");
+      }
       setSaved(true);
     } catch (err) {
       setError(clerkMessage(err) ?? "Couldn't save your profile.");
@@ -121,59 +160,74 @@ function ProfileCard({ user }: { user: ClerkUser }) {
   }
 
   return (
-    <div className="card">
-      <div className="card-header"><h2 className="card-title">Profile</h2></div>
-      <form onSubmit={handleSave}>
-        <div className="card-body flex flex-col gap-[14px]">
-          {error && <AlertError>{error}</AlertError>}
-          <div className="flex items-center gap-4">
-            <span className="inline-flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-row text-[16px] font-semibold text-ink-2">
-              {user.imageUrl ? (
-                <img src={user.imageUrl} alt="" className="h-full w-full object-cover" />
-              ) : (
-                (firstName || user.primaryEmailAddress?.emailAddress || "U").slice(0, 1).toUpperCase()
-              )}
-            </span>
-            <label className="btn-sec cursor-pointer">
-              {avatarBusy ? "Uploading…" : "Change photo"}
-              <input type="file" accept="image/*" className="sr-only" onChange={handleAvatar} disabled={avatarBusy} />
-            </label>
-          </div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-[14px]">
-            <Field label="First name">
-              <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} />
-            </Field>
-            <Field label="Last name">
-              <Input value={lastName} onChange={(e) => setLastName(e.target.value)} />
-            </Field>
-            <div className="col-span-2">
-              <Field label="Job title">
-                <Input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} placeholder="e.g. Owner" />
-              </Field>
-            </div>
-          </div>
+    <SettingsCard
+      onSubmit={handleSave}
+      saveLabel={saving ? "Saving…" : "Save changes"}
+      savedAt={saved ? "just now" : undefined}
+      error={error ?? undefined}
+    >
+      <Row label="Photo" hint="PNG or JPG, min 200px">
+        <div className="flex items-center gap-3">
+          <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-50 text-[14px] font-semibold text-brand-600">
+            {user.imageUrl ? (
+              <img src={user.imageUrl} alt="" className="h-full w-full object-cover" />
+            ) : (
+              (firstName || user.primaryEmailAddress?.emailAddress || "U").slice(0, 1).toUpperCase()
+            )}
+          </span>
+          <label className="btn-sec cursor-pointer">
+            {avatarBusy ? "Working…" : "Change"}
+            <input type="file" accept="image/*" className="sr-only" onChange={handleAvatar} disabled={avatarBusy} />
+          </label>
+          {user.imageUrl ? (
+            <button type="button" className="btn-link text-muted" onClick={handleRemoveAvatar} disabled={avatarBusy}>
+              Remove
+            </button>
+          ) : null}
         </div>
-        <div className="card-footer">
-          {saved && <span className="alert-success">Saved.</span>}
-          <button type="submit" className="btn-pri ml-auto" disabled={saving}>
-            {saving ? "Saving…" : "Save profile"}
-          </button>
+      </Row>
+
+      <Row label="Name">
+        <div className="flex flex-col gap-2">
+          <RowInput value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="First name" cap={9999} />
+          <RowInput value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Last name" cap={9999} />
         </div>
-      </form>
-    </div>
+      </Row>
+
+      <Row label="Job title">
+        <RowInput value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} placeholder="e.g. Owner" cap={9999} />
+      </Row>
+
+      <EmailRow user={user} />
+
+      <Row label="Phone" hint="For urgent booking alerts">
+        <RowInput
+          type="tel"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="+1 555 0100"
+          pattern={PHONE_PATTERN}
+          autoComplete="tel"
+          cap={9999}
+        />
+      </Row>
+    </SettingsCard>
   );
 }
 
-function EmailCard({ user }: { user: ClerkUser }) {
+// Its own multi-step flow (enter address → confirm code) can't be a nested
+// <form> — this sits inside ProfileCard's outer form, so every button here
+// is type="button" with its own click handler instead of a submit.
+function EmailRow({ user }: { user: ClerkUser }) {
   const [mode, setMode] = useState<"view" | "enter" | "verify">("view");
   const [newEmail, setNewEmail] = useState("");
   const [code, setCode] = useState("");
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const verified = user.primaryEmailAddress?.verification?.status === "verified";
 
-  async function handleSendCode(event: FormEvent) {
-    event.preventDefault();
+  async function handleSendCode() {
     setBusy(true);
     setError(null);
     try {
@@ -188,8 +242,7 @@ function EmailCard({ user }: { user: ClerkUser }) {
     }
   }
 
-  async function handleVerify(event: FormEvent) {
-    event.preventDefault();
+  async function handleVerify() {
     if (!pendingId) return;
     setBusy(true);
     setError(null);
@@ -207,113 +260,64 @@ function EmailCard({ user }: { user: ClerkUser }) {
     }
   }
 
-  return (
-    <div className="card">
-      <div className="card-header"><h2 className="card-title">Email</h2></div>
-      <div className="card-body flex flex-col gap-[14px]">
-        {error && <AlertError>{error}</AlertError>}
-
-        {mode === "view" && (
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex flex-col gap-[3px]">
-              <span className="text-body font-medium">{user.primaryEmailAddress?.emailAddress}</span>
-              <span className="text-meta text-muted">Changing this sends a confirmation code to the new address.</span>
-            </div>
-            <button type="button" className="btn-sec" onClick={() => setMode("enter")}>Change email</button>
-          </div>
-        )}
-
-        {mode === "enter" && (
-          <form onSubmit={handleSendCode} className="flex flex-col gap-[14px]">
-            <Field label="New email">
-              <Input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} required />
-            </Field>
-            <div className="flex gap-2">
-              <button type="submit" className="btn-pri" disabled={busy}>{busy ? "Sending…" : "Send code"}</button>
-              <button type="button" className="btn-sec" onClick={() => setMode("view")}>Cancel</button>
-            </div>
-          </form>
-        )}
-
-        {mode === "verify" && (
-          <form onSubmit={handleVerify} className="flex flex-col gap-[14px]">
-            <p className="m-0 text-body text-muted">We sent a code to {newEmail}.</p>
-            <Field label="Verification code">
-              <Input value={code} onChange={(e) => setCode(e.target.value)} required />
-            </Field>
-            <div className="flex gap-2">
-              <button type="submit" className="btn-pri" disabled={busy}>{busy ? "Confirming…" : "Confirm"}</button>
-              <button type="button" className="btn-sec" onClick={() => setMode("view")}>Cancel</button>
-            </div>
-          </form>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Phone deliberately isn't a Clerk field — see core/prisma/schema.prisma's
-// User.phone comment (Clerk's SMS allowlist rejects some country codes
-// regardless of whether phone sign-in is even enabled). Saved through the
-// same resource route signup.tsx already posts to.
-function PhoneCard({ initialPhone }: { initialPhone: string }) {
-  const [phone, setPhone] = useState(initialPhone);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleSave(event: FormEvent) {
-    event.preventDefault();
-    if (!phone) {
-      setError("Enter a phone number to save.");
-      return;
-    }
-    if (!isValidPhone(phone)) {
-      setError("Enter a valid phone number.");
-      return;
-    }
-    setSaving(true);
-    setSaved(false);
-    setError(null);
-    try {
-      const res = await fetch("/dashboard/profile-phone", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
-      });
-      if (!res.ok) throw new Error("request failed");
-      setSaved(true);
-    } catch {
-      setError("Couldn't save your phone number — try again.");
-    } finally {
-      setSaving(false);
-    }
+  if (mode === "view") {
+    return (
+      <Row label="Email" hint="Used to sign in">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span className="min-w-0 text-body [overflow-wrap:anywhere]">{user.primaryEmailAddress?.emailAddress}</span>
+          {verified ? <Badge status="confirmed" label="Verified" /> : null}
+          <button type="button" className="btn-link text-brand-600" onClick={() => setMode("enter")}>Change</button>
+        </div>
+      </Row>
+    );
   }
 
   return (
+    <Row label="Email" align="start">
+      <div className="flex flex-col gap-[10px]">
+        {error && <AlertError>{error}</AlertError>}
+        {mode === "enter" ? (
+          <>
+            <Input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="New email" />
+            <div className="flex gap-2">
+              <button type="button" className="btn-pri" disabled={busy || !newEmail} onClick={handleSendCode}>
+                {busy ? "Sending…" : "Send code"}
+              </button>
+              <button type="button" className="btn-sec" onClick={() => setMode("view")}>Cancel</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="m-0 text-meta text-muted">We sent a code to {newEmail}.</p>
+            <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Verification code" />
+            <div className="flex gap-2">
+              <button type="button" className="btn-pri" disabled={busy || !code} onClick={handleVerify}>
+                {busy ? "Confirming…" : "Confirm"}
+              </button>
+              <button type="button" className="btn-sec" onClick={() => setMode("view")}>Cancel</button>
+            </div>
+          </>
+        )}
+      </div>
+    </Row>
+  );
+}
+
+function TemplateCard({ template }: { template: { presetId: string; href: string } }) {
+  const preset = getPreset(template.presetId);
+  const v = vocabFor(template.presetId);
+  return (
     <div className="card">
-      <div className="card-header"><h2 className="card-title">Phone</h2></div>
-      <form onSubmit={handleSave}>
-        <div className="card-body max-w-[320px]">
-          {error && <AlertError className="mb-3">{error}</AlertError>}
-          <Field label="Phone number" hint="For us to reach you — not used for sign-in.">
-            <Input
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="+1 555 0100"
-              pattern={PHONE_PATTERN}
-              autoComplete="tel"
-            />
-          </Field>
+      <div className="card-body flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="h-9 w-9 shrink-0 rounded-[9px]" style={{ background: preset.tint }} />
+          <div className="flex flex-col gap-[2px]">
+            <span className="text-body font-medium">Business template — {preset.label.split(" / ")[0]}</span>
+            <span className="text-meta text-muted">{v.bookingTitle} · {v.customers} · {preset.vocab.resources}</span>
+          </div>
         </div>
-        <div className="card-footer">
-          {saved && <span className="alert-success">Saved.</span>}
-          <button type="submit" className="btn-pri ml-auto" disabled={saving}>
-            {saving ? "Saving…" : "Save phone"}
-          </button>
-        </div>
-      </form>
+        <a href={template.href} className="btn-sec no-underline hover:no-underline">Change</a>
+      </div>
     </div>
   );
 }

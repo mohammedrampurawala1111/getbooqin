@@ -20,8 +20,8 @@ import type { ReactNode } from "react";
 
 export const SETTINGS_NAV = [
   { group: "Account", items: [
-    { key: "profile", label: "Profile", href: "/dashboard/account" },
-    { key: "security", label: "Password & security", href: "/dashboard/account?tab=security" },
+    { key: "profile", label: "Profile", href: "/dashboard/account", title: "Account", subtitle: "Your personal details. Business-wide settings are below." },
+    { key: "security", label: "Password & security", href: "/dashboard/account?tab=security", title: "Account", subtitle: "Your personal details. Business-wide settings are below." },
   ]},
   { group: "Business", items: [
     { key: "general", label: "General", title: "General", subtitle: "Business identity and how time is displayed." },
@@ -45,14 +45,25 @@ export function settingsMeta(key: string) {
 }
 
 export function SettingsShell({
-  active, hide, children,
-}: { active: SettingsKey; hide?: SettingsKey[]; children: ReactNode }) {
+  active, hide, businessBaseHref = "", children,
+}: {
+  active: SettingsKey; hide?: SettingsKey[];
+  // Business-group items have no explicit href — they link with a plain
+  // `?page=key`, which only resolves correctly when this shell is already
+  // rendered from the settings route itself. Rendered from the identity-
+  // scoped /dashboard/account instead (see the Account-item comment
+  // above), that same relative link would just tack ?page= onto /dashboard/
+  // account — pass the current store's settings base ("/dashboard/:id/
+  // settings") here so those links resolve to the right place.
+  businessBaseHref?: string;
+  children: ReactNode;
+}) {
   const meta = settingsMeta(active);
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-[5px]">
-        <h1 className="page-title">{"title" in meta ? meta.title : meta.label}</h1>
-        {"subtitle" in meta ? <p className="page-sub">{meta.subtitle}</p> : null}
+        <h1 className="page-title">{meta.title}</h1>
+        <p className="page-sub">{meta.subtitle}</p>
       </div>
 
       <div className="grid grid-cols-[minmax(0,168px)_minmax(0,1fr)] items-start gap-5">
@@ -63,7 +74,7 @@ export function SettingsShell({
               {g.items
                 .filter((i) => !hide?.includes(i.key))
                 .map((i) => (
-                  <a key={i.key} href={"href" in i ? i.href : `?page=${i.key}`}
+                  <a key={i.key} href={"href" in i ? i.href : `${businessBaseHref}?page=${i.key}`}
                     className={`rounded-field px-[10px] py-[7px] text-[13px] font-medium no-underline hover:no-underline ${
                       i.key === active ? "bg-brand-50 text-brand-600" : "text-ink-2 hover:bg-canvas-alt"
                     }`}>
@@ -174,15 +185,19 @@ export function Segmented({
   );
 }
 
-/* Card + footer with the page's own save button and feedback. */
+/* Card + footer with the page's own save button and feedback. `onSubmit`
+   is for pages whose save is a client SDK call (Clerk), not a server
+   action — when given, it replaces the default real POST (still
+   `preventDefault()`-driven by the caller, so nothing here changes). */
 export function SettingsCard({
-  title, subtitle, saveLabel, savedAt, error, children,
+  title, subtitle, saveLabel, savedAt, error, onSubmit, children,
 }: {
   title?: string; subtitle?: string; saveLabel: string;
-  savedAt?: string; error?: string; children: ReactNode;
+  savedAt?: string; error?: string; onSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
+  children: ReactNode;
 }) {
   return (
-    <form method="post" className="card">
+    <form method="post" onSubmit={onSubmit} className="card">
       {title ? (
         <div className="flex flex-col gap-[2px] border-b border-line px-[18px] py-[13px]">
           <h2 className="m-0 text-[14px] font-semibold">{title}</h2>
