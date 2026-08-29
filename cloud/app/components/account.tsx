@@ -1,14 +1,15 @@
 import { useState, type ReactNode } from "react";
 import { PRESETS, getPreset, type PresetId } from "../lib/presets";
+import { LogoutButton } from "./ui";
 
 /* ==================================================================
    1. User menu — sidebar footer popover
-   Logout is a POST form so it works with JS off; the popover itself is
-   <details>, which needs no state and closes on outside click in modern
-   browsers via the `name` attribute (exclusive accordion) or Escape.
-   Profile/security live under the top-level /dashboard/account route (one
-   identity, many stores) rather than nested under :connectionId, so those
-   two links are absolute; only "Business settings" is per-store.
+   The popover itself is <details>, which needs no state and closes on
+   outside click in modern browsers via the `name` attribute (exclusive
+   accordion) or Escape. Profile/security live under the top-level
+   /dashboard/account route (one identity, many stores) rather than nested
+   under :connectionId, so those two links are absolute; only "Business
+   settings" is per-store.
    ================================================================== */
 export function UserMenu({
   name, email, role, initials, dark = false, settingsHref = "/dashboard",
@@ -42,11 +43,14 @@ export function UserMenu({
             finding). */}
         <MenuLink href="/support">Help &amp; support</MenuLink>
         <div className="my-[2px] h-px bg-row" />
-        <form method="post" action="/logout">
-          <button className="flex w-full cursor-pointer items-center gap-[9px] rounded-field px-[10px] py-2 text-left text-[13px] font-medium text-danger hover:bg-danger-bg">
-            Log out
-          </button>
-        </form>
+        {/* Was a raw <form method="post" action="/logout">, which crashed:
+            logout.tsx only exports a loader, not an action, and (worse)
+            skipped ending the actual Clerk identity session — that only
+            happens client-side via signOut(), which is what routes/
+            logout.tsx's own loader comment already assumes ran first. Every
+            other logout entry point already went through LogoutButton;
+            this was the one place that didn't. */}
+        <LogoutButton className="flex w-full cursor-pointer items-center gap-[9px] rounded-field px-[10px] py-2 text-left text-[13px] font-medium text-danger hover:bg-danger-bg" />
       </div>
     </details>
   );
