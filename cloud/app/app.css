@@ -190,7 +190,7 @@
 
   /* ---- marketing home (routes/_index.tsx) ---- */
   .mkt-shell   { @apply bg-surface; }
-  .mkt-bar     { @apply sticky top-0 z-10 border-b border-line bg-white/[0.88] backdrop-blur-[10px]; }
+  .mkt-bar     { @apply sticky top-0 z-10 border-b border-line bg-surface/[0.88] backdrop-blur-[10px]; }
   .mkt-wrap    { @apply mx-auto w-full max-w-[1120px] px-7; }
   .mkt-link    { @apply text-[13.5px] text-ink-3 no-underline hover:text-ink hover:no-underline; }
   .mkt-section { @apply scroll-mt-[68px]; }   /* clears the sticky bar on #anchor jumps */
@@ -250,4 +250,48 @@
    overrides it below the app's one real breakpoint. */
 @media (max-width: 47.999rem) {
   :where(input, select, textarea) { font-size: 16px; }
+}
+
+/* Dark mode: redefine the same custom properties @theme emits above, so
+   every bg-canvas/text-ink/border-line/... utility repaints without
+   touching a single call site (UX audit's T2 finding). Ratios verified
+   >=4.5:1 for every text token and every status fg/bg pair. Unlayered
+   like the block above — @theme's output lives in Tailwind's own layer,
+   and only unlayered rules are guaranteed to win over it. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --color-brand-50:  #2a2033; /* was a near-white wash; a dark tint keeps
+                                    selected nav/tiles readable as "filled"
+                                    instead of flashing white on a dark page */
+    --color-brand-200: #4a3457;
+
+    --color-canvas:      #121016;
+    --color-canvas-alt:  #19151f;
+    --color-surface:     #1c1822;
+    --color-line:        #2c2733;
+    --color-line-strong: #3a3441;
+    --color-row:         #221e29;
+    --color-ink:         #f1eef6;
+    --color-ink-2:       #d4cddd;
+    --color-ink-3:       #b3aabf;
+    --color-muted:       #9389a1;
+    --color-subtle:      #a89bb5;
+    --color-faint:       #4a4453;
+
+    --color-ok:       #6fd0a4;  --color-ok-bg:      #132a21;
+    --color-warn:     #e8b855;  --color-warn-bg:    #332811;
+    --color-danger:   #ff9d8f;  --color-danger-bg:  #3a1f1c;
+    --color-danger-line: #522a26;
+    --color-neutral:  #a89fb3;  --color-neutral-bg: #2c2733;
+    --color-chart-ok: #52c78d;  --color-chart-warn: #e0a325;  --color-chart-off: #4a4453;
+  }
+
+  /* The three call sites above that reach for a raw hex instead of a
+     token — invisible in light mode, but a near-white input/border on a
+     dark card otherwise. */
+  .input-error    { background: var(--color-danger-bg); border-color: #7a4038; }
+  .alert-error    { color: var(--color-danger); }
+  .readonly-panel { border-color: var(--color-line); }
 }
