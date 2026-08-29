@@ -111,22 +111,27 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
       <PageHeader title="Settings" />
 
       <div className="card">
-        <div className="flex border-b border-line px-[6px]">
-          <a href="?tab=general" className={`tab ${tab === "general" ? "tab-active" : ""}`}>
+        {/* "Integrations" ran 16px past a 389px viewport with nowhere to
+            scroll to reach it — the one tab a merchant needs to connect
+            Shopify or Stripe (UX audit's M6 finding). overflow-x-auto plus
+            shrink-0 on each tab lets it scroll into view instead of
+            clipping or wrapping. */}
+        <div className="flex overflow-x-auto border-b border-line px-[6px]">
+          <a href="?tab=general" className={`tab shrink-0 ${tab === "general" ? "tab-active" : ""}`}>
             General
           </a>
-          <a href="?tab=template" className={`tab ${tab === "template" ? "tab-active" : ""}`}>
+          <a href="?tab=template" className={`tab shrink-0 ${tab === "template" ? "tab-active" : ""}`}>
             Template
           </a>
-          <a href="?tab=notifications" className={`tab ${tab === "notifications" ? "tab-active" : ""}`}>
+          <a href="?tab=notifications" className={`tab shrink-0 ${tab === "notifications" ? "tab-active" : ""}`}>
             Notifications
           </a>
           {paymentsEnabled && (
-            <a href="?tab=payments" className={`tab ${tab === "payments" ? "tab-active" : ""}`}>
+            <a href="?tab=payments" className={`tab shrink-0 ${tab === "payments" ? "tab-active" : ""}`}>
               Payments
             </a>
           )}
-          <a href="?tab=integrations" className={`tab ${tab === "integrations" ? "tab-active" : ""}`}>
+          <a href="?tab=integrations" className={`tab shrink-0 ${tab === "integrations" ? "tab-active" : ""}`}>
             Integrations
           </a>
         </div>
@@ -134,7 +139,14 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
         {tab === "general" && (
           <Form method="post">
             <input type="hidden" name="_section" value="general" />
-            <div className="card-body grid grid-cols-2 gap-x-4 gap-y-[14px]">
+            {/* [&_.field-label]:min-h-[38px] reserves two lines' worth of
+                label height on every field here — "Minimum notice (hours)"
+                wraps while "Slot interval (minutes)" doesn't, which put the
+                two inputs 19px out of vertical alignment in the same row
+                (UX audit's M7 finding). Scoped to this grid rather than
+                Field globally, since most of the app's fields are single-
+                column and don't need the extra reserved space. */}
+            <div className="card-body grid grid-cols-2 gap-x-4 gap-y-[14px] [&_.field-label]:min-h-[38px]">
               <div className="col-span-2">
                 <Field label="Business name">
                   <Input name="business_name" defaultValue={settings.business_name} />
@@ -157,16 +169,16 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
                   <TimezoneSelect defaultValue={settings.timezone} />
                 </Field>
               </div>
-              <Field label="Slot interval (minutes)">
+              <Field label="Slot interval (minutes)" hint="The spacing between bookable start times.">
                 <Input type="number" name="slot_interval" min={5} defaultValue={settings.slot_interval} />
               </Field>
-              <Field label="Minimum notice (hours)">
+              <Field label="Minimum notice (hours)" hint="How soon before a slot someone can still book it.">
                 <Input type="number" name="min_notice_hours" min={0} defaultValue={settings.min_notice_hours} />
               </Field>
-              <Field label="Max advance booking (days)">
+              <Field label="Max advance booking (days)" hint="How far ahead your calendar opens up.">
                 <Input type="number" name="max_advance_days" min={1} defaultValue={settings.max_advance_days} />
               </Field>
-              <Field label="Cancellation cutoff (hours before start)">
+              <Field label="Cancellation cutoff (hours before start)" hint="How late a customer can still cancel.">
                 <Input type="number" name="cancel_cutoff_hours" min={0} defaultValue={settings.cancel_cutoff_hours} />
               </Field>
               <div className="col-span-2 flex flex-col gap-3">
@@ -181,15 +193,6 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
               </button>
             </div>
           </Form>
-        )}
-
-        {tab === "template" && (
-          <div className="card-footer">
-            {actionData?.saved && <span className="alert-success">Saved.</span>}
-            <button form="template-form" type="submit" className="btn-pri ml-auto">
-              Save template
-            </button>
-          </div>
         )}
 
         {tab === "notifications" && (
@@ -338,7 +341,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
       {tab === "template" && (
         <Form id="template-form" method="post" className="flex flex-col gap-[14px]">
           <input type="hidden" name="_section" value="template" />
-          <TemplateTab presetId={settings.preset} initialHidden={settings.hidden_overview_cards} />
+          <TemplateTab presetId={settings.preset} initialHidden={settings.hidden_overview_cards} saved={!!actionData?.saved} />
         </Form>
       )}
 
@@ -384,7 +387,9 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
 // Local controlled state drives TemplateConfig's live renames/cards preview
 // on pick/toggle; its inputs are still real named radios/checkboxes so the
 // #template-form submit above works whether or not this state ever changes.
-function TemplateTab({ presetId, initialHidden }: { presetId: string; initialHidden: string[] }) {
+function TemplateTab({
+  presetId, initialHidden, saved,
+}: { presetId: string; initialHidden: string[]; saved: boolean }) {
   const [preset, setPreset] = useState<PresetId>(presetId as PresetId);
   const [hidden, setHidden] = useState<Record<string, boolean>>(
     () => Object.fromEntries(initialHidden.map((key) => [key, true]))
@@ -394,6 +399,7 @@ function TemplateTab({ presetId, initialHidden }: { presetId: string; initialHid
     <TemplateConfig
       presetId={preset}
       hidden={hidden}
+      saved={saved}
       onPick={setPreset}
       onToggle={(key: OverviewCardKey) => setHidden((prev) => ({ ...prev, [key]: !prev[key] }))}
     />

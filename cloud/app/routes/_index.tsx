@@ -46,7 +46,13 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
   return (
     <div className="mkt-shell">
-      <div className="mkt-bar">
+      {/* group + group-has-checked (not peer-checked — see ui.tsx's Toggle
+          for why: the mobile panel below isn't a direct sibling of the
+          checkbox) drives the collapsed menu. Below md, Product/
+          Integrations/Industries/Pricing used to just disappear with
+          nothing replacing them (UX audit's M4 finding) — a visitor on a
+          phone couldn't reach pricing except by scrolling the whole page. */}
+      <div className="mkt-bar group">
         <div className="mkt-wrap flex h-[60px] items-center gap-7">
           <a href="/" className="flex items-center gap-[9px] no-underline hover:no-underline">
             <LogoMark size={26} />
@@ -70,16 +76,34 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 <a href="/signup" className="mkt-cta text-[13px] no-underline hover:no-underline">Sign up free</a>
               </>
             )}
+            <input type="checkbox" id="mkt-nav-toggle" className="peer sr-only md:hidden" />
+            <label
+              htmlFor="mkt-nav-toggle"
+              aria-label="Toggle menu"
+              className="btn-sec cursor-pointer px-[10px] py-[6px] md:hidden"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M2 4h12M2 8h12M2 12h12" strokeLinecap="round" />
+              </svg>
+            </label>
           </div>
         </div>
+        <nav className="hidden flex-col gap-1 border-t border-line px-7 py-3 group-has-checked:flex md:hidden">
+          <a href="#product" className="mkt-link py-[9px]">Product</a>
+          <a href="#integrations" className="mkt-link py-[9px]">Integrations</a>
+          <a href="#industries" className="mkt-link py-[9px]">Industries</a>
+          <a href="#pricing" className="mkt-link py-[9px]">Pricing</a>
+        </nav>
       </div>
 
       {/* ---------------------------------------------------------------- Hero */}
       <section id="product" className="mkt-section">
-        <div className="mkt-wrap grid grid-cols-[1.05fr_.95fr] items-center gap-12 py-20">
+        <div className="mkt-wrap grid grid-cols-1 items-center gap-8 py-14 md:grid-cols-[1.05fr_.95fr] md:gap-12 md:py-20">
           <div className="flex flex-col gap-5">
             <span className="mkt-eyebrow">Booking software for any industry</span>
-            <h1 className="mkt-h1">Bookings, staff and payments — one dashboard, every store.</h1>
+            {/* Fixed 50px set across ten lines at 389px, making the hero
+                905px tall on a 628px screen (UX audit's M3 finding). */}
+            <h1 className="mkt-h1 text-[32px] leading-[1.12] md:text-[50px] md:leading-[1.06]">Bookings, staff and payments — one dashboard, every store.</h1>
             <p className="mkt-lede">
               GetBooqin turns your product catalogue into bookable appointments, jobs or reservations —
               with staff schedules, deposits, and reminders that cut no-shows. Start with Shopify, or go
@@ -135,7 +159,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               Start with Shopify, add channels as you grow.
             </p>
           </div>
-          <div className="grid grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
             {INTEGRATIONS.map((integ) => (
               <div key={integ.id} className="tile cursor-default">
                 <span
@@ -161,7 +185,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               editable any time.
             </p>
           </div>
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
             {PRESETS.map((p) => (
               <a
                 key={p.id}
@@ -184,7 +208,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             <h2 className="mkt-h2">Simple pricing</h2>
             <p className="m-0 text-body text-ink-3">Start free. Upgrade when you need more staff or more stores.</p>
           </div>
-          <div className="grid grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
             {PLANS.map((plan) => (
               <PlanCard key={plan.name} {...plan} />
             ))}

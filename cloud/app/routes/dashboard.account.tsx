@@ -3,11 +3,10 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useClerk, useReverification, useSession, useUser } from "@clerk/react-router";
 import { isClerkAPIResponseError, isReverificationCancelledError } from "@clerk/react-router/errors";
 import type { Route } from "./+types/dashboard.account";
-import { prisma, listUserConnections, Settings } from "getbooqin-core";
+import { prisma } from "getbooqin-core";
 import { requireUserSession } from "~/session.server";
 import { AccountShell, AlertError, PageHeader, Field, Input, Toggle } from "~/components/ui";
 import { AuthMethodRow, GoogleGlyph, PasswordField, SessionRow } from "~/components/account";
-import { getPreset } from "~/lib/presets";
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 
 export const meta: Route.MetaFunction = () => [{ title: "Account · GetBooqin" }];
@@ -24,29 +23,10 @@ function clerkMessage(err: unknown): string | undefined {
 // Profile/security are per-user, not per-store, so this route sits at the
 // top level (not nested under :connectionId like the rest of the
 // dashboard) — see README's "Account, auth and template config" note.
-// The Business template card still needs *a* store to point "Change
-// template" at, so it resolves the same "most recently connected active
-// store" a bare /dashboard visit lands on.
 export async function loader({ request }: Route.LoaderArgs) {
   const session = await requireUserSession(request);
-  const [dbUser, connections] = await Promise.all([
-    prisma.user.findUnique({ where: { id: session.userId } }),
-    listUserConnections(session.userId),
-  ]);
-
-  const active = connections.filter((c) => c.status === "active");
-  const primary = [...active].sort(
-    (a, b) => new Date(b.connectedAt).getTime() - new Date(a.connectedAt).getTime()
-  )[0];
-
-  const template = primary
-    ? {
-        label: getPreset((await Settings.getSettings(primary.shop, primary.platform)).preset).label,
-        href: `/dashboard/${primary.id}/settings?tab=template`,
-      }
-    : null;
-
-  return { phone: dbUser?.phone ?? "", template };
+  const dbUser = await prisma.user.findUnique({ where: { id: session.userId } });
+  return { phone: dbUser?.phone ?? "" };
 }
 
 export default function Account({ loaderData }: Route.ComponentProps) {
@@ -66,7 +46,7 @@ export default function Account({ loaderData }: Route.ComponentProps) {
         </div>
 
         {tab === "profile" ? (
-          <ProfileTab phone={loaderData.phone} template={loaderData.template} />
+          <ProfileTab phone={loaderData.phone} />
         ) : (
           <SecurityTab />
         )}
@@ -78,9 +58,7 @@ export default function Account({ loaderData }: Route.ComponentProps) {
 /* ==================================================================
    Profile
    ================================================================== */
-function ProfileTab({
-  phone, template,
-}: { phone: string; template: { label: string; href: string } | null }) {
+function ProfileTab({ phone }: { phone: string }) {
   const { isLoaded, user } = useUser();
   if (!isLoaded || !user) {
     return <div className="card px-[18px] py-6 text-body text-muted">Loading…</div>;
@@ -90,7 +68,6 @@ function ProfileTab({
       <ProfileCard user={user} />
       <EmailCard user={user} />
       <PhoneCard initialPhone={phone} />
-      {template && <TemplateCard template={template} />}
     </div>
   );
 }
@@ -333,21 +310,6 @@ function PhoneCard({ initialPhone }: { initialPhone: string }) {
           </button>
         </div>
       </form>
-    </div>
-  );
-}
-
-function TemplateCard({ template }: { template: { label: string; href: string } }) {
-  return (
-    <div className="card">
-      <div className="card-header"><h2 className="card-title">Business template</h2></div>
-      <div className="card-body flex items-center justify-between gap-3">
-        <div className="flex flex-col gap-[3px]">
-          <span className="text-body font-medium">{template.label}</span>
-          <span className="text-meta text-muted">Sets your vocabulary, default services, and which Overview cards show.</span>
-        </div>
-        <a href={template.href} className="btn-sec no-underline hover:no-underline">Change template</a>
-      </div>
     </div>
   );
 }

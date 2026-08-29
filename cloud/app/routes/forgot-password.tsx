@@ -100,7 +100,7 @@ export default function ForgotPassword() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-canvas px-8">
+    <div className="flex min-h-dvh items-center justify-center bg-canvas px-8">
       <div className="card w-full max-w-[372px] p-[26px]">
         <a href="/" className="flex h-[30px] w-[30px] shrink-0 flex-col justify-center gap-[3px] rounded-[8px] bg-brand-950 p-[6px]">
           <span className="h-[6px] rounded-[2px] bg-brand-500" />

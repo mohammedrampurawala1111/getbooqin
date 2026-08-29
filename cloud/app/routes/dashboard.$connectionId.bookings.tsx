@@ -87,7 +87,7 @@ export default function BookingsList({ loaderData, params }: Route.ComponentProp
           />
         ) : (
           <>
-            <div className="thead" style={{ gridTemplateColumns: "1.05fr 1.25fr .95fr 1.15fr .8fr .8fr 24px" }}>
+            <div className="thead" style={{ gridTemplateColumns: "1.05fr 1.25fr .95fr 1.15fr .8fr .8fr 28px" }}>
               <div className="th">When</div>
               <div className="th">Service</div>
               <div className="th">Resource</div>
@@ -101,7 +101,7 @@ export default function BookingsList({ loaderData, params }: Route.ComponentProp
                 key={b.id}
                 href={`${base}/bookings/${b.id}`}
                 className="trow no-underline text-ink hover:no-underline cursor-pointer"
-                style={{ gridTemplateColumns: "1.05fr 1.25fr .95fr 1.15fr .8fr .8fr 24px" }}
+                style={{ gridTemplateColumns: "1.05fr 1.25fr .95fr 1.15fr .8fr .8fr 28px" }}
               >
                 <span className="num min-w-0">{new Date(b.startUtc).toLocaleString("en-US")}</span>
                 <span className="min-w-0 truncate">{b.serviceName}</span>

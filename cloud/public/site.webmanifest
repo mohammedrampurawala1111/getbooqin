@@ -1,0 +1,11 @@
+{
+  "name": "GetBooqin",
+  "short_name": "GetBooqin",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#f7f6fa",
+  "theme_color": "#131118",
+  "icons": [
+    { "src": "/favicon.png", "sizes": "1200x1200", "type": "image/png" }
+  ]
+}

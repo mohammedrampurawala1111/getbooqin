@@ -169,16 +169,16 @@ export default function ServiceDetail({ loaderData, actionData, params }: Route.
             <h2 className="card-title">Booking settings</h2>
           </div>
           <div className="card-body grid grid-cols-2 gap-x-4 gap-y-[14px]">
-            <Field label="Duration (minutes)">
+            <Field label="Duration (minutes)" hint="How long this booking takes, start to finish.">
               <Input type="number" name="duration_min" min={5} defaultValue={config.durationMin} />
             </Field>
-            <Field label="Capacity">
+            <Field label="Capacity" hint="How many customers can book the same slot at once.">
               <Input type="number" name="capacity" min={1} defaultValue={config.capacity} />
             </Field>
-            <Field label="Buffer before (min)">
+            <Field label="Buffer before (min)" hint="How long to leave free before each booking.">
               <Input type="number" name="buffer_before_min" min={0} defaultValue={config.bufferBeforeMin} />
             </Field>
-            <Field label="Buffer after (min)">
+            <Field label="Buffer after (min)" hint="How long to leave free after each booking.">
               <Input type="number" name="buffer_after_min" min={0} defaultValue={config.bufferAfterMin} />
             </Field>
             <Field label="Location">
@@ -188,7 +188,7 @@ export default function ServiceDetail({ loaderData, actionData, params }: Route.
                 <option value="phone">Phone</option>
               </select>
             </Field>
-            <Field label="Deposit (% of price)">
+            <Field label="Deposit (% of price)" hint="What share of the price is due to hold the booking.">
               <Input type="number" name="deposit_percent" min={1} max={100} defaultValue={config.depositPercent} />
             </Field>
 

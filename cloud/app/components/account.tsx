@@ -36,6 +36,12 @@ export function UserMenu({
         <MenuLink href="/dashboard/account?tab=security">Password &amp; security</MenuLink>
         <MenuLink href={settingsHref}>Business settings</MenuLink>
         <div className="my-[2px] h-px bg-row" />
+        {/* Nothing signed-in linked here at all — no Help, no Support, no
+            FAQ, no contact. A merchant stuck at 7pm had no route to a
+            human even though /support already exists (UX audit's U3
+            finding). */}
+        <MenuLink href="/support">Help &amp; support</MenuLink>
+        <div className="my-[2px] h-px bg-row" />
         <form method="post" action="/logout">
           <button className="flex w-full cursor-pointer items-center gap-[9px] rounded-field px-[10px] py-2 text-left text-[13px] font-medium text-danger hover:bg-danger-bg">
             Log out
@@ -48,7 +54,7 @@ export function UserMenu({
 
 function MenuLink({ href, children }: { href: string; children: ReactNode }) {
   return (
-    <a href={href} className="flex items-center gap-[9px] rounded-field px-[10px] py-2 text-[13px] text-ink-2 no-underline hover:bg-canvas hover:no-underline">
+    <a href={href} className="flex items-center gap-[9px] rounded-field px-[10px] py-2 text-[13px] text-ink-2 no-underline max-md:min-h-[44px] hover:bg-canvas hover:no-underline">
       {children}
     </a>
   );
@@ -251,31 +257,36 @@ export function vocabDiff(presetId: PresetId | string | null | undefined) {
 }
 
 export function TemplateConfig({
-  presetId, hidden, onPick, onToggle,
+  presetId, hidden, onPick, onToggle, saved = false,
 }: {
   presetId: PresetId | string;
   hidden: Record<string, boolean>;
   onPick?: (id: PresetId) => void;
   onToggle?: (key: OverviewCardKey) => void;
+  saved?: boolean;
 }) {
   const preset = getPreset(presetId as string);
   return (
     <>
       <div className="card">
         <div className="card-header"><h2 className="card-title">Choose a template</h2></div>
-        <div className="grid grid-cols-2 gap-2 px-[18px] py-[14px]">
+        {/* Same tile grid as onboarding's PresetTiles, but this copy never
+            got that component's responsive/truncation fix (UX audit's T3
+            finding: the industry-card clipping was fixed in setup but not
+            here). */}
+        <div className="grid grid-cols-1 gap-2 px-[18px] py-[14px] sm:grid-cols-2">
           {PRESETS.map((p) => (
             <label key={p.id} onClick={() => onPick?.(p.id)} className={`tile ${p.id === presetId ? "tile-on" : ""}`}>
               <input type="radio" name="preset" value={p.id} defaultChecked={p.id === presetId} className="sr-only" />
               <span className="h-5 w-5 shrink-0 rounded-[6px]" style={{ background: p.tint }} />
-              <span className="text-body font-medium">{p.label}</span>
-              <span className="ml-auto text-[11px] text-subtle">{p.unit}</span>
+              <span className="min-w-0 truncate text-body font-medium">{p.label}</span>
+              <span className="ml-auto shrink-0 text-[11px] text-subtle">{p.unit}</span>
             </label>
           ))}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-[14px]">
+      <div className="grid grid-cols-1 gap-[14px] md:grid-cols-2">
         <div className="card">
           <div className="card-header"><h2 className="card-title">What this renames</h2></div>
           <div className="px-[18px] pt-1 pb-[14px]">
@@ -334,6 +345,15 @@ export function TemplateConfig({
               </label>
             );
           })}
+        </div>
+        {/* Save used to float alone in a detached card above this picker
+            (settings.tsx rendered it as the tab strip's own footer, before
+            any of TemplateConfig's cards), so it read as a control for
+            something else entirely — every other tab's Save sits in the
+            footer of the card it belongs to (UX audit's U6/T3 finding). */}
+        <div className="card-footer">
+          {saved && <span className="alert-success">Saved.</span>}
+          <button type="submit" className="btn-pri ml-auto">Save template</button>
         </div>
       </div>
     </>

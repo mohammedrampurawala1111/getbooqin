@@ -36,7 +36,7 @@ export default function ResourcesList({ loaderData, params }: Route.ComponentPro
       />
 
       <DataTable
-        cols="1.3fr 1.4fr .9fr .7fr 24px"
+        cols="1.3fr 1.4fr .9fr .7fr 28px"
         columns={["Name", "Title", "Email", "Status", ""]}
         rows={resources}
         rowKey={(r) => String(r.id)}

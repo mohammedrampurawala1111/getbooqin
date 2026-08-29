@@ -68,7 +68,7 @@ export default function ServicesList({ loaderData, actionData, params }: Route.C
       )}
 
       <DataTable
-        cols="1.6fr .7fr .8fr .9fr .7fr 24px"
+        cols="1.6fr .7fr .8fr .9fr .7fr 28px"
         columns={["Name", "Colour", "Price", "Duration", "Status", ""]}
         rows={services}
         rowKey={(s) => String(s.id)}

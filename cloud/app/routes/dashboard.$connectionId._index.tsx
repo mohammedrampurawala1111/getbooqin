@@ -69,7 +69,10 @@ const PAYMENT_TINT: Record<string, string> = {
 // cards (see components/account.tsx's overviewCards) sharing one grid, so
 // the count of literal grid-cols-N classes below has to cover every
 // combination: 0 (skip the row), 3, or 4.
-const STAT_GRID: Record<number, string> = { 3: "grid-cols-3", 4: "grid-cols-4" };
+// grid-cols-4 with no breakpoint squeezed four tiles into ~72px each at a
+// 389px viewport — barely 34px of usable content after padding, wrapping
+// "No-show rate" onto three lines (UX audit's M5 finding).
+const STAT_GRID: Record<number, string> = { 3: "grid-cols-2 md:grid-cols-3", 4: "grid-cols-2 md:grid-cols-4" };
 
 export default function Overview({ loaderData, params }: Route.ComponentProps) {
   const { overview, pendingCount, activeServiceCount, range, allTimeBookingCount, setupFacts, hiddenCards } = loaderData;
@@ -255,7 +258,7 @@ function EmptyOverview({
     <div className="flex flex-col gap-[18px]">
       <PageHeader title="Overview" subtitle={summary.headline} />
 
-      <div className="grid grid-cols-4 gap-[14px]">
+      <div className="grid grid-cols-2 gap-[14px] md:grid-cols-4">
         <EmptyStat label="Bookings" value="0" note="Waiting on setup" />
         <EmptyStat label="Pending approval" value="0" note="Waiting on setup" />
         <EmptyStat

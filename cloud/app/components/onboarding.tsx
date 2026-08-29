@@ -41,7 +41,12 @@ export function PresetTiles({
   columns = 2,
 }: { name?: string; value: PresetId; onPick?: (id: PresetId) => void; columns?: 2 | 5 }) {
   return (
-    <div className={`grid gap-2 ${columns === 5 ? "grid-cols-5" : "grid-cols-2"}`}>
+    // Single column below sm — a 2-up grid left ~150px per tile at a
+    // 389px viewport, not enough for a label like "Home Services / Trades"
+    // plus its unit, so 7 of 10 subtitles clipped by up to 26px (UX
+    // audit's text-overflow finding). min-w-0 + truncate is a second,
+    // width-independent safety net for any leftover long combination.
+    <div className={`grid grid-cols-1 gap-2 sm:grid-cols-2 ${columns === 5 ? "md:grid-cols-5" : ""}`}>
       {PRESETS.map((p) => (
         <label
           key={p.id}
@@ -50,8 +55,8 @@ export function PresetTiles({
         >
           <input type="radio" name={name} value={p.id} defaultChecked={p.id === value} className="sr-only" />
           <span className="h-5 w-5 shrink-0 rounded-[6px]" style={{ background: p.tint }} />
-          <span className="text-body font-medium">{p.label}</span>
-          <span className="ml-auto text-[11px] text-subtle">{p.unit}</span>
+          <span className="min-w-0 truncate text-body font-medium">{p.label}</span>
+          <span className="ml-auto shrink-0 text-[11px] text-subtle">{p.unit}</span>
         </label>
       ))}
     </div>

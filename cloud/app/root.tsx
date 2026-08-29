@@ -4,6 +4,10 @@ import { clerkMiddleware, rootAuthLoader } from "@clerk/react-router/server";
 import type { Route } from "./+types/root";
 import "./app.css";
 
+// Previously missing entirely — blank browser-tab glyph, a generic
+// screenshot for "Add to Home Screen" (exactly what a shop owner does with
+// a tool like this), and default-grey browser chrome instead of the brand
+// colour (UX audit's M10 finding).
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
   { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
@@ -11,6 +15,9 @@ export const links: Route.LinksFunction = () => [
     rel: "stylesheet",
     href: "https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap",
   },
+  { rel: "icon", href: "/favicon.png", type: "image/png" },
+  { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
+  { rel: "manifest", href: "/site.webmanifest" },
 ];
 
 // Populates the request context that rootAuthLoader below reads. This is
@@ -39,6 +46,7 @@ export default function Root({ loaderData }: Route.ComponentProps) {
         <head>
           <meta charSet="utf-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <meta name="theme-color" content="#131118" />
           <Meta />
           <Links />
         </head>

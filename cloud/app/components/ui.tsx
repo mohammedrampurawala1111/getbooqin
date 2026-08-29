@@ -497,14 +497,14 @@ export function LegalShell({
 /* ------------------------------------------------------------------ */
 export function AccountShell({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen flex-col bg-canvas">
+    <div className="flex min-h-dvh flex-col bg-canvas">
       <header className="border-b border-line bg-surface">
         <div className="mx-auto flex max-w-[1240px] items-center gap-[14px] px-[30px] py-[14px]">
           <a href="/dashboard" className="flex items-center gap-[9px] no-underline hover:no-underline">
             <LogoMark size={28} />
             <span className="text-[14px] font-semibold text-ink">GetBooqin</span>
           </a>
-          <a href="/dashboard" className="ml-auto text-meta font-medium text-muted no-underline hover:text-ink">
+          <a href="/dashboard" className="ml-auto flex items-center text-meta font-medium text-muted no-underline max-md:min-h-[44px] hover:text-ink">
             &larr; Back to dashboard
           </a>
           <LogoutButton className="btn-ghost px-[10px] py-[6px] text-meta" />
@@ -518,12 +518,12 @@ export function AccountShell({ children }: { children: ReactNode }) {
 export function LegalFooter() {
   return (
     <footer className="border-t border-line">
-      <div className="mkt-wrap flex items-center justify-between gap-4 py-7">
+      <div className="mkt-wrap flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-7">
         <span className="flex items-center gap-[9px]">
           <LogoMark size={22} />
           <span className="text-[13px] font-medium text-muted">GetBooqin</span>
         </span>
-        <div className="flex items-center gap-5">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
           <a href="/legal/privacy" className="mkt-link">Privacy</a>
           <a href="/legal/terms" className="mkt-link">Terms</a>
           <a href="/support" className="mkt-link">Support</a>

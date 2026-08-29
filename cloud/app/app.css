@@ -105,7 +105,11 @@
    plain @layer components classes — so these two live here instead.
 ------------------------------------------------------------------ */
 @utility btn {
-  @apply inline-flex cursor-pointer items-center gap-[7px] rounded-field px-[14px] py-2 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-55;
+  /* max-md:min-h-[44px] — every button/link variant below (btn-pri, -sec,
+     -del, -ghost) inherits the Apple/WCAG 44px tap-target minimum on
+     mobile in one place, rather than patching each undersized instance
+     the audit happened to measure (UX audit's M8 finding). */
+  @apply inline-flex cursor-pointer items-center gap-[7px] rounded-field px-[14px] py-2 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-55 max-md:min-h-[44px];
 }
 @utility badge {
   @apply inline-flex items-center gap-[5px] rounded-full px-2 py-[3px] text-[11.5px] font-medium;
@@ -157,8 +161,11 @@
   .badge-danger   { @apply badge bg-danger-bg text-danger; }
   .badge-dot      { @apply h-[5px] w-[5px] rounded-full bg-current; }
 
-  /* sidebar */
-  .nav-item        { @apply flex cursor-pointer items-center gap-[10px] rounded-field px-[10px] py-2 text-body font-medium text-ink-2 hover:bg-row; }
+  /* sidebar. min-h-[44px] only below the app's one breakpoint — 12 of 18
+     interactive targets on the Overview screen measured under the 44px
+     Apple/WCAG minimum at 389px (UX audit's M8 finding); desktop keeps the
+     denser py-2 row since a mouse cursor doesn't need the same margin. */
+  .nav-item        { @apply flex cursor-pointer items-center gap-[10px] rounded-field px-[10px] py-2 text-body font-medium text-ink-2 hover:bg-row max-md:min-h-[44px]; }
   .nav-item-active { @apply bg-brand-50 text-brand-600 hover:bg-brand-50; }
   /* dark sidebar variant: wrap sidebar in .side-dark */
   .side-dark { @apply bg-brand-950 text-[#ece9f0]; }
@@ -199,7 +206,7 @@
   .plan-card-featured { @apply border-brand-200 shadow-pop; }
 
   /* ---- onboarding (routes/onboarding.tsx) ---- */
-  .ob-shell    { @apply flex min-h-screen flex-col bg-canvas; }
+  .ob-shell    { @apply flex min-h-dvh flex-col bg-canvas; }
   .ob-progress { @apply h-[2px] bg-line; }
   .ob-progress > span { @apply block h-[2px] bg-brand-500 transition-[width] duration-300; }
   /* Single column (rail above content) below md; the fixed 196px rail only
@@ -228,4 +235,19 @@
   .task-row    { @apply flex cursor-pointer items-center gap-[13px] border-b border-row px-[18px] py-[14px] hover:bg-canvas-alt; }
   .task-dot    { @apply inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface text-[11px] text-white; }
   .task-dot-done { @apply border-brand-600 bg-brand-600; }
+}
+
+/* Deliberately outside every @layer: Tailwind v4's cascade layers put
+   @layer components (.input's own text-body/13.5px) ahead of @layer base,
+   so a same-named override placed in @layer base — where this rule lived
+   at first — never actually won. Unlayered rules beat every layer
+   regardless of source order, which is the only way to override .input
+   here without touching that component class's many other call sites.
+   iOS Safari auto-zooms the page on focusing any field under 16px — every
+   form control computed to 13.5px, so tapping into Business name, a
+   price, or Slot interval jerked the whole page bigger on every phone
+   (UX audit's M2 finding). Desktop keeps the denser 13.5px; this only
+   overrides it below the app's one real breakpoint. */
+@media (max-width: 47.999rem) {
+  :where(input, select, textarea) { font-size: 16px; }
 }

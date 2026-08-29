@@ -79,7 +79,7 @@ export async function action({ request }: Route.ActionArgs) {
 // when someone lands here on its own (UX audit's B3/R6 findings).
 export default function ConnectShopify({ actionData }: Route.ComponentProps) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-canvas px-8">
+    <div className="flex min-h-dvh items-center justify-center bg-canvas px-8">
       <div className="card w-full max-w-[400px] p-[26px]">
         <a href="/dashboard" className="mb-4 flex w-fit items-center gap-[9px] no-underline hover:no-underline">
           <LogoMark size={28} />
@@ -95,7 +95,7 @@ export default function ConnectShopify({ actionData }: Route.ComponentProps) {
             Connect
           </button>
         </Form>
-        <a href="/dashboard" className="mt-4 inline-block text-body text-muted">&larr; Back to dashboard</a>
+        <a href="/dashboard" className="mt-4 flex items-center text-body text-muted max-md:min-h-[44px]">&larr; Back to dashboard</a>
       </div>
     </div>
   );
