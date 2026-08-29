@@ -971,9 +971,6 @@
 		if ( booking.resource ) {
 			descriptionBits.push( t.teamMemberLabel + ': ' + booking.resource );
 		}
-		if ( booking.manage_url ) {
-			descriptionBits.push( 'Manage this booking: ' + booking.manage_url );
-		}
 		var lines = [
 			'BEGIN:VCALENDAR',
 			'VERSION:2.0',
@@ -993,10 +990,12 @@
 
 	/**
 	 * Everything a customer needs from this screen without having to find
-	 * the confirmation email: what they booked, with whom, for how much,
-	 * a reference to quote if they call, a link back to manage it, and a
-	 * calendar file. Shared between stepDone (paid/free path) and
-	 * stepInstructions (offline-payment path) so neither shortchanges it.
+	 * the confirmation email: what they booked, with whom, for how much, a
+	 * reference to quote if they call, and a calendar file. Shared between
+	 * stepDone (paid/free path) and stepInstructions (offline-payment path)
+	 * so neither shortchanges it. No manage-booking link here — that page
+	 * isn't wired up on this store yet; the confirmation email still has
+	 * manage_url for whenever it is.
 	 */
 	function confirmationDetails( booking ) {
 		var nodes = [];
@@ -1020,9 +1019,6 @@
 		var icsUrl = icsDataUrl( booking );
 		if ( icsUrl ) {
 			actions.push( el( 'a', { class: 'getbooqin-btn getbooqin-btn--ghost', href: icsUrl, download: 'appointment.ics', text: 'Add to calendar' } ) );
-		}
-		if ( booking.manage_url ) {
-			actions.push( el( 'a', { class: 'getbooqin-btn getbooqin-btn--ghost', href: booking.manage_url, text: 'Manage this booking' } ) );
 		}
 		if ( actions.length ) {
 			nodes.push( el( 'div', { class: 'getbooqin-actions' }, actions ) );

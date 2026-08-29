@@ -330,6 +330,10 @@
 
 .getbooqin-addon input {
 	margin-top: 3px;
+	/* Without this a native checkbox renders in the browser's default
+	   blue regardless of the store's own accent color — the one visibly
+	   off-brand element on an otherwise theme-matched screen. */
+	accent-color: var(--getbooqin-accent, #2563eb);
 }
 
 .getbooqin-addon strong {
