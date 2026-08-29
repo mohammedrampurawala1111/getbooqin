@@ -4,6 +4,8 @@ import { Data } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, PageHeader, Field, Input, DataTable, EmptyState } from "~/components/ui";
 
+export const meta: Route.MetaFunction = () => [{ title: "Time off · GetBooqin" }];
+
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId);
   const [blocks, resources] = await Promise.all([Data.timeoff(shop), Data.resources(shop, platform, true)]);
@@ -40,9 +42,9 @@ export default function TimeOff({ loaderData, actionData }: Route.ComponentProps
       <div className="card">
         <div className="card-body">
           <Form method="post" className="flex flex-col gap-[14px]">
-            <div className="grid grid-cols-[1.1fr_1fr_1fr] gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(180px,1.1fr)_1fr_1fr]">
               <Field label="Applies to">
-                <select name="resource_id" defaultValue="0" className="input">
+                <select name="resource_id" defaultValue="0" className="input min-w-0">
                   <option value="0">Whole business</option>
                   {resources.map((r) => (
                     <option key={r.id} value={r.id}>
@@ -88,7 +90,18 @@ export default function TimeOff({ loaderData, actionData }: Route.ComponentProps
             </button>
           </Form>,
         ]}
-        empty={<EmptyState title="No time off scheduled" body="Add a block above to close bookings for a date range." />}
+        empty={
+          <EmptyState
+            icon={
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <rect x="2.5" y="3.5" width="13" height="12" rx="2" />
+                <path d="M2.5 7h13M6 2v3M12 2v3M6.5 11h1.5M10 11h1.5" strokeLinecap="round" />
+              </svg>
+            }
+            title="No time off scheduled"
+            body="Add a block above to close bookings for a date range."
+          />
+        }
       />
     </div>
   );

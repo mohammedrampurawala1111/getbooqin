@@ -78,3 +78,20 @@ export async function disconnectConnection(userId: string, connectionId: string)
   if (!connection) return null;
   return prisma.connection.update({ where: { id: connectionId }, data: { status: "revoked" } });
 }
+
+// Hard delete, unlike disconnectConnection above — only for a manual draft
+// abandoned mid-onboarding (routes/onboarding.tsx creates one on step 1,
+// then the user connects a real Shopify store instead at step 3/4): it was
+// never "gone live" for anyone, so there's no history worth keeping and
+// leaving it around would just show up as permanent clutter in Settings ›
+// Integrations' "Connected stores" list. Any ShopSettings/ServiceConfig/
+// ProductCache/Resource rows already written under its shop key are left in
+// place — orphaned but inert, since nothing else references a deleted
+// Connection's shop, and cleaning those up isn't worth the extra queries for
+// what's normally a same-session, mostly-empty draft.
+export async function deleteConnection(userId: string, connectionId: string) {
+  const connection = await getUserConnection(userId, connectionId);
+  if (!connection) return null;
+  await prisma.connection.delete({ where: { id: connectionId } });
+  return connection;
+}

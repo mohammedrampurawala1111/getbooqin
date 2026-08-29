@@ -3,6 +3,8 @@ import { Data } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { PageHeader, DataTable, EmptyState, Badge } from "~/components/ui";
 
+export const meta: Route.MetaFunction = () => [{ title: "Staff / Resources · GetBooqin" }];
+
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId);
   const resources = await Data.resources(shop, platform, false);
@@ -51,7 +53,23 @@ export default function ResourcesList({ loaderData, params }: Route.ComponentPro
           <Badge status={r.status ? "confirmed" : "cancelled"} label={r.status ? "Active" : "Inactive"} />,
           <span className="text-faint">›</span>,
         ]}
-        empty={<EmptyState title="No resources yet" body="Add staff or resources to start scheduling bookings." />}
+        empty={
+          <EmptyState
+            icon={
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <circle cx="9" cy="6.5" r="3" />
+                <path d="M3.5 15c.6-3 2.8-5 5.5-5s4.9 2 5.5 5" strokeLinecap="round" />
+              </svg>
+            }
+            title="No resources yet"
+            body="Add staff or resources to start scheduling bookings."
+            action={
+              <a href={`${base}/resources/new`} className="btn-pri no-underline hover:no-underline">
+                + Add
+              </a>
+            }
+          />
+        }
       />
     </div>
   );

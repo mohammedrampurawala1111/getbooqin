@@ -44,6 +44,10 @@ export async function action({ request }: Route.ActionArgs) {
   const hasOnboarding = [presetId, businessName, businessEmail, businessPhone, timezone, resourceName, remindersOnRaw].some(
     (v) => v !== undefined && v !== null
   );
+  // The wizard's step 1 already created a manual draft Connection to save
+  // progress against (see onboarding.tsx) — absent for every other caller
+  // of this form (e.g. Settings' "+ Connect another store").
+  const draftConnectionId = String(form.get("ob_draft_connection_id") || "") || undefined;
 
   const state = signOAuthState({
     userId: session.userId,
@@ -61,6 +65,7 @@ export async function action({ request }: Route.ActionArgs) {
           },
         }
       : {}),
+    ...(draftConnectionId ? { draftConnectionId } : {}),
   });
   const redirectUri = `${getAppUrl()}/connect/shopify/callback`;
   const authorizationUrl = buildAuthorizationUrl({ shop, redirectUri, state });

@@ -1,58 +1,126 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { redirect, useSearchParams } from "react-router";
+import { randomUUID } from "node:crypto";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { redirect, useFetcher, useSearchParams } from "react-router";
 import type { Route } from "./+types/onboarding";
 import { requireUserSession } from "~/session.server";
-import { Field, Input, Toggle, TimezoneSelect } from "~/components/ui";
+import { AlertError, Field, Input, Toggle, TimezoneSelect } from "~/components/ui";
 import { OnboardingShell, PresetTiles, PresetScaffold, IntegrationRow } from "~/components/onboarding";
 import { INTEGRATIONS, getPreset, type PresetId } from "~/lib/presets";
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
-import { Data, Settings, createManualConnection } from "getbooqin-core";
+import { CURRENCIES, guessCurrency } from "~/lib/currency";
+import { Data, Settings, createManualConnection, getUserConnection } from "getbooqin-core";
 
 // Two ways to leave this wizard with a working account: connect a real
 // Shopify store (ShopifyConnectForm below — answers ride through the OAuth
 // state to connect.shopify.callback.tsx, since there's no Connection row to
 // attach them to until that store exists), or "Go live without Shopify"
-// (this action), which creates a Connection right now against a manual,
-// non-Shopify platform and applies everything immediately. Either way,
-// nothing here is saved server-side before that point — see the UX audit's
-// B1/B3 findings for why a bare sessionStorage-only wizard that could never
-// finish without Shopify was the actual bug, not client-side staging itself.
+// (handleGoLive below), which applies everything to a manual, non-Shopify
+// Connection created back on step 1.
+//
+// That Connection is created (and saved to) on every step's Continue, not
+// just at the end — a re-test found that clicking Continue on step 1 fired
+// no network request at all, so a name typed there and never submitted
+// could vanish, and cross-account bleed was possible because the only
+// record of progress lived in a sessionStorage key (UX audit's B1/B2
+// findings). Persisting each step server-side against a real Connection
+// closes both: there's nothing left in the browser to leak, and nothing
+// entered is lost if the tab closes before step 4.
 export const meta: Route.MetaFunction = () => [{ title: "Set up your business · GetBooqin" }];
 
 export async function loader({ request }: Route.LoaderArgs) {
   const session = await requireUserSession(request);
-  return { userId: session.userId };
+  const url = new URL(request.url);
+  // Best-effort carry from signup.tsx's own business-name/preset/phone
+  // fields (query params, not sessionStorage — a mismatched storage key
+  // between signup.tsx and this route used to mean that data never arrived
+  // here at all, UX audit's N1 finding). Only read once, on the very first
+  // render of step 1; every step past that already has its own Continue
+  // saving real values, so there's nothing left to seed from the URL.
+  const seed = {
+    businessName: url.searchParams.get("business_name") || "",
+    preset: (url.searchParams.get("preset") as PresetId) || undefined,
+    phone: url.searchParams.get("phone") || "",
+  };
+  return { userId: session.userId, seed };
 }
 
-export async function action({ request }: Route.ActionArgs) {
-  const session = await requireUserSession(request);
-  const form = await request.formData();
+function slugify(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "service";
+}
 
-  const connection = await createManualConnection({ userId: session.userId });
-  const shop = connection.shop;
-  const platform = connection.platform;
+type ActionResult = { connectionId?: string; error?: string };
 
-  const presetId = String(form.get("preset") || "") || undefined;
-  const businessName = String(form.get("business_name") || "") || undefined;
-  const businessEmail = String(form.get("business_email") || "") || undefined;
-  const businessPhone = String(form.get("business_phone") || "") || undefined;
-  const timezone = String(form.get("timezone") || "") || undefined;
-  const resourceName = String(form.get("resource_name") || "") || undefined;
-  const remindersOn = form.get("reminders_on") === "on";
+async function handleStep1(userId: string, form: FormData): Promise<ActionResult> {
+  const cid = String(form.get("cid") || "");
+  let connection = cid ? await getUserConnection(userId, cid) : null;
+  if (!connection || connection.platform !== "manual") {
+    connection = await createManualConnection({ userId });
+  }
+  const { shop, platform } = connection;
 
-  const settingsPatch: Record<string, string | boolean> = { reminder_enabled: remindersOn };
+  const businessName = String(form.get("business_name") || "").trim();
+  const businessEmail = String(form.get("business_email") || "").trim();
+  const businessPhone = String(form.get("business_phone") || "").trim();
+  const timezone = String(form.get("timezone") || "").trim();
+  const currency = String(form.get("currency") || "").trim();
+  const currencySymbol = String(form.get("currency_symbol") || "").trim();
+  const presetId = String(form.get("preset") || "").trim();
+
+  const settingsPatch: Record<string, string> = {};
   if (businessName) settingsPatch.business_name = businessName;
   if (businessEmail) settingsPatch.business_email = businessEmail;
   if (businessPhone) settingsPatch.business_phone = businessPhone;
   if (timezone) settingsPatch.timezone = timezone;
-  await Settings.setSettings(shop, platform, settingsPatch);
+  if (currency) settingsPatch.currency = currency;
+  if (currencySymbol) settingsPatch.currency_symbol = currencySymbol;
+  if (Object.keys(settingsPatch).length > 0) {
+    await Settings.setSettings(shop, platform, settingsPatch);
+  }
 
   if (presetId) {
     await Settings.applyPreset(shop, platform, presetId);
+
+    // Materialize the preset's sample services for real. Previously step 2
+    // showed "4 of 4 selected" for these and the dashboard still reported
+    // "0 added" — applying a preset only ever wrote vocabulary/scheduling
+    // defaults, nothing actually created a bookable service from it (UX
+    // audit's N4 finding). Guarded to run once: re-submitting step 1 (e.g.
+    // after going Back) shouldn't duplicate services that already exist.
+    const existingServices = await Data.catalogServices(shop, platform, false);
+    if (existingServices.length === 0) {
+      for (const svc of getPreset(presetId).services) {
+        const productId = randomUUID();
+        const productHandle = `${slugify(svc.name)}-${productId.slice(0, 8)}`;
+        await Data.upsertProductCache(shop, platform, {
+          productId,
+          productHandle,
+          title: svc.name,
+          description: "",
+          category: "",
+          price: 0,
+        });
+        await Data.saveServiceConfig(shop, platform, {
+          product_id: productId,
+          product_handle: productHandle,
+          duration_min: svc.minutes,
+        });
+      }
+    }
   }
 
+  return { connectionId: connection.id };
+}
+
+async function handleStep2(userId: string, form: FormData): Promise<ActionResult> {
+  const cid = String(form.get("cid") || "");
+  const connection = cid ? await getUserConnection(userId, cid) : null;
+  if (!connection || connection.platform !== "manual") {
+    return { error: "Something went wrong — go back to the previous step and try again." };
+  }
+
+  const resourceName = String(form.get("resource_name") || "").trim();
   if (resourceName) {
-    await Data.saveResource(shop, platform, {
+    await Data.saveResource(connection.shop, connection.platform, {
       name: resourceName,
       title: "",
       email: "",
@@ -66,15 +134,37 @@ export async function action({ request }: Route.ActionArgs) {
     });
   }
 
+  return { connectionId: connection.id };
+}
+
+async function handleGoLive(userId: string, form: FormData) {
+  const cid = String(form.get("cid") || "");
+  let connection = cid ? await getUserConnection(userId, cid) : null;
+  // Defensive fallback only — with JS enabled, step 1's Continue always
+  // creates this connection first, so `cid` should already be set by the
+  // time this submits.
+  if (!connection || connection.platform !== "manual") {
+    connection = await createManualConnection({ userId });
+  }
+
+  const remindersOn = form.get("reminders_on") === "on";
+  await Settings.setSettings(connection.shop, connection.platform, {
+    reminder_enabled: remindersOn,
+    onboarding_completed: true,
+  });
+
   throw redirect(`/dashboard/${connection.id}`);
 }
 
-// Namespaced per user so an abandoned signup attempt in the same browser
-// tab can never prefill (or overwrite) a different signed-in account's
-// wizard state — see the UX audit's B2 finding, where a global key did
-// exactly that.
-function storageKey(userId: string): string {
-  return `gb_onboarding:${userId}`;
+export async function action({ request }: Route.ActionArgs) {
+  const session = await requireUserSession(request);
+  const form = await request.formData();
+  const intent = String(form.get("_intent") || "");
+
+  if (intent === "step1") return handleStep1(session.userId, form);
+  if (intent === "step2") return handleStep2(session.userId, form);
+  if (intent === "golive") return handleGoLive(session.userId, form);
+  return { error: "Unknown step." };
 }
 
 type OnboardingState = {
@@ -83,58 +173,64 @@ type OnboardingState = {
   email: string;
   phone: string;
   timezone: string;
+  currency: string;
+  currencySymbol: string;
   teamSize: string;
   resourceName: string;
   remindersOn: boolean;
 };
 
-const DEFAULT_STATE: OnboardingState = {
-  businessName: "",
-  preset: "generic",
-  email: "",
-  phone: "",
-  timezone: "",
-  teamSize: "1",
-  resourceName: "",
-  remindersOn: true,
-};
-
-function loadSeed(userId: string): OnboardingState {
-  if (typeof window === "undefined") return DEFAULT_STATE;
-  try {
-    const raw = sessionStorage.getItem(storageKey(userId));
-    return raw
-      ? { ...DEFAULT_STATE, ...JSON.parse(raw) }
-      : { ...DEFAULT_STATE, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
-  } catch {
-    return DEFAULT_STATE;
-  }
-}
-
 export default function Onboarding({ loaderData }: Route.ComponentProps) {
-  const { userId } = loaderData;
+  const { seed } = loaderData;
   const [searchParams, setSearchParams] = useSearchParams();
   const step = Math.min(4, Math.max(1, Number(searchParams.get("step")) || 1));
-  const [state, setState] = useState<OnboardingState>(DEFAULT_STATE);
+  const cid = searchParams.get("cid") || "";
 
-  // Seed from sessionStorage on mount only (not SSR — nothing here is
-  // stored server-side until a Connection exists, and this route never
-  // renders on the server with meaningful data anyway).
-  useEffect(() => {
-    setState(loadSeed(userId));
-  }, [userId]);
+  const [state, setState] = useState<OnboardingState>(() => {
+    const timezone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC";
+    const guessed = guessCurrency(timezone);
+    return {
+      businessName: seed.businessName,
+      preset: seed.preset ?? "generic",
+      email: "",
+      phone: seed.phone,
+      timezone,
+      currency: guessed.code,
+      currencySymbol: guessed.symbol,
+      teamSize: "1",
+      resourceName: "",
+      remindersOn: true,
+    };
+  });
 
   function update(patch: Partial<OnboardingState>) {
-    setState((prev) => {
-      const next = { ...prev, ...patch };
-      try {
-        sessionStorage.setItem(storageKey(userId), JSON.stringify(next));
-      } catch {
-        // best-effort — same reasoning as signup.tsx's stashOnboardingSeed
-      }
+    setState((prev) => ({ ...prev, ...patch }));
+  }
+
+  const fetcher = useFetcher<ActionResult>();
+  const [error, setError] = useState<string | null>(null);
+  const pendingStepRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data || pendingStepRef.current === null) return;
+    const result = fetcher.data;
+    const toStep = pendingStepRef.current;
+    pendingStepRef.current = null;
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    setError(null);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("step", String(toStep));
+      if (result.connectionId) next.set("cid", result.connectionId);
       return next;
     });
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetcher.state, fetcher.data]);
+
+  const saving = fetcher.state !== "idle";
 
   function goToStep(n: number) {
     setSearchParams((prev) => {
@@ -144,12 +240,49 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
     });
   }
 
+  function submitStep1(toStep: number) {
+    const fd = new FormData();
+    fd.set("_intent", "step1");
+    if (cid) fd.set("cid", cid);
+    fd.set("business_name", state.businessName);
+    fd.set("preset", state.preset);
+    fd.set("business_email", state.email);
+    fd.set("business_phone", state.phone);
+    fd.set("timezone", state.timezone);
+    fd.set("currency", state.currency);
+    fd.set("currency_symbol", state.currencySymbol);
+    pendingStepRef.current = toStep;
+    fetcher.submit(fd, { method: "post" });
+  }
+
+  function submitStep2(toStep: number) {
+    const fd = new FormData();
+    fd.set("_intent", "step2");
+    fd.set("cid", cid);
+    fd.set("resource_name", state.resourceName);
+    pendingStepRef.current = toStep;
+    fetcher.submit(fd, { method: "post" });
+  }
+
   return (
     <OnboardingShell step={step} onStep={goToStep} finishLaterHref="/connect/shopify">
-      {step === 1 && <StepBusiness state={state} update={update} onNext={() => goToStep(2)} />}
-      {step === 2 && <StepSetup state={state} update={update} onNext={() => goToStep(3)} onBack={() => goToStep(1)} />}
-      {step === 3 && <StepIntegrations state={state} onNext={() => goToStep(4)} onBack={() => goToStep(2)} />}
-      {step === 4 && <StepGoLive state={state} update={update} onBack={() => goToStep(3)} />}
+      {error && <AlertError className="mb-1">{error}</AlertError>}
+      {step === 1 && (
+        <StepBusiness state={state} update={update} saving={saving} onNext={() => submitStep1(2)} />
+      )}
+      {step === 2 && (
+        <StepSetup
+          state={state}
+          update={update}
+          saving={saving}
+          onNext={() => submitStep2(3)}
+          onBack={() => goToStep(1)}
+        />
+      )}
+      {step === 3 && (
+        <StepIntegrations state={state} cid={cid} onNext={() => goToStep(4)} onBack={() => goToStep(2)} />
+      )}
+      {step === 4 && <StepGoLive state={state} cid={cid} update={update} onBack={() => goToStep(3)} />}
     </OnboardingShell>
   );
 }
@@ -165,8 +298,10 @@ const SHOP_DOMAIN_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
    Validates the domain client-side first: a typo used to submit straight
    to /connect/shopify, which discarded everything typed here and stranded
    the user on that standalone page with no way back (UX audit's R5
-   finding) — now it never leaves this screen. */
-function ShopifyConnectForm({ state, submitLabel }: { state: OnboardingState; submitLabel: string }) {
+   finding) — now it never leaves this screen. `cid`, when set, is the
+   manual draft Connection step 1 already created — carried through so the
+   callback can delete it once a real Shopify Connection exists instead. */
+function ShopifyConnectForm({ state, cid, submitLabel }: { state: OnboardingState; cid: string; submitLabel: string }) {
   const [shop, setShop] = useState("");
   const [touched, setTouched] = useState(false);
   const invalid = touched && shop.length > 0 && !SHOP_DOMAIN_RE.test(shop);
@@ -187,6 +322,7 @@ function ShopifyConnectForm({ state, submitLabel }: { state: OnboardingState; su
       {state.timezone && <input type="hidden" name="ob_timezone" value={state.timezone} />}
       {state.resourceName && <input type="hidden" name="ob_resource_name" value={state.resourceName} />}
       <input type="hidden" name="ob_reminders_on" value={state.remindersOn ? "on" : ""} />
+      {cid && <input type="hidden" name="ob_draft_connection_id" value={cid} />}
       <Field label="Shopify store domain" error={invalid ? "Enter a valid *.myshopify.com domain." : undefined}>
         <Input
           name="shop"
@@ -202,19 +338,15 @@ function ShopifyConnectForm({ state, submitLabel }: { state: OnboardingState; su
   );
 }
 
-/* The non-Shopify exit: posts straight to this route's own action, which
-   creates a manual Connection and applies everything gathered so far right
-   away (see the module header comment — this is what makes B1/B3 fixable at
-   all without Shopify). */
-function GoLiveWithoutShopifyForm({ state, submitLabel }: { state: OnboardingState; submitLabel: string }) {
+/* The non-Shopify exit: posts to this route's own action (intent=golive),
+   which finalizes the manual Connection step 1 already created. */
+function GoLiveWithoutShopifyForm({
+  state, cid, submitLabel,
+}: { state: OnboardingState; cid: string; submitLabel: string }) {
   return (
     <form method="post" className="flex flex-col gap-3">
-      <input type="hidden" name="preset" value={state.preset} />
-      <input type="hidden" name="business_name" value={state.businessName} />
-      <input type="hidden" name="business_email" value={state.email} />
-      <input type="hidden" name="business_phone" value={state.phone} />
-      <input type="hidden" name="timezone" value={state.timezone} />
-      <input type="hidden" name="resource_name" value={state.resourceName} />
+      <input type="hidden" name="_intent" value="golive" />
+      <input type="hidden" name="cid" value={cid} />
       <input type="hidden" name="reminders_on" value={state.remindersOn ? "on" : ""} />
       <button type="submit" className="btn-sec w-full justify-center">{submitLabel}</button>
     </form>
@@ -222,8 +354,13 @@ function GoLiveWithoutShopifyForm({ state, submitLabel }: { state: OnboardingSta
 }
 
 function StepBusiness({
-  state, update, onNext,
-}: { state: OnboardingState; update: (p: Partial<OnboardingState>) => void; onNext: () => void }) {
+  state, update, saving, onNext,
+}: {
+  state: OnboardingState;
+  update: (p: Partial<OnboardingState>) => void;
+  saving: boolean;
+  onNext: () => void;
+}) {
   return (
     <>
       <h1 className="ob-h1">Tell us about your business</h1>
@@ -233,6 +370,9 @@ function StepBusiness({
             <span className="field-label">What does your business do?</span>
             <PresetTiles value={state.preset} onPick={(preset) => update({ preset })} columns={2} />
           </div>
+          <Field label="Business name">
+            <Input value={state.businessName} onChange={(e) => update({ businessName: e.target.value })} />
+          </Field>
           <div className="grid grid-cols-2 gap-x-4 gap-y-[14px]">
             <Field label="Contact email">
               <Input type="email" value={state.email} onChange={(e) => update({ email: e.target.value })} />
@@ -253,6 +393,20 @@ function StepBusiness({
             <Field label="Timezone">
               <TimezoneSelect value={state.timezone} onChange={(timezone) => update({ timezone })} />
             </Field>
+            <Field label="Currency">
+              <select
+                value={state.currency}
+                onChange={(e) => {
+                  const currency = CURRENCIES.find((c) => c.code === e.target.value);
+                  update({ currency: e.target.value, currencySymbol: currency?.symbol ?? state.currencySymbol });
+                }}
+                className="input cursor-pointer"
+              >
+                {CURRENCIES.map((c) => (
+                  <option key={c.code} value={c.code}>{c.label}</option>
+                ))}
+              </select>
+            </Field>
             <Field label="Team size">
               <select
                 value={state.teamSize}
@@ -269,15 +423,23 @@ function StepBusiness({
         </div>
       </div>
       <div className="flex justify-end">
-        <button type="button" className="btn-pri" onClick={onNext}>Continue</button>
+        <button type="button" className="btn-pri" onClick={onNext} disabled={saving}>
+          {saving ? "Saving…" : "Continue"}
+        </button>
       </div>
     </>
   );
 }
 
 function StepSetup({
-  state, update, onNext, onBack,
-}: { state: OnboardingState; update: (p: Partial<OnboardingState>) => void; onNext: () => void; onBack: () => void }) {
+  state, update, saving, onNext, onBack,
+}: {
+  state: OnboardingState;
+  update: (p: Partial<OnboardingState>) => void;
+  saving: boolean;
+  onNext: () => void;
+  onBack: () => void;
+}) {
   const [touched, setTouched] = useState(false);
   const nameMissing = touched && !state.resourceName.trim();
 
@@ -304,16 +466,18 @@ function StepSetup({
         </Field>
       </div>
       <div className="flex justify-between">
-        <button type="button" className="btn-sec" onClick={onBack}>Back</button>
-        <button type="button" className="btn-pri" onClick={handleNext}>Continue</button>
+        <button type="button" className="btn-sec" onClick={onBack} disabled={saving}>Back</button>
+        <button type="button" className="btn-pri" onClick={handleNext} disabled={saving}>
+          {saving ? "Saving…" : "Continue"}
+        </button>
       </div>
     </>
   );
 }
 
 function StepIntegrations({
-  state, onNext, onBack,
-}: { state: OnboardingState; onNext: () => void; onBack: () => void }) {
+  state, cid, onNext, onBack,
+}: { state: OnboardingState; cid: string; onNext: () => void; onBack: () => void }) {
   return (
     <>
       <h1 className="ob-h1">Connect your channels</h1>
@@ -331,7 +495,7 @@ function StepIntegrations({
                   <span className="text-meta text-muted text-pretty">{integ.blurb}</span>
                 </div>
               </div>
-              <ShopifyConnectForm state={state} submitLabel="Connect Shopify" />
+              <ShopifyConnectForm state={state} cid={cid} submitLabel="Connect Shopify" />
             </div>
           ) : (
             <IntegrationRow
@@ -357,8 +521,8 @@ function StepIntegrations({
 }
 
 function StepGoLive({
-  state, update, onBack,
-}: { state: OnboardingState; update: (p: Partial<OnboardingState>) => void; onBack: () => void }) {
+  state, cid, update, onBack,
+}: { state: OnboardingState; cid: string; update: (p: Partial<OnboardingState>) => void; onBack: () => void }) {
   return (
     <>
       <h1 className="ob-h1">Go live</h1>
@@ -382,13 +546,13 @@ function StepGoLive({
           Connect Shopify to sync your product catalogue as bookable services, or go live now and connect a
           store later from Settings.
         </p>
-        <ShopifyConnectForm state={state} submitLabel="Connect your store & go live" />
+        <ShopifyConnectForm state={state} cid={cid} submitLabel="Connect your store & go live" />
         <div className="my-4 flex items-center gap-3 text-meta text-muted">
           <span className="h-px flex-1 bg-line" />
           or
           <span className="h-px flex-1 bg-line" />
         </div>
-        <GoLiveWithoutShopifyForm state={state} submitLabel="Go live without Shopify" />
+        <GoLiveWithoutShopifyForm state={state} cid={cid} submitLabel="Go live without Shopify" />
       </div>
       <div className="flex justify-start">
         <button type="button" className="btn-sec" onClick={onBack}>Back</button>

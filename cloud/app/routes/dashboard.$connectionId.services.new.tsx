@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Form, redirect } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.services.new";
-import { Data } from "getbooqin-core";
+import { Data, Settings } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Field, Input } from "~/components/ui";
+
+export const meta: Route.MetaFunction = () => [{ title: "New service · GetBooqin" }];
 
 // Only reachable for a manual (non-Shopify) connection — Shopify's catalogue
 // is the source of truth for that platform (see services.tsx's "Sync
@@ -14,9 +16,10 @@ import { AlertError, Field, Input } from "~/components/ui";
 // Shopify cache) directly, the same shape syncProductsFromShopify would
 // have produced, then a ServiceConfig pointing at it.
 export async function loader({ request, params }: Route.LoaderArgs) {
-  const { platform } = await requireTenant(request, params.connectionId);
+  const { shop, platform } = await requireTenant(request, params.connectionId);
   if (platform !== "manual") throw redirect(`/dashboard/${params.connectionId}/services`);
-  return null;
+  const settings = await Settings.getSettings(shop, platform);
+  return { currencySymbol: settings.currency_symbol };
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
@@ -50,7 +53,8 @@ export async function action({ request, params }: Route.ActionArgs) {
   throw redirect(`/dashboard/${params.connectionId}/services/${saved.id}`);
 }
 
-export default function NewService({ actionData, params }: Route.ComponentProps) {
+export default function NewService({ loaderData, actionData, params }: Route.ComponentProps) {
+  const { currencySymbol } = loaderData;
   const base = `/dashboard/${params.connectionId}`;
   return (
     <div className="flex flex-col gap-[18px]">
@@ -68,7 +72,12 @@ export default function NewService({ actionData, params }: Route.ComponentProps)
             </Field>
           </div>
           <Field label="Price">
-            <Input type="number" name="price" min={0} step="0.01" defaultValue={0} />
+            <div className="relative">
+              <span className="pointer-events-none absolute left-[11px] top-1/2 -translate-y-1/2 text-body text-muted">
+                {currencySymbol}
+              </span>
+              <Input type="number" name="price" min={0} step="0.01" defaultValue={0} className="pl-[26px]" />
+            </div>
           </Field>
           <Field label="Duration (minutes)">
             <Input type="number" name="duration_min" min={5} defaultValue={30} />

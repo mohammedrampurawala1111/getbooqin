@@ -400,6 +400,12 @@ function PasswordCard({ user }: { user: ClerkUser }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // PasswordField tracks its own strength-meter state internally; formEl.
+  // reset() below clears the input's DOM value but fires no React onChange,
+  // so the meter used to keep reading "Strong" for a password that was no
+  // longer in the (now-empty) box (UX audit's N8 finding). Bumping this key
+  // after a successful save remounts both PasswordFields fresh.
+  const [resetKey, setResetKey] = useState(0);
 
   // Clerk requires a fresh sign-in ("reverification") before it'll let a
   // change-password request through — without this, that request just
@@ -428,6 +434,7 @@ function PasswordCard({ user }: { user: ClerkUser }) {
       });
       setSaved(true);
       formEl.reset();
+      setResetKey((k) => k + 1);
     } catch (err) {
       if (!isReverificationCancelledError(err)) {
         setError(clerkMessage(err) ?? "Couldn't update your password.");
@@ -449,9 +456,9 @@ function PasswordCard({ user }: { user: ClerkUser }) {
             </p>
           )}
           {user.passwordEnabled && (
-            <PasswordField name="currentPassword" label="Current password" autoComplete="current-password" showMeter={false} />
+            <PasswordField key={`current-${resetKey}`} name="currentPassword" label="Current password" autoComplete="current-password" showMeter={false} />
           )}
-          <PasswordField name="password" label={user.passwordEnabled ? "New password" : "Password"} hint="At least 15 characters." />
+          <PasswordField key={`new-${resetKey}`} name="password" label={user.passwordEnabled ? "New password" : "Password"} hint="At least 15 characters." />
           <Toggle name="signOutOthers" defaultChecked={signOutOthers} onChange={setSignOutOthers} label="Sign out of other sessions" />
         </div>
         <div className="card-footer">

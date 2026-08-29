@@ -310,7 +310,12 @@ export function Toggle({
         className="peer sr-only"
       />
       <span className="flex h-[19px] w-[32px] rounded-full bg-[#d3d7e0] p-[2px] transition-colors peer-checked:bg-brand-500">
-        <span className="h-[15px] w-[15px] rounded-full bg-white shadow-[0_1px_2px_rgba(16,24,40,.2)] transition-transform peer-checked:translate-x-[13px]" />
+        {/* `peer-checked` only matches true siblings of the checkbox — this
+            knob is a child of the track span above, one level too deep, so
+            peer-checked never applied to it and the knob never moved (only
+            the track's own background did). group-has-checked reaches into
+            descendants via `:has()` on the <label>, which does match here. */}
+        <span className="h-[15px] w-[15px] rounded-full bg-white shadow-[0_1px_2px_rgba(16,24,40,.2)] transition-transform group-has-checked:translate-x-[13px]" />
       </span>
       {label ? <span className="text-body font-medium text-subtle peer-checked:text-ink">{label}</span> : null}
     </label>

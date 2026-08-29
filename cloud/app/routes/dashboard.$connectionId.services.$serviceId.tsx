@@ -1,10 +1,14 @@
 import { Form, data, redirect } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.services.$serviceId";
-import { Data, ShopifyAdmin, ServiceMetafields, decryptCredentials } from "getbooqin-core";
+import { Data, Settings, ShopifyAdmin, ServiceMetafields, decryptCredentials } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Field, Input, Toggle, CheckCard } from "~/components/ui";
 
 const SWATCHES = ["#b05fc9", "#2563eb", "#0f7a4f", "#92600b", "#b42318", "#545b68"];
+
+export const meta: Route.MetaFunction = ({ data: loaderData }) => [
+  { title: `${loaderData?.product?.title || "Service"} · GetBooqin` },
+];
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId);
@@ -13,15 +17,16 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const config = await Data.serviceConfig(shop, id);
   if (!config) throw data("Service not found", { status: 404 });
 
-  const [product, resources, addons, resourceIds, addonIds] = await Promise.all([
+  const [product, resources, addons, resourceIds, addonIds, settings] = await Promise.all([
     Data.productCacheByProductId(shop, platform, config.productId),
     Data.resources(shop, platform, true),
     Data.addons(shop, platform, true),
     Data.resourceIdsForService(shop, id),
     Data.addonIdsForService(shop, id),
+    Settings.getSettings(shop, platform),
   ]);
 
-  return { config, product, resources, addons, resourceIds, addonIds };
+  return { config, product, resources, addons, resourceIds, addonIds, currencySymbol: settings.currency_symbol };
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
@@ -96,7 +101,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function ServiceDetail({ loaderData, actionData, params }: Route.ComponentProps) {
-  const { config, product, resources, addons, resourceIds, addonIds } = loaderData;
+  const { config, product, resources, addons, resourceIds, addonIds, currencySymbol } = loaderData;
   const base = `/dashboard/${params.connectionId}`;
   const swatches = SWATCHES.includes(config.color) ? SWATCHES : [config.color, ...SWATCHES];
   const editable = config.platform === "manual";
@@ -124,7 +129,12 @@ export default function ServiceDetail({ loaderData, actionData, params }: Route.
                 </Field>
               </div>
               <Field label="Price">
-                <Input type="number" name="price" min={0} step="0.01" defaultValue={product?.price ?? 0} />
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-[11px] top-1/2 -translate-y-1/2 text-body text-muted">
+                    {currencySymbol}
+                  </span>
+                  <Input type="number" name="price" min={0} step="0.01" defaultValue={product?.price ?? 0} className="pl-[26px]" />
+                </div>
               </Field>
               <Field label="Category">
                 <Input name="category" defaultValue={product?.category} />
@@ -145,7 +155,7 @@ export default function ServiceDetail({ loaderData, actionData, params }: Route.
             </div>
             <div className="kv">
               <span className="kv-key">Price</span>
-              <span className="kv-val num">{product && product.price > 0 ? product.price.toFixed(2) : "—"}</span>
+              <span className="kv-val num">{product && product.price > 0 ? `${currencySymbol}${product.price.toFixed(2)}` : "—"}</span>
             </div>
             <div className="kv">
               <span className="kv-key">Category</span>

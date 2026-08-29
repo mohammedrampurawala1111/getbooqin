@@ -4,6 +4,8 @@ import { Bookings, Data, Settings } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Badge, Field, Input, ConfirmDialog } from "~/components/ui";
 
+export const meta: Route.MetaFunction = () => [{ title: "Booking · GetBooqin" }];
+
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId);
   const id = Number(params.bookingId);

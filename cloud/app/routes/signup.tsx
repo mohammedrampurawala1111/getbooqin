@@ -19,19 +19,21 @@ export const meta: Route.MetaFunction = () => [
 // then bounce with a 422 from Clerk (UX audit's B4 finding).
 const MIN_PASSWORD_LENGTH = 15;
 
-// Best-effort handoff into the onboarding wizard (routes/onboarding.tsx) —
-// there's no store yet to persist these to, so they ride in sessionStorage
-// across both the password flow (this page navigates directly) and the
-// Google flow (this page unloads for the OAuth redirect and sso-callback.tsx
-// lands the browser back on /onboarding afterward).
-const ONBOARDING_STORAGE_KEY = "gb_onboarding";
-
-function stashOnboardingSeed(seed: { businessName: string; preset: PresetId; email: string; phone: string }) {
-  try {
-    sessionStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(seed));
-  } catch {
-    // ignored — same "best-effort" reasoning as saveProfilePhone below
-  }
+// Handoff into the onboarding wizard (routes/onboarding.tsx) as URL query
+// params — there's no store yet to persist these to server-side. Query
+// params (not sessionStorage) survive both the password flow (this page
+// navigates directly) and the Google flow (this page unloads for the OAuth
+// redirect; the query string rides along in redirectUrlComplete, and
+// sso-callback.tsx lands the browser on exactly that URL afterward) without
+// needing a storage key that both this route and onboarding.tsx must agree
+// on — a mismatch there used to mean the business name never arrived (UX
+// audit's N1 finding).
+function onboardingHref(seed: { businessName: string; preset: PresetId; phone: string }): string {
+  const params = new URLSearchParams({ step: "1" });
+  if (seed.businessName) params.set("business_name", seed.businessName);
+  if (seed.preset) params.set("preset", seed.preset);
+  if (seed.phone) params.set("phone", seed.phone);
+  return `/onboarding?${params.toString()}`;
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -76,11 +78,10 @@ export default function Signup() {
     if (!isLoaded || submitting) return;
     setError(null);
     try {
-      stashOnboardingSeed({ businessName, preset, email, phone });
       await signUp.authenticateWithRedirect({
         strategy: "oauth_google",
         redirectUrl: "/sso-callback",
-        redirectUrlComplete: "/onboarding?step=1",
+        redirectUrlComplete: onboardingHref({ businessName, preset, phone }),
       });
     } catch (err) {
       const message = isClerkAPIResponseError(err) ? err.errors[0]?.longMessage ?? err.errors[0]?.message : undefined;
@@ -102,12 +103,11 @@ export default function Signup() {
     setSubmitting(true);
     setError(null);
     try {
-      stashOnboardingSeed({ businessName, preset, email, phone });
       const result = await signUp.create({ emailAddress: email, password });
       if (result.status === "complete") {
         await setActive({ session: result.createdSessionId });
         await saveProfilePhone();
-        navigate("/onboarding?step=1");
+        navigate(onboardingHref({ businessName, preset, phone }));
       } else {
         // Clerk's default config requires verifying the email before the
         // account is active — show the code-entry step instead of failing.
@@ -159,7 +159,7 @@ export default function Signup() {
       if (result.status === "complete") {
         await setActive({ session: result.createdSessionId });
         await saveProfilePhone();
-        navigate("/onboarding?step=1");
+        navigate(onboardingHref({ businessName, preset, phone }));
       } else {
         setError("That code didn't work — check it and try again.");
       }

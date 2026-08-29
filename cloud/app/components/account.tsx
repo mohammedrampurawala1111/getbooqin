@@ -318,7 +318,7 @@ export function TemplateConfig({
             const on = !hidden[c.key];
             return (
               <label key={c.key} onClick={() => onToggle?.(c.key)}
-                className={`flex cursor-pointer items-center gap-3 rounded-[9px] border px-[13px] py-[11px] ${on ? "border-brand-200 bg-surface" : "border-line bg-canvas-alt"}`}>
+                className={`group flex cursor-pointer items-center gap-3 rounded-[9px] border px-[13px] py-[11px] ${on ? "border-brand-200 bg-surface" : "border-line bg-canvas-alt"}`}>
                 <input type="checkbox" name="cards" value={c.key} defaultChecked={on} className="peer sr-only" />
                 <span className="num w-[14px] text-[11px] text-subtle">{i + 1}</span>
                 <span className="flex flex-1 flex-col gap-px">
@@ -326,7 +326,10 @@ export function TemplateConfig({
                   <span className="text-[12px] text-muted">{c.hint}</span>
                 </span>
                 <span className="flex h-5 w-[34px] shrink-0 rounded-full bg-[#d3d7e0] p-[2px] peer-checked:bg-brand-500">
-                  <span className="h-4 w-4 rounded-full bg-white shadow-[0_1px_2px_rgba(16,24,40,.2)] transition-transform peer-checked:translate-x-[14px]" />
+                  {/* See ui.tsx's Toggle for why this is group-has-checked,
+                      not peer-checked: this knob is nested inside the track
+                      span, not a direct sibling of the checkbox. */}
+                  <span className="h-4 w-4 rounded-full bg-white shadow-[0_1px_2px_rgba(16,24,40,.2)] transition-transform group-has-checked:translate-x-[14px]" />
                 </span>
               </label>
             );

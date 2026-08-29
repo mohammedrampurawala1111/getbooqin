@@ -87,7 +87,7 @@ export function ErrorBoundary() {
             textDecoration: "none",
           }}
         >
-          Back to dashboard
+          Back to home
         </a>
       </div>
     </Document>

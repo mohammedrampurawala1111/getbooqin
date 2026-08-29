@@ -5,6 +5,7 @@ import {
   Settings,
   ShopAlreadyConnectedError,
   connectShopifyStore,
+  deleteConnection,
   exchangeCodeForToken,
   isValidShopDomain,
   verifyCallbackHmac,
@@ -84,6 +85,16 @@ export async function loader({ request }: Route.LoaderArgs) {
         0
       );
     }
+  }
+
+  // Clean up the wizard's step-1 manual draft, if this OAuth round trip
+  // carried one — the user started "Go live without Shopify" then connected
+  // a real store instead, so the draft was never gone live and would
+  // otherwise sit in Settings › Integrations forever as an empty
+  // "Manual setup" row. Best-effort: a real Shopify connection now exists
+  // either way, so this shouldn't block landing on it.
+  if (state.draftConnectionId) {
+    await deleteConnection(state.userId, state.draftConnectionId).catch(() => {});
   }
 
   throw redirect(`/dashboard/${connection.id}`);

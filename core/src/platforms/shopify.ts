@@ -50,6 +50,11 @@ export interface ShopifyOAuthState {
     resourceName?: string;
     remindersOn?: boolean;
   };
+  // Present when the wizard already created a manual-platform draft
+  // Connection (its step 1) before the user connected Shopify instead at
+  // step 3/4 — deleted once this real store connection exists, so the
+  // abandoned draft doesn't linger in Settings › Integrations forever.
+  draftConnectionId?: string;
 }
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes

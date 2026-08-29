@@ -1,13 +1,18 @@
 import { Form } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.services";
-import { Data, ShopifyAdmin, decryptCredentials } from "getbooqin-core";
+import { Data, Settings, ShopifyAdmin, decryptCredentials } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, PageHeader, DataTable, EmptyState, Badge } from "~/components/ui";
 
+export const meta: Route.MetaFunction = () => [{ title: "Services · GetBooqin" }];
+
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform, connection } = await requireTenant(request, params.connectionId);
-  const services = await Data.catalogServices(shop, platform, false);
-  return { services, platform, connectionId: connection.id };
+  const [services, settings] = await Promise.all([
+    Data.catalogServices(shop, platform, false),
+    Settings.getSettings(shop, platform),
+  ]);
+  return { services, platform, connectionId: connection.id, currencySymbol: settings.currency_symbol };
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
@@ -27,7 +32,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function ServicesList({ loaderData, actionData, params }: Route.ComponentProps) {
-  const { services, platform } = loaderData;
+  const { services, platform, currencySymbol } = loaderData;
   const base = `/dashboard/${params.connectionId}`;
 
   return (
@@ -71,13 +76,19 @@ export default function ServicesList({ loaderData, actionData, params }: Route.C
         renderRow={(s) => [
           s.name || `Service #${s.id}`,
           <span className="inline-block h-[10px] w-6 rounded-[3px]" style={{ backgroundColor: s.color }} />,
-          <span className="num">{s.price > 0 ? s.price.toFixed(2) : "—"}</span>,
+          <span className="num">{s.price > 0 ? `${currencySymbol}${s.price.toFixed(2)}` : "—"}</span>,
           <span className="num">{s.durationMin} min</span>,
           <Badge status={s.status ? "confirmed" : "cancelled"} label={s.status ? "Active" : "Inactive"} />,
           <span className="text-faint">›</span>,
         ]}
         empty={
           <EmptyState
+            icon={
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <rect x="2.5" y="2.5" width="13" height="13" rx="2.5" />
+                <path d="M6 9h6M9 6v6" strokeLinecap="round" />
+              </svg>
+            }
             title="No services yet"
             body={
               platform === "shopify"

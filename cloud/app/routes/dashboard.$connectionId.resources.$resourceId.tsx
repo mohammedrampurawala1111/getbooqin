@@ -5,6 +5,10 @@ import { Data } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { Field, Input, Toggle, CheckCard } from "~/components/ui";
 
+export const meta: Route.MetaFunction = ({ params }) => [
+  { title: `${params.resourceId === "new" ? "Add" : "Edit"} staff / resource · GetBooqin` },
+];
+
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export async function loader({ request, params }: Route.LoaderArgs) {
