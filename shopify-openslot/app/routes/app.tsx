@@ -3,7 +3,7 @@ import type { LoaderFunctionArgs, HeadersFunction } from "react-router";
 import { Link, Outlet, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
-import { AppProvider as PolarisAppProvider, Frame } from "@shopify/polaris";
+import { AppProvider as PolarisAppProvider, Frame, FooterHelp, Link as PolarisTextLink } from "@shopify/polaris";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import polarisTranslations from "@shopify/polaris/locales/en.json";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -14,7 +14,11 @@ export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export async function loader({ request }: LoaderFunctionArgs) {
   await authenticate.admin(request);
-  return { apiKey: process.env.SHOPIFY_API_KEY || "", chatEnabled: FeatureFlags.CHAT_ENABLED };
+  return {
+    apiKey: process.env.SHOPIFY_API_KEY || "",
+    chatEnabled: FeatureFlags.CHAT_ENABLED,
+    supportEmail: process.env.SUPPORT_EMAIL || process.env.MAIL_FROM_EMAIL || "",
+  };
 }
 
 /**
@@ -36,7 +40,7 @@ function PolarisLink({ url, children, ...rest }: { url: string; children?: React
 }
 
 export default function AppLayout() {
-  const { apiKey, chatEnabled } = useLoaderData<typeof loader>();
+  const { apiKey, chatEnabled, supportEmail } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider apiKey={apiKey}>
@@ -57,6 +61,18 @@ export default function AppLayout() {
         </NavMenu>
         <Frame>
           <Outlet />
+          <FooterHelp>
+            Need help with GetBooqin?{" "}
+            {supportEmail ? <a href={`mailto:${supportEmail}`}>{supportEmail}</a> : "Contact us via the Shopify App Store listing"}
+            {" · "}
+            <PolarisTextLink url="/privacy" target="_blank">
+              Privacy policy
+            </PolarisTextLink>
+            {" · "}
+            <PolarisTextLink url="/terms" target="_blank">
+              Terms of Service
+            </PolarisTextLink>
+          </FooterHelp>
         </Frame>
       </PolarisAppProvider>
     </AppProvider>
