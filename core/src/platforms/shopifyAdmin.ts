@@ -119,6 +119,27 @@ export async function readServiceConfigMetafields(
   return result;
 }
 
+/**
+ * The shop's own registered timezone (Settings -> General -> Store details
+ * in Shopify admin) -- authoritative in a way a browser's guessed timezone
+ * never can be, since whoever is clicking through onboarding isn't
+ * necessarily sitting in the studio. Null on any failure; callers treat
+ * this as best-effort and keep whatever they already had.
+ */
+export async function fetchShopTimezone(shop: string, accessToken: string): Promise<string | null> {
+  try {
+    const data = await shopifyAdminGraphQL<{ shop: { ianaTimezone: string } }>(
+      shop,
+      accessToken,
+      `#graphql
+      query ShopTimezone { shop { ianaTimezone } }`
+    );
+    return data?.shop?.ianaTimezone || null;
+  } catch {
+    return null;
+  }
+}
+
 interface ShopifyProductNode {
   id: string;
   handle: string;

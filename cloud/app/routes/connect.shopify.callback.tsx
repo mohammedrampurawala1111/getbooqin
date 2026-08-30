@@ -3,6 +3,7 @@ import type { Route } from "./+types/connect.shopify.callback";
 import {
   Data,
   Settings,
+  ShopifyAdmin,
   ShopAlreadyConnectedError,
   connectShopifyStore,
   deleteConnection,
@@ -48,6 +49,14 @@ export async function loader({ request }: Route.LoaderArgs) {
     throw error;
   }
 
+  // Shopify's own registered timezone (Settings -> General -> Store
+  // details) is authoritative over the onboarding wizard's browser-guessed
+  // one -- whoever clicked through the wizard isn't necessarily sitting in
+  // the studio. Only available from here on, once there's finally an
+  // access token to ask Shopify with; best-effort, so a failed lookup just
+  // leaves whatever signal was already there.
+  const shopTimezone = await ShopifyAdmin.fetchShopTimezone(shop, accessToken);
+
   // Apply the pre-connection onboarding wizard's answers now that there's
   // finally a shop to attach them to (see ShopifyOAuthState.onboarding's
   // doc comment in core/src/platforms/shopify.ts for why this can't happen
@@ -59,7 +68,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     if (businessName) settingsPatch.business_name = businessName;
     if (businessEmail) settingsPatch.business_email = businessEmail;
     if (businessPhone) settingsPatch.business_phone = businessPhone;
-    if (timezone) settingsPatch.timezone = timezone;
+    const resolvedTimezone = shopTimezone || timezone;
+    if (resolvedTimezone) settingsPatch.timezone = resolvedTimezone;
     await Settings.setSettings(shop, "shopify", settingsPatch);
 
     if (presetId) {
@@ -84,6 +94,15 @@ export async function loader({ request }: Route.LoaderArgs) {
         },
         0
       );
+    }
+  } else if (shopTimezone) {
+    // No wizard ran this time (e.g. reconnecting a shop that was set up
+    // some other way) -- still worth applying the real timezone, but only
+    // over the untouched "UTC" default, never over something a merchant
+    // already set deliberately.
+    const current = await Settings.getSettings(shop, "shopify");
+    if (current.timezone === "UTC") {
+      await Settings.setSettings(shop, "shopify", { timezone: shopTimezone });
     }
   }
 
