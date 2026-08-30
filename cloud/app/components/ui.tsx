@@ -530,19 +530,20 @@ export function LegalFooter() {
 }
 
 /* ------------------------------------------------------------------ */
-/* ThemeToggle — explicit light/dark override on top of the OS default.
-   Reads/writes localStorage directly rather than any shared app state:
-   there's no server-side session concept for "theme" and no other
-   component needs to react to it — app.css's :root[data-theme] rules
-   pick it up purely from the DOM attribute this sets. root.tsx's inline
-   bootstrap script applies a stored choice before first paint; this
-   component only needs to handle *changes* after that.
+/* ThemeToggle — light is the default regardless of the OS setting;
+   this is purely opt-in to dark. Reads/writes localStorage directly
+   rather than any shared app state: there's no server-side session
+   concept for "theme" and no other component needs to react to it —
+   app.css's :root[data-theme="dark"] rules pick it up purely from the
+   DOM attribute this sets. root.tsx's inline bootstrap script applies a
+   stored choice before first paint; this component only needs to
+   handle *changes* after that.
 
-   Starts at null ("unknown") rather than reading localStorage/matchMedia
+   Starts at null ("unknown") rather than reading localStorage
    synchronously — that value can differ between the server (which has
-   neither) and the client, and rendering it on first client render,
-   before hydration reconciles, would still be a hydration mismatch. The
-   real value arrives one effect tick later; the placeholder button below
+   none) and the client, and rendering it on first client render, before
+   hydration reconciles, would still be a hydration mismatch. The real
+   value arrives one effect tick later; the placeholder button below
    keeps that from shifting layout.                                     */
 /* ------------------------------------------------------------------ */
 export function ThemeToggle({
@@ -552,11 +553,7 @@ export function ThemeToggle({
 
   useEffect(() => {
     const stored = localStorage.getItem("gb-theme");
-    if (stored === "light" || stored === "dark") {
-      setThemeState(stored);
-    } else {
-      setThemeState(window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-    }
+    setThemeState(stored === "dark" ? "dark" : "light");
   }, []);
 
   function setTheme(next: "light" | "dark") {
