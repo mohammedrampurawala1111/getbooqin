@@ -39,6 +39,9 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
     booking_page_url: `https://${shopDomain}`,
     intake_fields: [],
 
+    waitlist_enabled: false,
+    waitlist_offer_window_hours: 4,
+
     enabled_gateways: [],
     gateways: {},
     default_deposit: 100,

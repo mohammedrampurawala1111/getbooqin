@@ -68,6 +68,8 @@ export const PRESETS: Record<string, Preset> = {
       cancel_cutoff_hours: 24,
       auto_confirm: false,
       require_phone: true,
+      waitlist_enabled: true,
+      waitlist_offer_window_hours: 3,
       consent_text:
         "We require at least 24 hours' notice to cancel or reschedule your appointment. Cancellations made with less notice, or missed appointments, may be subject to a missed-appointment fee. This helps us keep appointment times available for other patients who need care.",
       widget_text: {
@@ -102,6 +104,8 @@ export const PRESETS: Record<string, Preset> = {
       cancel_cutoff_hours: 24,
       auto_confirm: true,
       require_phone: false,
+      waitlist_enabled: true,
+      waitlist_offer_window_hours: 1,
       consent_text:
         "Need to cancel? Just let us know at least 24 hours ahead so we can offer your spot to someone else. Less notice than that, or a no-show, may be charged at 50% of the service price.",
       widget_text: {
@@ -136,6 +140,8 @@ export const PRESETS: Record<string, Preset> = {
       cancel_cutoff_hours: 48,
       auto_confirm: false,
       require_phone: true,
+      waitlist_enabled: true,
+      waitlist_offer_window_hours: 4,
       consent_text:
         "Please give us at least 48 hours' notice to cancel or move a booked job — our bays are scheduled tightly and late cancellations affect other customers waiting for a slot.",
       widget_text: {
@@ -170,6 +176,8 @@ export const PRESETS: Record<string, Preset> = {
       cancel_cutoff_hours: 48,
       auto_confirm: false,
       require_phone: true,
+      waitlist_enabled: false,
+      waitlist_offer_window_hours: 24,
       consent_text:
         "We require at least 48 hours' notice to reschedule or cancel a consultation. Cancellations made with less notice, or missed appointments, will be billed at the full consultation rate, as this time is reserved exclusively for your matter.",
       widget_text: {
@@ -204,6 +212,8 @@ export const PRESETS: Record<string, Preset> = {
       cancel_cutoff_hours: 24,
       auto_confirm: false,
       require_phone: false,
+      waitlist_enabled: true,
+      waitlist_offer_window_hours: 4,
       consent_text:
         "Please cancel or reschedule at least 24 hours before your lesson. Late cancellations and missed lessons may still be charged, as this time is reserved for you.",
       widget_text: {
@@ -238,6 +248,8 @@ export const PRESETS: Record<string, Preset> = {
       cancel_cutoff_hours: 2,
       auto_confirm: true,
       require_phone: false,
+      waitlist_enabled: true,
+      waitlist_offer_window_hours: 1,
       consent_text:
         "Please cancel at least 2 hours before class to free your spot for someone else. Late cancellations or no-shows may use one class credit.",
       widget_text: {
@@ -272,6 +284,8 @@ export const PRESETS: Record<string, Preset> = {
       cancel_cutoff_hours: 24,
       auto_confirm: true,
       require_phone: true,
+      waitlist_enabled: false,
+      waitlist_offer_window_hours: 24,
       consent_text:
         "Please let us know as soon as possible if you can no longer make a scheduled viewing, so we can offer the time to another interested buyer.",
       widget_text: {
@@ -306,6 +320,8 @@ export const PRESETS: Record<string, Preset> = {
       cancel_cutoff_hours: 2,
       auto_confirm: true,
       require_phone: true,
+      waitlist_enabled: true,
+      waitlist_offer_window_hours: 0.5,
       consent_text:
         "We kindly ask for at least 2 hours' notice if you need to cancel your reservation, so we can offer the table to other guests.",
       widget_text: {
@@ -340,6 +356,8 @@ export const PRESETS: Record<string, Preset> = {
       cancel_cutoff_hours: 24,
       auto_confirm: false,
       require_phone: true,
+      waitlist_enabled: true,
+      waitlist_offer_window_hours: 4,
       consent_text:
         "Please give us at least 24 hours' notice to cancel or move a booked visit. Late cancellations may incur a callout fee, as a technician is scheduled specifically for your job.",
       widget_text: {
@@ -379,6 +397,8 @@ export const PRESET_CONTROLLED_KEYS = [
   "cancel_cutoff_hours",
   "auto_confirm",
   "require_phone",
+  "waitlist_enabled",
+  "waitlist_offer_window_hours",
   "consent_text",
   "widget_text",
   "templates",

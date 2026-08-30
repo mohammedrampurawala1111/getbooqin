@@ -17,6 +17,9 @@ export * as Bookings from "./booking/bookings.js";
 // browser bundle. See bookingsShared.ts's header comment.
 export * as BookingsShared from "./booking/bookingsShared.js";
 export * as Availability from "./booking/availability.js";
+export * as Waitlist from "./booking/waitlist.js";
+// DB-free subset of waitlist.js — see waitlistShared.ts's header comment.
+export * as WaitlistShared from "./booking/waitlistShared.js";
 export * as PaymentManager from "./booking/paymentManager.js";
 export * as MeetingManager from "./booking/meetingManager.js";
 export * as Mailer from "./booking/mailer.js";

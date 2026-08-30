@@ -42,6 +42,14 @@ export interface Settings {
   booking_page_url: string;
   intake_fields: IntakeField[];
 
+  // When a booking's slot frees up early (cancelled/declined/no-show), offer
+  // it to the next matching waitlist entry instead of just letting it reopen
+  // silently. `waitlist_offer_window_hours` is how long that offer stays
+  // claimable before it expires and cascades to the next entry — see
+  // core/src/booking/waitlist.ts.
+  waitlist_enabled: boolean;
+  waitlist_offer_window_hours: number;
+
   enabled_gateways: string[];
   gateways: GatewaySettings;
   default_deposit: number;

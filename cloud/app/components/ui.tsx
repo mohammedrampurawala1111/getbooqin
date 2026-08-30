@@ -86,6 +86,10 @@ const STATUS = {
   unpaid: ["badge-neutral", "Unpaid"],
   refunded: ["badge-neutral", "Refunded"],
   failed: ["badge-danger", "Failed"],
+  waiting: ["badge-neutral", "Waiting"],
+  offered: ["badge-pending", "Offered"],
+  claimed: ["badge-ok", "Claimed"],
+  expired: ["badge-danger", "Expired"],
 } as const;
 
 export function Badge({

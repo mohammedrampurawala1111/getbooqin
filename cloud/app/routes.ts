@@ -15,6 +15,7 @@ export default [
     index("routes/dashboard.$connectionId._index.tsx"),
     route("bookings", "routes/dashboard.$connectionId.bookings.tsx"),
     route("bookings/:bookingId", "routes/dashboard.$connectionId.bookings.$bookingId.tsx"),
+    route("waitlist", "routes/dashboard.$connectionId.waitlist.tsx"),
     route("resources", "routes/dashboard.$connectionId.resources.tsx"),
     route("resources/:resourceId", "routes/dashboard.$connectionId.resources.$resourceId.tsx"),
     route("timeoff", "routes/dashboard.$connectionId.timeoff.tsx"),

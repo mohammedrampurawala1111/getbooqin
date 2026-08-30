@@ -30,6 +30,10 @@
     "./booking/tz": {
       "types": "./dist/booking/tz.d.ts",
       "default": "./dist/booking/tz.js"
+    },
+    "./booking/waitlistShared": {
+      "types": "./dist/booking/waitlistShared.d.ts",
+      "default": "./dist/booking/waitlistShared.js"
     }
   },
   "scripts": {

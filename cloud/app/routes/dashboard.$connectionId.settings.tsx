@@ -89,6 +89,8 @@ export async function action({ request, params }: Route.ActionArgs) {
       allow_cancel: form.get("allow_cancel") === "on",
       cancel_cutoff_hours: Number(form.get("cancel_cutoff_hours") ?? 24),
       require_phone: form.get("require_phone") === "on",
+      waitlist_enabled: form.get("waitlist_enabled") === "on",
+      waitlist_offer_window_hours: Number(form.get("waitlist_offer_window_hours") ?? 4),
     });
   } else if (section === "template") {
     const preset = String(form.get("preset") ?? "");
@@ -211,6 +213,12 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
             badge={<PresetFieldBadge customized={settings.customized_fields.includes("auto_confirm")} />} />
           <ToggleRow name="require_phone" label="Require a phone number" hint="Ask for a phone number when booking" defaultChecked={settings.require_phone}
             badge={<PresetFieldBadge customized={settings.customized_fields.includes("require_phone")} />} />
+          <ToggleRow name="waitlist_enabled" label="Offer freed slots to the waitlist" hint="Cancelled, declined or no-show bookings get offered to the next matching waitlist entry" defaultChecked={settings.waitlist_enabled}
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("waitlist_enabled")} />} />
+          <Row label="Waitlist offer window (hours)" hint="How long someone has to claim an offered slot before it moves to the next person."
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("waitlist_offer_window_hours")} />}>
+            <RowInput type="number" name="waitlist_offer_window_hours" min={0.25} step={0.25} defaultValue={settings.waitlist_offer_window_hours} cap={140} />
+          </Row>
           <ToggleRow name="allow_cancel" label="Allow customers to cancel" hint="Let customers cancel their own bookings" defaultChecked={settings.allow_cancel} />
         </SettingsCard>
       )}

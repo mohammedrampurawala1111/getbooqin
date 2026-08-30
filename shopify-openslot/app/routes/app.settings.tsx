@@ -202,6 +202,8 @@ export async function action({ request }: ActionFunctionArgs) {
       allow_cancel: form.get("allow_cancel") === "true",
       cancel_cutoff_hours: Number(form.get("cancel_cutoff_hours") || 24),
       require_phone: form.get("require_phone") === "true",
+      waitlist_enabled: form.get("waitlist_enabled") === "true",
+      waitlist_offer_window_hours: Number(form.get("waitlist_offer_window_hours") || 4),
       consent_text: String(form.get("consent_text") || ""),
       intake_fields: parseIntakeFields(form.get("intake_fields")),
     });
@@ -331,6 +333,8 @@ export default function Settings() {
   const [allowCancel, setAllowCancel] = useState(settings.allow_cancel);
   const [cancelCutoff, setCancelCutoff] = useState(String(settings.cancel_cutoff_hours));
   const [requirePhone, setRequirePhone] = useState(settings.require_phone);
+  const [waitlistEnabled, setWaitlistEnabled] = useState(settings.waitlist_enabled);
+  const [waitlistOfferWindow, setWaitlistOfferWindow] = useState(String(settings.waitlist_offer_window_hours));
   const [consentText, setConsentText] = useState(settings.consent_text);
   const [intakeFields, setIntakeFields] = useState(settings.intake_fields);
 
@@ -408,6 +412,8 @@ export default function Settings() {
     form.set("allow_cancel", String(allowCancel));
     form.set("cancel_cutoff_hours", cancelCutoff);
     form.set("require_phone", String(requirePhone));
+    form.set("waitlist_enabled", String(waitlistEnabled));
+    form.set("waitlist_offer_window_hours", waitlistOfferWindow);
     form.set("consent_text", consentText);
     form.set(
       "intake_fields",
@@ -586,6 +592,18 @@ export default function Settings() {
                     label={<PresetFieldLabel text="Require a phone number" customized={settings.customized_fields.includes("require_phone")} />}
                     checked={requirePhone} onChange={setRequirePhone}
                   />
+                  <Checkbox
+                    label={<PresetFieldLabel text="Offer freed slots to the waitlist" customized={settings.customized_fields.includes("waitlist_enabled")} />}
+                    helpText="When a booking is cancelled, declined or marked no-show, offer that slot to the next matching person on the waitlist."
+                    checked={waitlistEnabled} onChange={setWaitlistEnabled}
+                  />
+                  {waitlistEnabled && (
+                    <TextField
+                      label={<PresetFieldLabel text="Waitlist offer window (hours)" customized={settings.customized_fields.includes("waitlist_offer_window_hours")} />}
+                      helpText="How long someone has to claim an offered slot before it's offered to the next person."
+                      type="number" value={waitlistOfferWindow} onChange={setWaitlistOfferWindow} autoComplete="off"
+                    />
+                  )}
                   <TextField
                     label={<PresetFieldLabel text="Consent text shown on the booking form" customized={settings.customized_fields.includes("consent_text")} />}
                     value={consentText} onChange={setConsentText} multiline={2} autoComplete="off"

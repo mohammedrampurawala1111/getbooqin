@@ -68,7 +68,7 @@ export interface CreateBookingArgs {
   notes?: string;
   custom_fields?: Record<string, unknown>;
   addon_ids?: number[];
-  source?: "form" | "chat";
+  source?: "form" | "chat" | "waitlist";
 }
 
 export async function create(shop: string, platform: string, shopTimezone: string, args: CreateBookingArgs): Promise<Booking> {
@@ -272,6 +272,25 @@ export async function setStatus(shop: string, id: number, newStatus: string, rea
   if (newStatus === "cancelled") {
     events.emitEvent("booking_cancelled", updated, reason);
   }
+  // A slot freed up early (not "completed" — that's a normal conclusion,
+  // not a vacancy) — offer it to the waitlist. Fired for the same
+  // OCCUPYING-boundary reason assertNoSlotConflict guards the opposite
+  // direction, just mirrored: leaving pending/confirmed into
+  // cancelled/declined/no_show, not entering it.
+  if (
+    OCCUPYING.includes(current) &&
+    ["cancelled", "declined", "no_show"].includes(newStatus) &&
+    current !== newStatus
+  ) {
+    events.emitEvent("booking_slot_freed", {
+      shop,
+      platform: updated.platform,
+      serviceId: updated.serviceId,
+      resourceId: updated.resourceId,
+      startUtc: updated.startUtc,
+      endUtc: updated.endUtc,
+    });
+  }
 
   return updated;
 }
@@ -372,6 +391,16 @@ export async function reschedule(
   });
 
   events.emitEvent("booking_rescheduled", updated, previous);
+  // The original slot is now vacant — same freed-slot signal setStatus()
+  // emits for a cancellation, just for the previous time/resource instead.
+  events.emitEvent("booking_slot_freed", {
+    shop,
+    platform: previous.platform,
+    serviceId: previous.serviceId,
+    resourceId: previous.resourceId,
+    startUtc: previous.startUtc,
+    endUtc: previous.endUtc,
+  });
 
   return updated;
 }
