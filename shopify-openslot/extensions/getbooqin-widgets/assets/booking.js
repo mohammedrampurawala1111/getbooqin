@@ -43,6 +43,7 @@
 		joinWaitlist: 'Join the waitlist',
 		waitlistJoin: 'Join waitlist',
 		waitlistJoined: 'You\'re on the waitlist for this day — we\'ll email you if a spot opens up.',
+		waitlistJoinedTag: 'On waitlist',
 		booked: 'You are booked!',
 		bookedIntro: 'We have emailed you the details.',
 		required: 'Please fill in the required fields.',
@@ -381,7 +382,9 @@
 			} );
 			joinBtn.addEventListener( 'click', function () {
 				joinBtn.remove();
-				container.appendChild( renderWaitlistForm( dateStr, dateLabel ) );
+				var formEl = renderWaitlistForm( dateStr, dateLabel );
+				container.appendChild( formEl );
+				formEl.scrollIntoView( { behavior: 'smooth', block: 'nearest' } );
 			} );
 			container.appendChild( joinBtn );
 		}
@@ -394,7 +397,7 @@
 		 * to that one instant server-side) — used when a specific
 		 * already-taken slot is clicked in an otherwise-open day.
 		 */
-		function renderWaitlistForm( dateStr, dateLabel, slotTime ) {
+		function renderWaitlistForm( dateStr, dateLabel, slotTime, onJoined ) {
 			var wrap = el( 'div', { class: 'getbooqin-waitlist-form' } );
 
 			function field( name, label, type, required ) {
@@ -464,7 +467,12 @@
 				} )
 					.then( function () {
 						wrap.innerHTML = '';
-						wrap.appendChild( el( 'p', { class: 'getbooqin-muted', text: t.waitlistJoined } ) );
+						var doneEl = el( 'p', { class: 'getbooqin-muted', text: t.waitlistJoined } );
+						wrap.appendChild( doneEl );
+						doneEl.scrollIntoView( { behavior: 'smooth', block: 'nearest' } );
+						if ( onJoined ) {
+							onJoined();
+						}
 					} )
 					.catch( function ( err ) {
 						submitBtn.disabled = false;
@@ -511,28 +519,42 @@
 					}
 					var list = el( 'div', { class: 'getbooqin-calendar__time-list' } );
 					var buttons = [];
+					var blockedButtons = [];
 					var hint = el( 'p', { class: 'getbooqin-muted getbooqin-calendar__hint', text: t.selectTimeHint } );
 					// Holds the per-slot waitlist form once a blocked time is
 					// clicked — one at a time, replacing whichever was there
 					// before, appended once below the whole time list rather
 					// than inline per-button so picking a different blocked
-					// time doesn't stack forms on top of each other.
+					// time doesn't stack forms on top of each other. Long lists
+					// otherwise put this form a full scroll below whatever was
+					// just clicked, so both opening it and the confirmation
+					// afterward scroll themselves into view rather than leaving
+					// the customer to hunt for what just happened.
 					var slotWaitlistArea = el( 'div' );
 
 					slots.forEach( function ( slot ) {
 						if ( slot.available === false ) {
+							var tagEl = el( 'span', { class: 'getbooqin-calendar__time-tag', text: t.joinWaitlist } );
 							var blockedBtn = el( 'button', {
 								type: 'button',
 								class: 'getbooqin-calendar__time getbooqin-calendar__time--blocked',
 								'aria-label': slot.label + ' — ' + t.joinWaitlist,
 								onClick: function () {
+									blockedButtons.forEach( function ( b ) { b.classList.remove( 'is-active' ); } );
+									blockedBtn.classList.add( 'is-active' );
+
 									slotWaitlistArea.innerHTML = '';
-									slotWaitlistArea.appendChild( renderWaitlistForm( dateStr, dateLabel, { time: slot.time, label: slot.label } ) );
+									var formEl = renderWaitlistForm( dateStr, dateLabel, { time: slot.time, label: slot.label }, function () {
+										blockedBtn.classList.remove( 'is-active' );
+										blockedBtn.classList.add( 'is-joined' );
+										blockedBtn.disabled = true;
+										tagEl.textContent = t.waitlistJoinedTag;
+									} );
+									slotWaitlistArea.appendChild( formEl );
+									formEl.scrollIntoView( { behavior: 'smooth', block: 'start' } );
 								}
-							}, [
-								el( 'span', { text: slot.label } ),
-								el( 'span', { class: 'getbooqin-calendar__time-tag', text: t.joinWaitlist } )
-							] );
+							}, [ el( 'span', { text: slot.label } ), tagEl ] );
+							blockedButtons.push( blockedBtn );
 							list.appendChild( blockedBtn );
 							return;
 						}
