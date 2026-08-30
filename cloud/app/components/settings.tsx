@@ -102,18 +102,30 @@ export function SettingsShell({
    control has its own stacked hint (e.g. password strength).          */
 /* ------------------------------------------------------------------ */
 export function Row({
-  label, hint, align = "center", children,
-}: { label: string; hint?: string; align?: "center" | "start"; children: ReactNode }) {
+  label, hint, align = "center", badge, children,
+}: { label: string; hint?: string; align?: "center" | "start"; badge?: ReactNode; children: ReactNode }) {
   return (
     <div className={`grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-x-6 gap-y-2 border-b border-row px-[18px] py-[14px] ${
       align === "start" ? "items-start" : "items-center"
     }`}>
       <div className="flex flex-col gap-[2px]">
-        <span className="text-[13px] font-medium">{label}</span>
+        <span className="flex items-center gap-2 text-[13px] font-medium">{label}{badge}</span>
         {hint ? <span className="text-[12px] text-subtle">{hint}</span> : null}
       </div>
       <div className="min-w-0">{children}</div>
     </div>
+  );
+}
+
+/* "Preset default" vs "Customized" — tells a merchant which fields a
+   template switch will (and won't) touch: applyPreset() (core's
+   settings.ts) skips any key in settings.customized_fields, so a hand-edit
+   here survives picking a different template later. */
+export function PresetFieldBadge({ customized }: { customized: boolean }) {
+  return customized ? (
+    <span className="badge bg-brand-50 text-brand-600">Customized</span>
+  ) : (
+    <span className="badge-neutral">Preset default</span>
   );
 }
 
@@ -160,12 +172,12 @@ export function ValueRow({
 /* Toggle row — wrapping flex, not a 3-column grid: at narrow widths a
    grid squeezes the hint to nothing while the switch keeps its 34px. */
 export function ToggleRow({
-  name, label, hint, defaultChecked,
-}: { name: string; label: string; hint: string; defaultChecked?: boolean }) {
+  name, label, hint, defaultChecked, badge,
+}: { name: string; label: string; hint: string; defaultChecked?: boolean; badge?: ReactNode }) {
   return (
     <label className="group flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-1 border-b border-row px-[18px] py-[13px]">
       <input type="checkbox" name={name} defaultChecked={defaultChecked} className="peer sr-only" />
-      <span className="flex-[0_0_200px] text-[13px] font-medium">{label}</span>
+      <span className="flex flex-[0_0_200px] items-center gap-2 text-[13px] font-medium">{label}{badge}</span>
       <span className="min-w-0 flex-[1_1_160px] text-meta text-muted">{hint}</span>
       <span className="flex h-5 w-[34px] shrink-0 rounded-full bg-[#d3d7e0] p-[2px] peer-checked:bg-brand-500">
         {/* `peer-checked` only matches true siblings of the checkbox — this

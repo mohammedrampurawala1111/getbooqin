@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { PRESETS, getPreset, type PresetId } from "../lib/presets";
+import { PRESETS, getPreset, rulesFor, ruleChips, type PresetId } from "../lib/presets";
 import { LogoutButton } from "./ui";
 
 /* ==================================================================
@@ -320,6 +320,21 @@ export function TemplateConfig({
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      <div className="card p-[18px]">
+        <h2 className="card-title mb-3">Starting rules</h2>
+        <p className="mb-3 text-meta text-muted">
+          Switching templates only changes rules you haven't customized yet — anything you've hand-edited on the
+          Booking rules page stays as you set it.
+        </p>
+        <div className="flex flex-wrap gap-[8px]">
+          {ruleChips(rulesFor(presetId)).map((chip) => (
+            <span key={chip} className="rounded-full border border-line bg-surface px-[10px] py-[4px] text-meta text-ink-2">
+              {chip}
+            </span>
+          ))}
         </div>
       </div>
 

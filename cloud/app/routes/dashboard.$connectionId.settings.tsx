@@ -7,7 +7,7 @@ import { getClerkClient } from "~/session.server";
 import { Badge, TimezoneSelect, Toggle } from "~/components/ui";
 import { IntegrationRow } from "~/components/onboarding";
 import { TemplateConfig, overviewCards, type OverviewCardKey } from "~/components/account";
-import { SettingsShell, Row, RowInput, ToggleRow, SettingsCard, isSettingsPage } from "~/components/settings";
+import { SettingsShell, Row, RowInput, ToggleRow, SettingsCard, isSettingsPage, PresetFieldBadge } from "~/components/settings";
 import { INTEGRATIONS, type PresetId } from "~/lib/presets";
 import { PHONE_PATTERN } from "~/lib/validation";
 
@@ -88,6 +88,7 @@ export async function action({ request, params }: Route.ActionArgs) {
       auto_confirm: form.get("auto_confirm") === "on",
       allow_cancel: form.get("allow_cancel") === "on",
       cancel_cutoff_hours: Number(form.get("cancel_cutoff_hours") ?? 24),
+      require_phone: form.get("require_phone") === "on",
     });
   } else if (section === "template") {
     const preset = String(form.get("preset") ?? "");
@@ -190,19 +191,26 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
       {page === "rules" && (
         <SettingsCard saveLabel="Save booking rules" savedAt={savedAt}>
           <input type="hidden" name="_section" value="rules" />
-          <Row label="Slot interval (minutes)" hint="The spacing between bookable start times.">
+          <Row label="Slot interval (minutes)" hint="The spacing between bookable start times."
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("slot_interval")} />}>
             <RowInput type="number" name="slot_interval" min={5} defaultValue={settings.slot_interval} cap={140} />
           </Row>
-          <Row label="Minimum notice (hours)" hint="How soon before a slot someone can still book it.">
+          <Row label="Minimum notice (hours)" hint="How soon before a slot someone can still book it."
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("min_notice_hours")} />}>
             <RowInput type="number" name="min_notice_hours" min={0} defaultValue={settings.min_notice_hours} cap={140} />
           </Row>
-          <Row label="Max advance booking (days)" hint="How far ahead your calendar opens up.">
+          <Row label="Max advance booking (days)" hint="How far ahead your calendar opens up."
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("max_advance_days")} />}>
             <RowInput type="number" name="max_advance_days" min={1} defaultValue={settings.max_advance_days} cap={140} />
           </Row>
-          <Row label="Cancellation cutoff (hours before start)" hint="How late a customer can still cancel.">
+          <Row label="Cancellation cutoff (hours before start)" hint="How late a customer can still cancel."
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("cancel_cutoff_hours")} />}>
             <RowInput type="number" name="cancel_cutoff_hours" min={0} defaultValue={settings.cancel_cutoff_hours} cap={140} />
           </Row>
-          <ToggleRow name="auto_confirm" label="Auto-confirm new bookings" hint="Skip manual approval for new bookings" defaultChecked={settings.auto_confirm} />
+          <ToggleRow name="auto_confirm" label="Auto-confirm new bookings" hint="Skip manual approval for new bookings" defaultChecked={settings.auto_confirm}
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("auto_confirm")} />} />
+          <ToggleRow name="require_phone" label="Require a phone number" hint="Ask for a phone number when booking" defaultChecked={settings.require_phone}
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("require_phone")} />} />
           <ToggleRow name="allow_cancel" label="Allow customers to cancel" hint="Let customers cancel their own bookings" defaultChecked={settings.allow_cancel} />
         </SettingsCard>
       )}

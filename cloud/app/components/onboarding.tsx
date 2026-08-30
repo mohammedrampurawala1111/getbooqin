@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { PRESETS, DAY_ABBR, getPreset, summarizeHours, type Preset, type PresetId } from "~/lib/presets";
+import { PRESETS, DAY_ABBR, getPreset, summarizeHours, rulesFor, ruleChips, type Preset, type PresetId } from "~/lib/presets";
 import { LogoutButton } from "~/components/ui";
 
 /* ==================================================================
@@ -131,9 +131,24 @@ export function LogoMark({ size = 30 }: { size?: number }) {
    ================================================================== */
 export function PresetScaffold({ presetId }: { presetId: PresetId }) {
   const preset = getPreset(presetId);
+  const rules = rulesFor(presetId);
 
   return (
     <>
+      <div className="card p-[18px]">
+        <h2 className="card-title mb-3">Starting rules</h2>
+        <p className="mb-3 text-meta text-muted">
+          A preset sets policy, not just wording — every one of these stays editable in Settings once you're live.
+        </p>
+        <div className="flex flex-wrap gap-[8px]">
+          {ruleChips(rules).map((chip) => (
+            <span key={chip} className="rounded-full border border-line bg-surface px-[10px] py-[4px] text-meta text-ink-2">
+              {chip}
+            </span>
+          ))}
+        </div>
+      </div>
+
       <div className="card">
         <div className="card-header">
           <h2 className="card-title">{preset.vocab.services}</h2>

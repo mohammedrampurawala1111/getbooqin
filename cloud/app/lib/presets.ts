@@ -1,17 +1,21 @@
-/* Industry presets — cosmetic UI layer only (onboarding preview + marketing
-   tiles). Ids are kept identical to core's real preset system
-   (getbooqin-core's Presets.PRESETS / Settings.applyPreset) so a preset
-   chosen here can be posted straight through: "auto"/"trades" in the design
-   handoff became "automotive"/"homeservice" to match. Core only carries
-   `terms` + a couple of scheduling defaults; this file adds the richer
-   preview data (sample services, hours, tint) used before a real store
-   exists to attach real Services/Settings to. */
+/* Industry presets — the vocab and rule-preview data here is now sourced
+   from core/src/booking/presets.ts (getbooqin-core's real preset system,
+   the one Settings.applyPreset actually writes to a shop's Settings row),
+   imported via the `getbooqin-core/booking/presets` export subpath, which
+   (like settingsShared/bookingsShared) has zero imports and is safe for a
+   client bundle. This used to be a fully separate, hand-maintained array
+   that only shared preset *ids* with core by convention — vocabulary had
+   drifted (e.g. this file called automotive's resource "Technician" while
+   core's actual Terms call it "Service Bay") so the onboarding preview no
+   longer always matched what a merchant's shop would actually show. Only
+   genuinely presentational data that core has no concept of — marketing
+   copy (label/unit/tint), sample services, and preview business hours —
+   stays local here. */
 
 import { useOutletContext } from "react-router";
+import { PRESETS as CORE_PRESETS, type Preset as CorePreset } from "getbooqin-core/booking/presets";
 
-export type PresetId =
-  | "generic" | "clinic" | "salon" | "automotive" | "legal"
-  | "education" | "fitness" | "realestate" | "restaurant" | "homeservice";
+export type PresetId = Extract<keyof typeof CORE_PRESETS, string>;
 
 export type Preset = {
   id: PresetId;
@@ -19,21 +23,27 @@ export type Preset = {
   unit: string;               // what the industry counts, for marketing copy
   tint: string;               // swatch on the preset tile
   vocab: {
-    booking: string;          // "Booking" | "Appointment" | "Job" | "Reservation"
-    customer: string;         // "Customer" | "Patient" | "Client" | "Guest"
-    resource: string;         // "Team member" | "Practitioner" | "Stylist"
-    services: string;         // section heading for bookable things
-    resources: string;        // section heading for who/what takes them
+    booking: string;          // "Booking" | "Appointment" | "Job" | "Reservation" — sourced from core's terms
+    customer: string;         // "Customer" | "Patient" | "Client" | "Guest" — sourced from core's terms
+    resource: string;         // "Staff Member" | "Doctor" | "Stylist" — sourced from core's terms
+    services: string;         // section heading for bookable things — cosmetic, local
+    resources: string;        // section heading for who/what takes them — cosmetic, local
   };
   services: { name: string; minutes: number }[];
   open: boolean[];            // Mon..Sun
   range: string;              // default open range for open days
 };
 
-export const PRESETS: Preset[] = [
-  {
-    id: "generic", label: "Generic / Other", unit: "Appointments", tint: "#c9c2d4",
-    vocab: { booking: "Booking", customer: "Customer", resource: "Team member", services: "Services", resources: "Staff & resources" },
+// Marketing/preview-only data core has no reason to carry: label copy, tile
+// tint, "what this industry counts" unit, sample services, and a preview
+// week of hours. Section headings (vocab.services/resources) live here too
+// — they're richer nav copy ("Practitioners & rooms") than core's plain
+// plural noun, and onboarding-preview-only, so drift here has no real
+// consequence the way booking/customer/resource wording did.
+const PREVIEW: Record<PresetId, Omit<Preset, "id" | "vocab"> & { vocabExtra: Pick<Preset["vocab"], "services" | "resources"> }> = {
+  generic: {
+    label: "Generic / Other", unit: "Appointments", tint: "#c9c2d4",
+    vocabExtra: { services: "Services", resources: "Staff & resources" },
     services: [
       { name: "Standard appointment", minutes: 60 },
       { name: "Short appointment", minutes: 30 },
@@ -42,9 +52,9 @@ export const PRESETS: Preset[] = [
     ],
     open: [true, true, true, true, true, false, false], range: "09:00–17:00",
   },
-  {
-    id: "clinic", label: "Clinic / Healthcare", unit: "Patient visits", tint: "#8fbfd6",
-    vocab: { booking: "Appointment", customer: "Patient", resource: "Practitioner", services: "Treatments", resources: "Practitioners & rooms" },
+  clinic: {
+    label: "Clinic / Healthcare", unit: "Patient visits", tint: "#8fbfd6",
+    vocabExtra: { services: "Treatments", resources: "Practitioners & rooms" },
     services: [
       { name: "Initial assessment", minutes: 45 },
       { name: "Follow-up consultation", minutes: 20 },
@@ -53,9 +63,9 @@ export const PRESETS: Preset[] = [
     ],
     open: [true, true, true, true, true, true, false], range: "08:00–18:00",
   },
-  {
-    id: "salon", label: "Salon / Spa / Barber", unit: "Chair time", tint: "#e0a8c8",
-    vocab: { booking: "Booking", customer: "Client", resource: "Stylist", services: "Services", resources: "Stylists & chairs" },
+  salon: {
+    label: "Salon / Spa / Barber", unit: "Chair time", tint: "#e0a8c8",
+    vocabExtra: { services: "Services", resources: "Stylists & chairs" },
     services: [
       { name: "Cut & finish", minutes: 60 },
       { name: "Balayage & toner", minutes: 150 },
@@ -64,9 +74,9 @@ export const PRESETS: Preset[] = [
     ],
     open: [false, true, true, true, true, true, false], range: "09:00–18:00",
   },
-  {
-    id: "automotive", label: "Automotive / Repair Shop", unit: "Bay slots", tint: "#9aa4b2",
-    vocab: { booking: "Job", customer: "Vehicle owner", resource: "Technician", services: "Jobs", resources: "Technicians & bays" },
+  automotive: {
+    label: "Automotive / Repair Shop", unit: "Bay slots", tint: "#9aa4b2",
+    vocabExtra: { services: "Jobs", resources: "Service bays" },
     services: [
       { name: "MOT test", minutes: 60 },
       { name: "Full service", minutes: 180 },
@@ -75,9 +85,9 @@ export const PRESETS: Preset[] = [
     ],
     open: [true, true, true, true, true, false, false], range: "08:00–17:30",
   },
-  {
-    id: "legal", label: "Legal / Consulting", unit: "Billable meetings", tint: "#a9a0c9",
-    vocab: { booking: "Meeting", customer: "Client", resource: "Adviser", services: "Meeting types", resources: "Advisers & rooms" },
+  legal: {
+    label: "Legal / Consulting", unit: "Billable meetings", tint: "#a9a0c9",
+    vocabExtra: { services: "Consultation types", resources: "Consultants & rooms" },
     services: [
       { name: "Discovery call", minutes: 30 },
       { name: "Strategy session", minutes: 60 },
@@ -86,9 +96,9 @@ export const PRESETS: Preset[] = [
     ],
     open: [true, true, true, true, true, false, false], range: "09:00–18:00",
   },
-  {
-    id: "education", label: "Education / Tutoring", unit: "Lessons", tint: "#e0c48f",
-    vocab: { booking: "Lesson", customer: "Student", resource: "Tutor", services: "Subjects", resources: "Tutors & rooms" },
+  education: {
+    label: "Education / Tutoring", unit: "Lessons", tint: "#e0c48f",
+    vocabExtra: { services: "Classes", resources: "Tutors & rooms" },
     services: [
       { name: "1:1 tuition", minutes: 60 },
       { name: "Group class", minutes: 90 },
@@ -97,9 +107,9 @@ export const PRESETS: Preset[] = [
     ],
     open: [true, true, true, true, true, true, false], range: "15:00–20:00",
   },
-  {
-    id: "fitness", label: "Fitness / Wellness", unit: "Classes", tint: "#8fd6b4",
-    vocab: { booking: "Class booking", customer: "Member", resource: "Instructor", services: "Classes", resources: "Instructors & studios" },
+  fitness: {
+    label: "Fitness / Wellness", unit: "Classes", tint: "#8fd6b4",
+    vocabExtra: { services: "Classes", resources: "Trainers & studios" },
     services: [
       { name: "Personal training", minutes: 60 },
       { name: "Group class", minutes: 45 },
@@ -108,9 +118,9 @@ export const PRESETS: Preset[] = [
     ],
     open: [true, true, true, true, true, true, true], range: "06:00–21:00",
   },
-  {
-    id: "realestate", label: "Real Estate / Property Viewings", unit: "Viewings", tint: "#c9b48f",
-    vocab: { booking: "Viewing", customer: "Buyer", resource: "Agent", services: "Viewing types", resources: "Agents" },
+  realestate: {
+    label: "Real Estate / Property Viewings", unit: "Viewings", tint: "#c9b48f",
+    vocabExtra: { services: "Viewing types", resources: "Agents" },
     services: [
       { name: "Property viewing", minutes: 30 },
       { name: "Second viewing", minutes: 45 },
@@ -119,9 +129,9 @@ export const PRESETS: Preset[] = [
     ],
     open: [true, true, true, true, true, true, false], range: "09:00–19:00",
   },
-  {
-    id: "restaurant", label: "Restaurant / Table Reservations", unit: "Covers", tint: "#e09a8f",
-    vocab: { booking: "Reservation", customer: "Guest", resource: "Table", services: "Sittings", resources: "Tables & sections" },
+  restaurant: {
+    label: "Restaurant / Table Reservations", unit: "Covers", tint: "#e09a8f",
+    vocabExtra: { services: "Sittings", resources: "Tables & sections" },
     services: [
       { name: "Lunch sitting", minutes: 90 },
       { name: "Dinner sitting", minutes: 120 },
@@ -130,9 +140,9 @@ export const PRESETS: Preset[] = [
     ],
     open: [false, true, true, true, true, true, true], range: "12:00–23:00",
   },
-  {
-    id: "homeservice", label: "Home Services / Trades", unit: "Site visits", tint: "#8fc3d6",
-    vocab: { booking: "Job", customer: "Customer", resource: "Engineer", services: "Job types", resources: "Engineers & vans" },
+  homeservice: {
+    label: "Home Services / Trades", unit: "Site visits", tint: "#8fc3d6",
+    vocabExtra: { services: "Job types", resources: "Engineers & vans" },
     services: [
       { name: "Quotation visit", minutes: 30 },
       { name: "Standard callout", minutes: 120 },
@@ -141,7 +151,61 @@ export const PRESETS: Preset[] = [
     ],
     open: [true, true, true, true, true, true, false], range: "07:30–17:00",
   },
-];
+};
+
+function termsOf(id: PresetId): CorePreset["terms"] {
+  return CORE_PRESETS[id].terms;
+}
+
+export const PRESETS: Preset[] = (Object.keys(CORE_PRESETS) as PresetId[]).map((id) => {
+  const { vocabExtra, ...preview } = PREVIEW[id];
+  const terms = termsOf(id);
+  return {
+    id,
+    ...preview,
+    vocab: {
+      booking: terms.booking_single,
+      customer: terms.customer_single,
+      resource: terms.resource_single,
+      ...vocabExtra,
+    },
+  };
+});
+
+// Real, wired scheduling-rule defaults (see core/src/booking/presets.ts's
+// PRESET_CONTROLLED_KEYS) for the given preset, for onboarding/settings
+// preview cards. `generic`'s own preset.defaults deliberately omits these
+// four fields since they already equal this fallback — see
+// core/src/booking/settings.ts's defaultSettings() — so it's spelled out
+// here once rather than imported from that DB-touching module (unsafe for
+// a client bundle; see this file's header comment on why presets.ts is the
+// only core subpath safe to pull business facts from client-side).
+const GENERIC_RULE_FALLBACK = {
+  min_notice_hours: 2,
+  max_advance_days: 60,
+  cancel_cutoff_hours: 24,
+  auto_confirm: true,
+  require_phone: false,
+} as const;
+
+export type PresetRules = typeof GENERIC_RULE_FALLBACK;
+
+export function rulesFor(id: string | null | undefined): PresetRules {
+  const preset = CORE_PRESETS[id as PresetId] ?? CORE_PRESETS.generic;
+  return { ...GENERIC_RULE_FALLBACK, ...(preset.defaults as Partial<PresetRules>) };
+}
+
+/* Plain-language summary of rulesFor()'s output, for onboarding's "Starting
+   rules" preview and the Business template page's before/after diff — one
+   place to phrase these so both stay consistent. */
+export function ruleChips(rules: PresetRules): string[] {
+  return [
+    rules.auto_confirm ? "Confirms bookings automatically" : "New bookings need approval first",
+    `At least ${rules.min_notice_hours}h notice required to book`,
+    `Customers can cancel up to ${rules.cancel_cutoff_hours}h before`,
+    rules.require_phone ? "Phone number required at booking" : "Phone number optional",
+  ];
+}
 
 export const DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 

@@ -23,6 +23,10 @@
       "types": "./dist/booking/serviceMetafields.d.ts",
       "default": "./dist/booking/serviceMetafields.js"
     },
+    "./booking/presets": {
+      "types": "./dist/booking/presets.d.ts",
+      "default": "./dist/booking/presets.js"
+    },
     "./booking/tz": {
       "types": "./dist/booking/tz.d.ts",
       "default": "./dist/booking/tz.js"

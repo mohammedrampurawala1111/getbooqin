@@ -94,6 +94,15 @@ export interface Settings {
   // card keys (cloud/app/components/account.tsx's OverviewCardKey) hidden
   // from dashboard.$connectionId._index.tsx. Empty = everything shown.
   hidden_overview_cards: string[];
+
+  // Which of presets.ts's PRESET_CONTROLLED_KEYS this shop has hand-edited
+  // since its preset was last applied. applyPreset() (settings.ts) skips
+  // overwriting any key listed here, so switching or re-applying a preset
+  // can never silently discard a merchant's own customization — only an
+  // explicit "reset to industry defaults" (applyPreset's `force` option)
+  // clears an entry. Settings UI in both apps reads this to show a "Preset
+  // default" vs "Customized" indicator next to each affected field.
+  customized_fields: string[];
 }
 
 export function term(settings: Settings, key: keyof Terms): string {
