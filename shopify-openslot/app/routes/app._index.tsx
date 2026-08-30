@@ -7,6 +7,7 @@ import { Bookings } from "getbooqin-core";
 import { Data } from "getbooqin-core";
 import { Settings } from "getbooqin-core";
 import { term, money } from "getbooqin-core/booking/settingsShared";
+import { isEmbedDetected } from "~/lib/embedStatus.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
@@ -34,10 +35,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const revenue = monthBookings.reduce((sum, b) => sum + b.amountDue, 0);
   const recentWithNames = await Data.attachServiceNames(shop, recent);
 
-  const embedDetectedRecentlyMs = 3 * 24 * 60 * 60 * 1000; // 3 days — generous so a quiet storefront doesn't flip to "not detected" between visits
-  const embedDetected = settings.embed_last_seen_at
-    ? Date.now() - new Date(settings.embed_last_seen_at).getTime() < embedDetectedRecentlyMs
-    : false;
+  const embedDetected = isEmbedDetected(settings);
 
   return {
     shop,

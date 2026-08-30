@@ -20,6 +20,7 @@ import prisma from "~/db.server";
 import { Data, Settings as Backend, Presets } from "getbooqin-core";
 import { term } from "getbooqin-core/booking/settingsShared";
 import { syncAllProductsFromShopify } from "~/lib/productSync.server";
+import { isEmbedDetected } from "~/lib/embedStatus.server";
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DEFAULT_SCHEDULE_ENABLED = [false, true, true, true, true, true, false]; // Mon-Fri on
@@ -64,10 +65,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     prisma.serviceConfig.count({ where: { shop, status: true } }),
   ]);
 
-  const embedDetectedRecentlyMs = 3 * 24 * 60 * 60 * 1000;
-  const embedDetected = settings.embed_last_seen_at
-    ? Date.now() - new Date(settings.embed_last_seen_at).getTime() < embedDetectedRecentlyMs
-    : false;
+  const embedDetected = isEmbedDetected(settings);
 
   return {
     step,
