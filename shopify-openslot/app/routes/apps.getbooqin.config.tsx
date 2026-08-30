@@ -18,6 +18,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       // the booking flow itself can't be reached.
       business_phone: settings.business_phone,
       require_phone: settings.require_phone,
+      waitlist_enabled: settings.waitlist_enabled,
       consent_text: settings.consent_text,
       widget_text: settings.widget_text,
       chat: {

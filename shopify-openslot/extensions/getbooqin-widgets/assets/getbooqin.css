@@ -444,6 +444,16 @@
 	left: -9999px !important;
 }
 
+.getbooqin-waitlist-join {
+	margin-top: 10px;
+}
+
+.getbooqin-waitlist-form {
+	margin-top: 14px;
+	padding-top: 14px;
+	border-top: 1px solid var(--getbooqin-line, #e3e6ea);
+}
+
 .getbooqin-btn {
 	display: inline-block;
 	padding: 11px 20px;

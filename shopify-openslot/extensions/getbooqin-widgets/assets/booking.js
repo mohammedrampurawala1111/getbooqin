@@ -40,6 +40,9 @@
 		confirm: 'Confirm booking',
 		loading: 'Loading…',
 		noSlots: 'No times available on this day.',
+		joinWaitlist: 'Join the waitlist',
+		waitlistJoin: 'Join waitlist',
+		waitlistJoined: 'You\'re on the waitlist for this day — we\'ll email you if a spot opens up.',
 		booked: 'You are booked!',
 		bookedIntro: 'We have emailed you the details.',
 		required: 'Please fill in the required fields.',
@@ -268,6 +271,10 @@
 		var resourceLabel = options.resourceLabel || t.anyAvailable;
 		var onSelect = options.onSelect;
 		var onBack = options.onBack;
+		// Only the new-booking flow passes this true — joining a waitlist from
+		// mid-reschedule would need to identify the existing customer rather
+		// than collect fresh name/email, a different flow this doesn't cover.
+		var waitlistEnabled = !! options.waitlistEnabled;
 
 		var now = new Date();
 		var todayUtc = new Date( Date.UTC( now.getFullYear(), now.getMonth(), now.getDate() ) );
@@ -353,6 +360,109 @@
 			timesEl.appendChild( el( 'p', { class: 'getbooqin-muted', text: t.pickDatePrompt } ) );
 		}
 
+		/**
+		 * Shown under the "no times available" message for a day, only when
+		 * the merchant has turned waitlist_enabled on (Settings -> Booking
+		 * rules). Scoped to the one day the visitor was just looking at —
+		 * window_start/window_end both equal dateStr — rather than asking
+		 * them to define a broader range, since that's the day they actually
+		 * came here for. Same honeypot convention as stepDetails's booking
+		 * form: a hidden field that must stay empty.
+		 */
+		function renderWaitlistJoin( container, dateStr, dateLabel ) {
+			if ( ! waitlistEnabled ) {
+				return;
+			}
+
+			var joinBtn = el( 'button', {
+				type: 'button',
+				class: 'getbooqin-btn getbooqin-btn--ghost getbooqin-waitlist-join',
+				text: t.joinWaitlist
+			} );
+			joinBtn.addEventListener( 'click', function () {
+				joinBtn.remove();
+				container.appendChild( renderWaitlistForm( dateStr, dateLabel ) );
+			} );
+			container.appendChild( joinBtn );
+		}
+
+		function renderWaitlistForm( dateStr, dateLabel ) {
+			var wrap = el( 'div', { class: 'getbooqin-waitlist-form' } );
+
+			function field( name, label, type, required ) {
+				var input = el( 'input', { type: type, name: name, id: 'getbooqin-wl-' + name } );
+				if ( required ) {
+					input.setAttribute( 'required', 'required' );
+				}
+				return el( 'div', { class: 'getbooqin-field' }, [
+					el( 'label', { for: 'getbooqin-wl-' + name, text: label + ( required ? ' *' : '' ) } ),
+					input
+				] );
+			}
+
+			wrap.appendChild( el( 'p', { class: 'getbooqin-muted', text: t.joinWaitlist + ' — ' + dateLabel } ) );
+			wrap.appendChild( el( 'div', { class: 'getbooqin-field-row' }, [
+				field( 'first_name', t.firstName, 'text', true ),
+				field( 'last_name', t.lastName, 'text', false )
+			] ) );
+			wrap.appendChild( field( 'email', t.email, 'email', true ) );
+			wrap.appendChild( field( 'phone', t.phone, 'tel', false ) );
+
+			wrap.appendChild( el( 'input', {
+				type: 'text',
+				name: 'os_hp_a1b2',
+				class: 'getbooqin-hp',
+				tabindex: '-1',
+				autocomplete: 'off',
+				'aria-hidden': 'true'
+			} ) );
+
+			function showError( message ) {
+				var existing = wrap.querySelector( '.getbooqin-error' );
+				if ( existing ) {
+					existing.remove();
+				}
+				wrap.insertBefore( el( 'p', { class: 'getbooqin-error', role: 'alert', text: message } ), wrap.firstChild );
+			}
+
+			var submitBtn = el( 'button', { type: 'button', class: 'getbooqin-btn', text: t.waitlistJoin } );
+			submitBtn.addEventListener( 'click', function () {
+				var firstName = wrap.querySelector( '[name=first_name]' ).value.trim();
+				var email = wrap.querySelector( '[name=email]' ).value.trim();
+				if ( ! firstName || ! email ) {
+					showError( t.required );
+					return;
+				}
+
+				submitBtn.disabled = true;
+				api( 'waitlist/join', {
+					method: 'POST',
+					body: JSON.stringify( {
+						service_id: serviceId,
+						resource_id: resourceId,
+						window_start: dateStr,
+						window_end: dateStr,
+						first_name: firstName,
+						last_name: wrap.querySelector( '[name=last_name]' ).value.trim(),
+						email: email,
+						phone: wrap.querySelector( '[name=phone]' ).value.trim(),
+						os_hp_a1b2: wrap.querySelector( '[name=os_hp_a1b2]' ).value
+					} )
+				} )
+					.then( function () {
+						wrap.innerHTML = '';
+						wrap.appendChild( el( 'p', { class: 'getbooqin-muted', text: t.waitlistJoined } ) );
+					} )
+					.catch( function ( err ) {
+						submitBtn.disabled = false;
+						showError( err.message );
+					} );
+			} );
+
+			wrap.appendChild( el( 'div', { class: 'getbooqin-actions' }, [ submitBtn ] ) );
+			return wrap;
+		}
+
 		function renderTimesFor( dateStr, dateLabel ) {
 			selectedTime = null;
 			selectedTimeLabel = '';
@@ -368,6 +478,7 @@
 					loadingEl.remove();
 					if ( ! slots.length ) {
 						timesEl.appendChild( el( 'p', { class: 'getbooqin-muted', text: t.noSlots } ) );
+						renderWaitlistJoin( timesEl, dateStr, dateLabel );
 						return;
 					}
 					var list = el( 'div', { class: 'getbooqin-calendar__time-list' } );
@@ -798,6 +909,7 @@
 			timezone: this.cfg && this.cfg.timezone,
 			serviceLabel: this.state.serviceName,
 			resourceLabel: this.state.resourceName,
+			waitlistEnabled: !! ( this.cfg && this.cfg.waitlist_enabled ),
 			onSelect: function ( date, dateLabel, time, timeLabel ) {
 				self.state.date = date;
 				self.state.dateLabel = dateLabel;
