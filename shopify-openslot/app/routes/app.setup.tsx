@@ -31,11 +31,33 @@ function clampStep(raw: string | null): number {
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const settings = await Backend.getSettings(shop, "shopify");
   const url = new URL(request.url);
   const step = clampStep(url.searchParams.get("step"));
+
+  // "UTC" is defaultSettings()'s fallback, not a real merchant choice most
+  // of the time — a store this is still true for almost certainly hasn't
+  // been through step 1 yet. Shopify already knows the shop's real
+  // timezone (it's set at store creation, used for reports/analytics); pull
+  // it in as the field's starting value so the common case needs zero
+  // typing instead of "type an IANA string" with only a placeholder hint to
+  // go on. Still shown and editable, not written until the merchant submits
+  // the business step, and never overrides a timezone they already set.
+  let timezone = settings.timezone;
+  if (timezone === "UTC") {
+    try {
+      const response = await admin.graphql(`#graphql
+        query ShopTimezone { shop { ianaTimezone } }`);
+      const body = await response.json();
+      const detected = body?.data?.shop?.ianaTimezone;
+      if (detected) timezone = detected;
+    } catch {
+      // Best-effort — the manual field with its placeholder hint still
+      // works exactly as before if this fails for any reason.
+    }
+  }
 
   const [resourcesCount, servicesCount] = await Promise.all([
     prisma.resource.count({ where: { shop, status: true } }),
@@ -49,7 +71,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   return {
     step,
-    settings,
+    settings: { ...settings, timezone },
     presets: Presets.presetChoices(),
     resourcesCount,
     servicesCount,
@@ -265,7 +287,7 @@ export default function Onboarding() {
                   value={timezone}
                   onChange={setTimezone}
                   autoComplete="off"
-                  helpText="IANA timezone, e.g. America/New_York"
+                  helpText="Detected from your store — change it if this store serves customers somewhere else."
                 />
                 <Select
                   label="What kind of business is this?"
