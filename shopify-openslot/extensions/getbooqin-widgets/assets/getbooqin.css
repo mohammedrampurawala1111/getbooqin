@@ -186,6 +186,13 @@
 	cursor: not-allowed;
 }
 
+/* Zero slots, but still clickable because the waitlist is on for this
+   shop — muted like is-unavailable so it doesn't look like a normal open
+   day, but with the same pointer cursor and hover feedback as one. */
+.getbooqin-calendar__day.is-full {
+	color: var(--getbooqin-muted, #6b7280);
+}
+
 .getbooqin-calendar-times {
 	padding-top: 4px;
 }

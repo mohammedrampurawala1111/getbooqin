@@ -569,10 +569,21 @@
 					var dateStr = viewYear + '-' + pad2( viewMonth ) + '-' + pad2( d );
 					var cellDate = new Date( Date.UTC( viewYear, viewMonth - 1, d ) );
 					var isPast = cellDate < todayUtc;
-					var available = ! isPast && ( map[ dateStr ] || 0 ) > 0;
+					var hasSlots = ( map[ dateStr ] || 0 ) > 0;
+					// A day with zero slots stays visually "unavailable" either
+					// way, but when the merchant has the waitlist on, it's still
+					// worth a click — renderTimesFor already handles the
+					// zero-slots response by showing the "no times" message plus
+					// a join-the-waitlist prompt. Without the waitlist there is
+					// nothing useful behind that click, so it stays disabled.
+					var clickable = ! isPast && ( hasSlots || waitlistEnabled );
 
 					var classes = 'getbooqin-calendar__cell getbooqin-calendar__day';
-					if ( ! available ) classes += ' is-unavailable';
+					// is-unavailable = greyed out AND not-allowed (nothing to do
+					// here). is-full = greyed out but still clickable, since
+					// waitlistEnabled means there is something to do — joining
+					// the waitlist — even with zero open slots.
+					if ( ! hasSlots ) classes += clickable ? ' is-full' : ' is-unavailable';
 					if ( selectedDate === dateStr ) classes += ' is-selected';
 
 					var fullLabel = cellDate.toLocaleDateString( undefined, { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' } );
@@ -581,7 +592,7 @@
 					// would misreport which day is actually today to screen readers.
 					var cellAttrs = { type: 'button', class: classes, text: String( d ), 'aria-label': fullLabel, 'aria-pressed': selectedDate === dateStr ? 'true' : 'false' };
 					var cellButton = el( 'button', cellAttrs );
-					if ( ! available ) {
+					if ( ! clickable ) {
 						cellButton.disabled = true;
 					} else {
 						( function ( dateStr, dateLabel ) {
