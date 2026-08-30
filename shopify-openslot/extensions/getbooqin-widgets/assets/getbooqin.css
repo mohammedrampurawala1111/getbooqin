@@ -338,28 +338,6 @@
 	color: var(--getbooqin-accent, #2563eb);
 }
 
-/* The blocked slot currently showing its join form below — solid border,
-   same accent as a selected open slot, so there's an immediate answer to
-   "did my click do anything" right where the click happened, not just in
-   the form that scrolls into view a moment later. */
-.getbooqin-calendar__time--blocked.is-active {
-	border-style: solid;
-	border-color: var(--getbooqin-accent, #2563eb);
-}
-
-/* After a successful join — stays visibly different from both a plain
-   blocked slot and an active one, and disabled so it can't be submitted
-   twice without a page reload pretending nothing happened. */
-.getbooqin-calendar__time--blocked.is-joined {
-	border-style: solid;
-	color: var(--getbooqin-ok, #1a7f4b);
-	cursor: default;
-}
-
-.getbooqin-calendar__time--blocked.is-joined .getbooqin-calendar__time-tag {
-	color: var(--getbooqin-ok, #1a7f4b);
-}
-
 .getbooqin-calendar__hint {
 	margin-top: 12px;
 	font-size: 0.85em;
@@ -500,12 +478,6 @@
 
 .getbooqin-waitlist-join {
 	margin-top: 10px;
-}
-
-.getbooqin-waitlist-form {
-	margin-top: 14px;
-	padding-top: 14px;
-	border-top: 1px solid var(--getbooqin-line, #e3e6ea);
 }
 
 .getbooqin-btn {
