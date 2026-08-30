@@ -400,7 +400,11 @@
 				] );
 			}
 
-			wrap.appendChild( el( 'p', { class: 'getbooqin-muted', text: t.joinWaitlist + ' — ' + dateLabel } ) );
+			// A proper heading, not another muted paragraph — this is the
+			// actual thing to do on this screen once "no times available" has
+			// been said once already, not a second aside.
+			wrap.appendChild( el( 'h4', { text: t.joinWaitlist } ) );
+			wrap.appendChild( el( 'p', { class: 'getbooqin-muted', text: dateLabel } ) );
 			wrap.appendChild( el( 'div', { class: 'getbooqin-field-row' }, [
 				field( 'first_name', t.firstName, 'text', true ),
 				field( 'last_name', t.lastName, 'text', false )
@@ -467,6 +471,12 @@
 			selectedTime = null;
 			selectedTimeLabel = '';
 			submitBtn.disabled = true;
+			// Reset from a previous zero-slots day; the no-slots branch below
+			// hides it again if this day turns out to be one too. A disabled
+			// "Book now" sitting under the waitlist form has nothing for it to
+			// do and reads as a second, competing call to action next to
+			// "Join waitlist" — worse than just not being there.
+			submitBtn.style.display = '';
 
 			timesEl.innerHTML = '';
 			timesEl.appendChild( el( 'h4', { text: t.selectTimeSlot } ) );
@@ -478,6 +488,7 @@
 					loadingEl.remove();
 					if ( ! slots.length ) {
 						timesEl.appendChild( el( 'p', { class: 'getbooqin-muted', text: t.noSlots } ) );
+						submitBtn.style.display = 'none';
 						renderWaitlistJoin( timesEl, dateStr, dateLabel );
 						return;
 					}
