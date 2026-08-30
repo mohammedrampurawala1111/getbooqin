@@ -251,7 +251,11 @@ export function overviewCards(presetId: PresetId | string | null | undefined) {
   ];
 }
 
-/* What renaming the template changes — shown before applying. */
+/* What renaming the template changes — shown before applying. Filters out
+   rows where a preset's word happens to match the generic default (e.g.
+   Salon's "Services" is already called that) — those aren't renames, and
+   listing "Services → Services" reads as the feature doing nothing rather
+   than doing nothing *to that one word*. */
 export function vocabDiff(presetId: PresetId | string | null | undefined) {
   const p = getPreset(presetId as string);
   return [
@@ -260,7 +264,7 @@ export function vocabDiff(presetId: PresetId | string | null | undefined) {
     { from: "Staff & Resources", to: p.vocab.resources },
     { from: "Services", to: p.vocab.services },
     { from: "Resource utilisation", to: `${p.vocab.resource} utilisation` },
-  ];
+  ].filter((row) => row.from !== row.to);
 }
 
 export function TemplateConfig({
@@ -297,13 +301,17 @@ export function TemplateConfig({
         <div className="card">
           <div className="card-header"><h2 className="card-title">What this renames</h2></div>
           <div className="px-[18px] pt-1 pb-[14px]">
-            {vocabDiff(presetId).map((v) => (
-              <div key={v.from} className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-row py-[11px] text-[13px]">
-                <span className="text-subtle">{v.from}</span>
-                <span className="num text-[11px] text-faint">→</span>
-                <span className="text-right font-medium">{v.to}</span>
-              </div>
-            ))}
+            {vocabDiff(presetId).length === 0 ? (
+              <p className="py-[11px] text-[13px] text-subtle">Nothing is renamed for this template.</p>
+            ) : (
+              vocabDiff(presetId).map((v) => (
+                <div key={v.from} className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-row py-[11px] text-[13px]">
+                  <span className="text-subtle">{v.from}</span>
+                  <span className="num text-[11px] text-faint">→</span>
+                  <span className="text-right font-medium">{v.to}</span>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
