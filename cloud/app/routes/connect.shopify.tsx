@@ -4,14 +4,9 @@ import { buildAuthorizationUrl, isValidShopDomain, signOAuthState } from "getboo
 import { requireUserSession } from "~/session.server";
 import { AlertError, Field, Input } from "~/components/ui";
 import { LogoMark } from "~/components/onboarding";
+import { getAppUrl } from "~/lib/env.server";
 
 export const meta: Route.MetaFunction = () => [{ title: "Connect Shopify · GetBooqin" }];
-
-function getAppUrl(): string {
-  const appUrl = process.env.APP_URL;
-  if (!appUrl) throw new Error("APP_URL is not set");
-  return appUrl;
-}
 
 export async function loader({ request }: Route.LoaderArgs) {
   await requireUserSession(request);

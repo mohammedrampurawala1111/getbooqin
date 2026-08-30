@@ -36,6 +36,7 @@ const CLOUD_PREFIXES = [
   "/logout",
   "/dashboard",
   "/connect",
+  "/book",
   "/sso-callback",
   "/webhooks/clerk",
   // Cloud's own account-surface legal pages — deliberately not "/privacy"

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Route } from "./+types/dashboard.$connectionId._index";
 import { Metrics, Bookings, Data, Settings } from "getbooqin-core";
 // Direct subpath import, not the root barrel — see bookingsShared.ts's
@@ -7,6 +8,7 @@ import { requireTenant } from "~/tenant.server";
 import { PageHeader, StatCard, BarChart, MeterRow, EmptyState } from "~/components/ui";
 import { SetupChecklist, EmptyStat } from "~/components/onboarding";
 import { setupSummary, useVocabulary } from "~/lib/presets";
+import { getAppUrl } from "~/lib/env.server";
 
 export const meta: Route.MetaFunction = () => [{ title: "Overview · GetBooqin" }];
 
@@ -61,6 +63,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     allTimeBookingCount,
     setupFacts,
     hiddenCards: settings.hidden_overview_cards,
+    bookingUrl: `${getAppUrl()}/book/${params.connectionId}`,
   };
 }
 
@@ -83,7 +86,7 @@ const PAYMENT_TINT: Record<string, string> = {
 const STAT_GRID: Record<number, string> = { 3: "grid-cols-2 md:grid-cols-3", 4: "grid-cols-2 md:grid-cols-4" };
 
 export default function Overview({ loaderData, params }: Route.ComponentProps) {
-  const { overview, pendingCount, activeServiceCount, range, allTimeBookingCount, setupFacts, hiddenCards } = loaderData;
+  const { overview, pendingCount, activeServiceCount, range, allTimeBookingCount, setupFacts, hiddenCards, bookingUrl } = loaderData;
   const totalBookings = overview.bookingsSeries.reduce((sum, d) => sum + d.count, 0);
   const paymentLabels = paymentStatusLabels();
   const paymentTotal = overview.paymentBreakdown.reduce((sum, p) => sum + p.count, 0);
@@ -91,7 +94,7 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
   const resourceOneCap = v.resourceOne.charAt(0).toUpperCase() + v.resourceOne.slice(1);
 
   if (allTimeBookingCount === 0) {
-    return <EmptyOverview connectionId={params.connectionId} setupFacts={setupFacts} />;
+    return <EmptyOverview connectionId={params.connectionId} setupFacts={setupFacts} bookingUrl={bookingUrl} />;
   }
 
   const hidden = new Set(hiddenCards);
@@ -116,6 +119,8 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
         // this app (bookings, bookings.$bookingId, timeoff).
         subtitle={`${new Date(range.from).toLocaleDateString("en-US")} – ${new Date(range.to).toLocaleDateString("en-US")}`}
       />
+
+      <ShareLinkCard bookingUrl={bookingUrl} vocab={v} />
 
       {statCount > 0 && (
         <div className={`grid gap-[14px] ${STAT_GRID[statCount]}`}>
@@ -249,9 +254,11 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
 function EmptyOverview({
   connectionId,
   setupFacts,
+  bookingUrl,
 }: {
   connectionId: string;
   setupFacts: Route.ComponentProps["loaderData"]["setupFacts"];
+  bookingUrl: string;
 }) {
   const base = `/dashboard/${connectionId}`;
   const summary = setupSummary(setupFacts);
@@ -290,6 +297,8 @@ function EmptyOverview({
         resumeHref={firstUnfinished ? hrefs[firstUnfinished.key] : hrefs.services}
       />
 
+      <ShareLinkCard bookingUrl={bookingUrl} vocab={v} />
+
       <div className="card">
         <EmptyState
           icon={
@@ -301,6 +310,39 @@ function EmptyOverview({
           title={`No ${v.bookingMany} yet`}
           body="Once your setup is finished and someone books, activity shows up here."
         />
+      </div>
+    </div>
+  );
+}
+
+// The one link every merchant needs regardless of Shopify/WordPress/no
+// platform at all — works from onboarding.tsx's very first "Go live without
+// Shopify" moment onward, since booking_page_url is now pinned there. Shown
+// on both the empty and populated Overview so it's never buried once
+// there's real activity to scroll past.
+function ShareLinkCard({ bookingUrl, vocab }: { bookingUrl: string; vocab: ReturnType<typeof useVocabulary> }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(bookingUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard permission denied or unavailable — the link is still
+      // right there to select/copy by hand.
+    }
+  }
+
+  return (
+    <div className="card p-[18px]">
+      <h2 className="card-title mb-1">Share your booking link</h2>
+      <p className="m-0 mb-3 text-meta text-muted">
+        Send this anywhere — texts, social bios, email — and customers can book {vocab.bookingMany} directly, no store or website required.
+      </p>
+      <div className="flex items-center gap-2">
+        <input readOnly value={bookingUrl} onFocus={(e) => e.currentTarget.select()} className="input min-w-0 flex-1 truncate" />
+        <button type="button" className="btn-sec shrink-0" onClick={copy}>{copied ? "Copied" : "Copy link"}</button>
       </div>
     </div>
   );

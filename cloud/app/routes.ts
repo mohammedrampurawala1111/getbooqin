@@ -29,6 +29,11 @@ export default [
   ]),
   route("connect/shopify", "routes/connect.shopify.tsx"),
   route("connect/shopify/callback", "routes/connect.shopify.callback.tsx"),
+  // Public, unauthenticated — the customer-facing booking page a merchant
+  // (Shopify-connected or not) can link customers to directly. See
+  // server/combined.js's CLOUD_PREFIXES, kept in sync with this file.
+  route("book/:connectionId", "routes/book.$connectionId.tsx"),
+  route("book/:connectionId/slots", "routes/book.$connectionId.slots.tsx"),
   route("webhooks/clerk", "routes/webhooks.clerk.tsx"),
   // Not /privacy or /terms — shopify-openslot already owns those paths (its
   // Shopify App Store submission) on the combined server. See

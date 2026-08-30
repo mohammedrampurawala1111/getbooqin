@@ -69,6 +69,17 @@ export async function getUserConnection(userId: string, connectionId: string) {
   return connection;
 }
 
+// The public-booking-page equivalent of getUserConnection above — no owner
+// to check (the caller is an anonymous customer, not the merchant), but
+// still refuses a disconnected/revoked store the same way that dashboard
+// routes already do, so a stale or shared /book/:connectionId link can't
+// keep working after the merchant disconnects.
+export async function getPublicConnection(connectionId: string) {
+  const connection = await prisma.connection.findUnique({ where: { id: connectionId } });
+  if (!connection || connection.status !== "active") return null;
+  return connection;
+}
+
 // Soft-disconnect: keeps the row (and its historical bookings/settings)
 // around, just marks it unusable. Reconnecting the same shop later already
 // revives it — connectShopifyStore() upserts an owned-but-inactive row back

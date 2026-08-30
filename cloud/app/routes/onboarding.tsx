@@ -8,6 +8,7 @@ import { OnboardingShell, PresetTiles, PresetScaffold, IntegrationRow } from "~/
 import { INTEGRATIONS, getPreset, vocabFor, type PresetId } from "~/lib/presets";
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 import { CURRENCIES, guessCurrency } from "~/lib/currency";
+import { getAppUrl } from "~/lib/env.server";
 import { Data, Settings, FeatureFlags, createManualConnection, getUserConnection, listUserConnections } from "getbooqin-core";
 
 // Two ways to leave this wizard with a working account: connect a real
@@ -202,6 +203,13 @@ async function handleGoLive(userId: string, form: FormData) {
     // not an unfinished step, so the Overview checklist's "Connect a
     // channel" item shouldn't nag about it forever (UX audit's B1 finding).
     channel_setup_skipped: true,
+    // defaultSettings()'s own booking_page_url (`https://${shop}`) is
+    // correct for a real Shopify domain but meaningless for a manual
+    // connection, whose `shop` is just an opaque manual-<uuid> key — every
+    // confirmation/cancel email's manage link (Bookings.manageUrl) was
+    // silently pointing at an unreachable URL until this pinned it to the
+    // real public booking page instead.
+    booking_page_url: `${getAppUrl()}/book/${connection.id}`,
   });
 
   throw redirect(`/dashboard/${connection.id}`);
