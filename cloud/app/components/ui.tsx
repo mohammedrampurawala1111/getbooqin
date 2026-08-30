@@ -457,10 +457,14 @@ export function ConfirmDialog({
 }) {
   // Confirm submits the form passed as `children` via HTML's `form=` attribute
   // (works regardless of DOM nesting) — that form's id must be `${id}-form`.
+  // `m-auto`: a native <dialog> centers itself via the UA stylesheet's own
+  // `margin: auto`, but Tailwind's preflight zeroes margin on every element
+  // — including <dialog> — so without this it opened pinned to the
+  // top-left corner instead (UX audit's S1 finding).
   return (
     <dialog
       id={id}
-      className="w-full max-w-[420px] rounded-modal p-0 shadow-modal backdrop:bg-[rgba(19,17,24,0.42)]"
+      className="m-auto w-full max-w-[420px] rounded-modal p-0 shadow-modal backdrop:bg-[rgba(19,17,24,0.42)]"
     >
       <div className="flex flex-col gap-4 p-[22px]">
         <div className="flex gap-3">

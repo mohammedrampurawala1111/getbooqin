@@ -308,6 +308,22 @@ export function resource(shop: string, id: number) {
   return prisma.resource.findFirst({ where: { shop, id } });
 }
 
+// A resource row existing is not the same as it being bookable — one can
+// have every day of its schedule toggled off (onboarding's own resource
+// step used to create exactly that; see onboarding.tsx's handleStep2) and
+// take zero bookings despite passing a plain "at least one resource
+// exists" check. Takes the caller's own resource ids rather than
+// re-querying resources() itself, since every call site already has them.
+export async function bookableResourceCount(shop: string, resourceIds: number[]) {
+  if (resourceIds.length === 0) return 0;
+  const withHours = await prisma.schedule.findMany({
+    where: { shop, resourceId: { in: resourceIds } },
+    distinct: ["resourceId"],
+    select: { resourceId: true },
+  });
+  return withHours.length;
+}
+
 export interface ResourceInput {
   name: string;
   title?: string;

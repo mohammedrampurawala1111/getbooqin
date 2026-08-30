@@ -73,8 +73,8 @@ export function SettingsShell({
         <p className="page-sub">{meta.subtitle}</p>
       </div>
 
-      <div className="grid grid-cols-[minmax(0,168px)_minmax(0,1fr)] items-start gap-5">
-        <nav className="sticky top-[26px] flex flex-col gap-[14px]">
+      <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-[minmax(0,168px)_minmax(0,1fr)]">
+        <nav className="flex flex-col gap-[14px] md:sticky md:top-[26px]">
           {SETTINGS_NAV.map((g) => (
             <div key={g.group} className="flex flex-col gap-px">
               <span className="px-[10px] pb-[5px] text-[10.5px] font-semibold uppercase tracking-[0.07em] text-subtle">{g.group}</span>

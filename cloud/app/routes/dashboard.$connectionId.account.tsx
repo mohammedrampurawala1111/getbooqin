@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useClerk, useReverification, useSession, useUser } from "@clerk/react-router";
 import { isClerkAPIResponseError, isReverificationCancelledError } from "@clerk/react-router/errors";
 import type { Route } from "./+types/dashboard.$connectionId.account";
-import { prisma, Settings } from "getbooqin-core";
+import { prisma, Settings, FeatureFlags } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Badge, Field, Input, Toggle } from "~/components/ui";
 import { AuthMethodRow, GoogleGlyph, PasswordField, SessionRow } from "~/components/account";
@@ -40,6 +40,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   return {
     phone: dbUser?.phone ?? "",
     template: { presetId: settings.preset, href: `/dashboard/${connection.id}/settings?page=template` },
+    paymentsEnabled: FeatureFlags.PAYMENTS_ENABLED,
   };
 }
 
@@ -49,7 +50,7 @@ export default function Account({ loaderData, params }: Route.ComponentProps) {
   const base = `/dashboard/${params.connectionId}`;
 
   return (
-    <SettingsShell active={tab} base={base}>
+    <SettingsShell active={tab} base={base} hide={loaderData.paymentsEnabled ? [] : ["payments"]}>
       {tab === "profile" ? (
         <ProfileTab phone={loaderData.phone} template={loaderData.template} />
       ) : (

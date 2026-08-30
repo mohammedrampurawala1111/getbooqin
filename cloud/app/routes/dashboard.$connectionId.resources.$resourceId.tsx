@@ -128,10 +128,10 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
     <div className="flex flex-col gap-[18px]">
       <div>
         <a href={`${base}/resources`} className="btn-link">
-          &larr; All resources
+          &larr; All {v.resources}
         </a>
       </div>
-      <h1 className="page-title">{isNew ? "Add resource" : resource!.name}</h1>
+      <h1 className="page-title">{isNew ? `Add ${v.resourceOne}` : resource!.name}</h1>
 
       <Form method="post" className="flex flex-col gap-[14px]">
         <div className="card">
@@ -183,26 +183,39 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
             {DAYS.map((label, day) => {
               const existing = byDay[day];
               const dayEnabled = enabled[day];
+              const summary = dayEnabled ? formatHours(hoursBetween(existing?.startTime ?? "09:00", existing?.endTime ?? "17:00")) : "Closed";
               return (
-                <div
-                  key={day}
-                  className="grid items-center gap-3"
-                  style={{ gridTemplateColumns: "132px 1fr 1fr 118px" }}
-                >
-                  <Toggle
-                    name={`day_${day}_enabled`}
-                    defaultChecked={dayEnabled}
-                    label={label}
-                    onChange={(checked) => setEnabled((prev) => prev.map((v, i) => (i === day ? checked : v)))}
-                  />
-                  {/* min-w-0: grid items default to min-width:auto, which
+                // A fixed "132px 1fr 1fr 118px" grid used to run the toggle
+                // and the 118px summary off the edge of the card below
+                // ~520px, with no scrollbar to reach them (UX audit's #11
+                // finding, still present at 298px in the follow-up pass).
+                // flex-wrap instead of grid: the toggle+summary pair wraps
+                // onto its own full-width row once the two 1fr time inputs
+                // no longer fit beside it, rather than every column
+                // shrinking past usability. The summary itself renders
+                // twice — once inline next to the toggle for the wrapped
+                // (mobile) row, once at the fixed 118px trailing position
+                // for the unwrapped (desktop) row — with `hidden`/`sm:hidden`
+                // making only one present in the accessibility tree at a
+                // time, so nothing is announced twice.
+                <div key={day} className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <div className="flex w-full items-center justify-between gap-3 sm:w-[132px] sm:shrink-0 sm:justify-start">
+                    <Toggle
+                      name={`day_${day}_enabled`}
+                      defaultChecked={dayEnabled}
+                      label={label}
+                      onChange={(checked) => setEnabled((prev) => prev.map((v, i) => (i === day ? checked : v)))}
+                    />
+                    <span className="num text-[13px] text-muted sm:hidden">{summary}</span>
+                  </div>
+                  {/* min-w-0: flex items default to min-width:auto, which
                       for a native <input type="time"> is wider than these
-                      1fr tracks actually have room for below ~520px — the
+                      flex-1 tracks actually have room for below ~520px — the
                       track can't shrink to fit without this, so the input
                       overflowed the card's edge instead (UX audit's #11
                       finding). Same class of fix as Row/RowInput in
                       settings.tsx for the identical reason.
-                      aria-label: this grid isn't a Row/Field, so neither
+                      aria-label: this row isn't a Row/Field, so neither
                       gets an implicit label from anywhere — Toggle's own
                       `label` covers the day name, but the two time inputs
                       had nothing at all (pass 7's N1 finding: 7 days × 2
@@ -213,7 +226,7 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
                     aria-label={`${label} start time`}
                     defaultValue={existing?.startTime ?? "09:00"}
                     disabled={!dayEnabled}
-                    className={`input min-w-0 ${!dayEnabled ? "bg-canvas" : ""}`}
+                    className={`input min-w-0 flex-1 sm:flex-1 ${!dayEnabled ? "bg-canvas" : ""}`}
                   />
                   <input
                     type="time"
@@ -221,10 +234,10 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
                     aria-label={`${label} end time`}
                     defaultValue={existing?.endTime ?? "17:00"}
                     disabled={!dayEnabled}
-                    className={`input ${!dayEnabled ? "bg-canvas" : ""}`}
+                    className={`input min-w-0 flex-1 sm:flex-1 ${!dayEnabled ? "bg-canvas" : ""}`}
                   />
-                  <span className="num text-right text-[13px] text-muted">
-                    {dayEnabled ? formatHours(hoursBetween(existing?.startTime ?? "09:00", existing?.endTime ?? "17:00")) : "Closed"}
+                  <span className="num hidden text-right text-[13px] text-muted sm:block sm:w-[118px] sm:shrink-0">
+                    {summary}
                   </span>
                 </div>
               );
@@ -266,7 +279,7 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
               className="btn-del"
               onClick={() => (document.getElementById("delete-resource") as HTMLDialogElement | null)?.showModal()}
             >
-              Delete resource
+              Delete {v.resourceOne}
             </button>
           )}
         </div>

@@ -8,7 +8,7 @@ import { OnboardingShell, PresetTiles, PresetScaffold, IntegrationRow } from "~/
 import { INTEGRATIONS, getPreset, vocabFor, type PresetId } from "~/lib/presets";
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 import { CURRENCIES, guessCurrency } from "~/lib/currency";
-import { Data, Settings, createManualConnection, getUserConnection, listUserConnections } from "getbooqin-core";
+import { Data, Settings, FeatureFlags, createManualConnection, getUserConnection, listUserConnections } from "getbooqin-core";
 
 // Two ways to leave this wizard with a working account: connect a real
 // Shopify store (ShopifyConnectForm below — answers ride through the OAuth
@@ -67,7 +67,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     // address is often not the login email.
     email,
   };
-  return { userId: session.userId, seed };
+  return { userId: session.userId, seed, paymentsEnabled: FeatureFlags.PAYMENTS_ENABLED };
 }
 
 function slugify(title: string): string {
@@ -146,6 +146,27 @@ async function handleStep2(userId: string, form: FormData): Promise<ActionResult
 
   const resourceName = String(form.get("resource_name") || "").trim();
   if (resourceName) {
+    // This step just showed the merchant their industry's default business
+    // hours a moment earlier, but never carried them into the resource it
+    // creates — the resource landed with every day off and 0 bookable
+    // hours, so a merchant could finish onboarding, "go live", and have
+    // nothing a customer could actually book (UX audit's B1 finding).
+    // dashboard.$connectionId.resources.$resourceId.tsx's loader already
+    // seeds a brand-new resource's schedule this same way when it's added
+    // from the dashboard's own "Add resource" page — this is a separate
+    // code path (onboarding saves the resource directly, server-side) that
+    // needs the identical seeding, not a shared helper worth extracting for
+    // two call sites this small.
+    const settings = await Settings.getSettings(connection.shop, connection.platform);
+    const preset = getPreset(settings.preset);
+    const [start, end] = preset.range.split("–");
+    const schedule: Array<{ day: number; start: string; end: string }> = [];
+    for (let day = 0; day < 7; day++) {
+      // Schedule.day is Sunday-first (0=Sunday); preset.open is Monday-first.
+      const presetDay = day === 0 ? 6 : day - 1;
+      if (preset.open[presetDay]) schedule.push({ day, start, end });
+    }
+
     await Data.saveResource(connection.shop, connection.platform, {
       name: resourceName,
       title: "",
@@ -155,7 +176,7 @@ async function handleStep2(userId: string, form: FormData): Promise<ActionResult
       meeting_link: "",
       timezone: "",
       status: true,
-      schedule: [],
+      schedule,
       service_ids: [],
     });
   }
@@ -177,6 +198,10 @@ async function handleGoLive(userId: string, form: FormData) {
   await Settings.setSettings(connection.shop, connection.platform, {
     reminder_enabled: remindersOn,
     onboarding_completed: true,
+    // Chose this over connecting Shopify/Stripe here — a deliberate answer,
+    // not an unfinished step, so the Overview checklist's "Connect a
+    // channel" item shouldn't nag about it forever (UX audit's B1 finding).
+    channel_setup_skipped: true,
   });
 
   throw redirect(`/dashboard/${connection.id}`);
@@ -207,7 +232,7 @@ type OnboardingState = {
 };
 
 export default function Onboarding({ loaderData }: Route.ComponentProps) {
-  const { seed } = loaderData;
+  const { seed, paymentsEnabled } = loaderData;
   const [searchParams, setSearchParams] = useSearchParams();
   const step = Math.min(4, Math.max(1, Number(searchParams.get("step")) || 1));
   const cid = searchParams.get("cid") || "";
@@ -306,7 +331,7 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
         />
       )}
       {step === 3 && (
-        <StepIntegrations state={state} cid={cid} onNext={() => goToStep(4)} onBack={() => goToStep(2)} />
+        <StepIntegrations state={state} cid={cid} paymentsEnabled={paymentsEnabled} onNext={() => goToStep(4)} onBack={() => goToStep(2)} />
       )}
       {step === 4 && <StepGoLive state={state} cid={cid} update={update} onBack={() => goToStep(3)} />}
     </OnboardingShell>
@@ -494,7 +519,14 @@ function StepSetup({
           hint={nameMissing ? undefined : `A ${v.resourceOne} — whatever takes your ${v.bookingMany}. You can add more later.`}
           error={nameMissing ? "A booking system needs at least one of these — add a name to continue." : undefined}
         >
-          <Input value={state.resourceName} onChange={(e) => update({ resourceName: e.target.value })} placeholder="e.g. Alex Rivera" />
+          <Input
+            value={state.resourceName}
+            onChange={(e) => update({ resourceName: e.target.value })}
+            // A person's name doesn't fit every industry's resource — an
+            // automotive account's first resource is a bay, not someone
+            // named Alex Rivera (UX audit's B6 finding).
+            placeholder={`e.g. ${v.resourceOne.charAt(0).toUpperCase()}${v.resourceOne.slice(1)} 1`}
+          />
         </Field>
       </div>
       <div className="flex justify-between">
@@ -508,8 +540,8 @@ function StepSetup({
 }
 
 function StepIntegrations({
-  state, cid, onNext, onBack,
-}: { state: OnboardingState; cid: string; onNext: () => void; onBack: () => void }) {
+  state, cid, paymentsEnabled, onNext, onBack,
+}: { state: OnboardingState; cid: string; paymentsEnabled: boolean; onNext: () => void; onBack: () => void }) {
   return (
     <>
       <h1 className="ob-h1">Connect your channels</h1>
@@ -529,6 +561,35 @@ function StepIntegrations({
               </div>
               <ShopifyConnectForm state={state} cid={cid} submitLabel="Connect Shopify" />
             </div>
+          ) : integ.id === "stripe" ? (
+            // Stripe's real gate is FeatureFlags.PAYMENTS_ENABLED, same as
+            // Settings > Integrations — not a Shopify connection. This row
+            // used to say "Connect your store first" unconditionally, which
+            // contradicted the whole point of "Go live without Shopify" (UX
+            // audit's S3 finding): a manual shop can take payments via
+            // Stripe on its own. Actually setting up the gateway is a real
+            // OAuth-style flow that only exists on the Payments settings
+            // page today, not worth rebuilding here — this just stops
+            // lying about why it's unavailable, and points at that page
+            // once the shop (created back in step 1) actually exists.
+            <IntegrationRow
+              key={integ.id}
+              id={integ.id}
+              name={integ.name}
+              initial={integ.initial}
+              tint={integ.tint}
+              tag={paymentsEnabled ? integ.tag : "Coming soon"}
+              blurb={integ.blurb}
+              connected={false}
+              disabled={!paymentsEnabled}
+              action={
+                paymentsEnabled ? (
+                  <a href={`/dashboard/${cid}/settings?page=payments`} className="btn-sec no-underline hover:no-underline">
+                    Configure
+                  </a>
+                ) : undefined
+              }
+            />
           ) : (
             <IntegrationRow
               key={integ.id}
@@ -536,7 +597,7 @@ function StepIntegrations({
               name={integ.name}
               initial={integ.initial}
               tint={integ.tint}
-              tag={integ.id === "stripe" ? "Connect your store first" : "Coming soon"}
+              tag="Coming soon"
               blurb={integ.blurb}
               connected={false}
               disabled

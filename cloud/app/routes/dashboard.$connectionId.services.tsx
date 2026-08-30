@@ -58,7 +58,7 @@ export default function ServicesList({ loaderData, actionData, params }: Route.C
             </Form>
           ) : (
             <a href={`${base}/services/new`} className="btn-pri no-underline hover:no-underline">
-              + New service
+              + New {v.serviceOne}
             </a>
           )
         }
@@ -115,7 +115,7 @@ export default function ServicesList({ loaderData, actionData, params }: Route.C
             action={
               platform !== "shopify" ? (
                 <a href={`${base}/services/new`} className="btn-pri no-underline hover:no-underline">
-                  + New service
+                  + New {v.serviceOne}
                 </a>
               ) : undefined
             }

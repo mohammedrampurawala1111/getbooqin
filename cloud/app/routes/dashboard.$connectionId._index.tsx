@@ -29,6 +29,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     Bookings.count(shop, platform, {}),
     Settings.getSettings(shop, platform),
   ]);
+  const bookableResourceCount = await Data.bookableResourceCount(shop, allResources.map((r) => r.id));
 
   const activeServiceCount = allServices.filter((s) => s.status).length;
 
@@ -41,12 +42,13 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     // finding).
     businessNamed: !(platform === "manual" && settings.business_name === shop),
     serviceCount: allServices.length,
-    resourceCount: allResources.length,
+    bookableResourceCount,
     // A manual connection isn't itself a "channel" the way a real Shopify
     // or Stripe integration is — counting it here made the checklist mark
     // "Connect a channel" done for every manual account with nothing
     // actually connected.
     connectedChannels: (platform === "shopify" ? 1 : 0) + (settings.enabled_gateways.includes("stripe") ? 1 : 0),
+    channelSetupSkipped: settings.channel_setup_skipped,
     remindersOn: settings.reminder_enabled,
     isManual: platform === "manual",
   };

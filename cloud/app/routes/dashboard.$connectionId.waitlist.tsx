@@ -55,17 +55,17 @@ export default function WaitlistPage({ loaderData, actionData }: Route.Component
 
   return (
     <div className="flex flex-col gap-[18px]">
-      <PageHeader title="Waitlist" subtitle={`Add a ${v.resourceOne || "customer"} here the same way you'd take a phone request.`} />
+      <PageHeader title="Waitlist" subtitle={`Add a ${v.customerOne || "customer"} here the same way you'd take a phone request.`} />
       {actionData?.error && <AlertError>{actionData.error}</AlertError>}
 
       <div className="card">
         <div className="card-body">
           <Form method="post" key={entries.length} className="flex flex-col gap-[14px]">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label={v.services || "Service"}>
+              <Field label={v.serviceOne ? v.serviceOne.charAt(0).toUpperCase() + v.serviceOne.slice(1) : "Service"}>
                 <select name="service_id" defaultValue="" required className="input min-w-0">
                   <option value="" disabled>
-                    Choose a service
+                    Choose a {v.serviceOne || "service"}
                   </option>
                   {services.map((s) => (
                     <option key={s.id} value={s.id}>

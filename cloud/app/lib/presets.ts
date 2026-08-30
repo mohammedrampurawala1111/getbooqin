@@ -26,6 +26,7 @@ export type Preset = {
     booking: string;          // "Booking" | "Appointment" | "Job" | "Reservation" — sourced from core's terms
     customer: string;         // "Customer" | "Patient" | "Client" | "Guest" — sourced from core's terms
     resource: string;         // "Staff Member" | "Doctor" | "Stylist" — sourced from core's terms
+    service: string;          // "Service" | "Treatment" | "Job" | "Sitting" (singular) — sourced from core's terms
     services: string;         // section heading for bookable things — cosmetic, local
     resources: string;        // section heading for who/what takes them — cosmetic, local
   };
@@ -167,6 +168,7 @@ export const PRESETS: Preset[] = (Object.keys(CORE_PRESETS) as PresetId[]).map((
       booking: terms.booking_single,
       customer: terms.customer_single,
       resource: terms.resource_single,
+      service: terms.service_single,
       ...vocabExtra,
     },
   };
@@ -242,9 +244,11 @@ export function vocabFor(id: string | null | undefined) {
     bookingOne: p.vocab.booking.toLowerCase(),
     bookingMany: `${p.vocab.booking.toLowerCase()}s`,
     bookingTitle: `${p.vocab.booking}s`,
+    customerOne: p.vocab.customer.toLowerCase(),
     customers: `${p.vocab.customer}s`,
     resourceOne: p.vocab.resource.toLowerCase(),
     resources: p.vocab.resources,
+    serviceOne: p.vocab.service.toLowerCase(),
     services: p.vocab.services,
   };
 }
@@ -293,8 +297,9 @@ export type SetupFacts = {
   presetId: string | null;
   businessNamed: boolean;
   serviceCount: number;
-  resourceCount: number;
+  bookableResourceCount: number;
   connectedChannels: number;
+  channelSetupSkipped: boolean;
   remindersOn: boolean;
 };
 
@@ -306,10 +311,19 @@ export function setupTasks(f: SetupFacts) {
     // telling them it's editable (UX audit's D2 finding) — this surfaces
     // that as a real checklist item instead of a silent gap.
     { key: "name", name: "Name your business", hint: "Shown in the sidebar and on booking confirmations", done: f.businessNamed },
-    { key: "preset", name: "Choose your industry preset", hint: "Sets services, vocabulary and reminders", done: !!f.presetId },
+    { key: "preset", name: "Choose your industry preset", hint: `Sets ${v.services.toLowerCase()}, vocabulary and reminders`, done: !!f.presetId },
     { key: "services", name: `Add your ${v.services.toLowerCase()}`, hint: `${f.serviceCount} scaffolded from the preset`, done: f.serviceCount > 0 },
-    { key: "resources", name: `Add ${v.resources.toLowerCase()}`, hint: `At least one person or room must take ${v.bookingMany}`, done: f.resourceCount > 0 },
-    { key: "channel", name: "Connect a channel", hint: f.connectedChannels > 0 ? `${f.connectedChannels} connected` : "Shopify, WhatsApp or WordPress", done: f.connectedChannels > 0 },
+    // done requires bookable *hours*, not just a resource row existing — a
+    // resource can be created with every day toggled off (onboarding's own
+    // resource step used to do exactly that) and take zero bookings despite
+    // technically existing (UX audit's B1 finding).
+    { key: "resources", name: `Add ${v.resources.toLowerCase()}`, hint: `At least one ${v.resourceOne} needs bookable hours`, done: f.bookableResourceCount > 0 },
+    {
+      key: "channel",
+      name: "Connect a channel",
+      hint: f.connectedChannels > 0 ? `${f.connectedChannels} connected` : f.channelSetupSkipped ? "Skipped — selling without Shopify" : "Shopify, WhatsApp or WordPress",
+      done: f.connectedChannels > 0 || f.channelSetupSkipped,
+    },
     { key: "reminders", name: "Turn on reminders", hint: "Cuts no-shows by around a third", done: f.remindersOn },
   ];
 }

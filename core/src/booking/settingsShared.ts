@@ -98,6 +98,14 @@ export interface Settings {
   // skipped, so it never blocks the dashboard again for this shop.
   onboarding_completed: boolean;
 
+  // Set when a merchant explicitly chooses "Go live without Shopify"
+  // during onboarding — a deliberate decision not to connect a channel,
+  // not an unfinished step. Without this, the Overview checklist's
+  // "Connect a channel" item stayed permanently incomplete for every
+  // manual shop, nagging about the one thing the merchant had just said no
+  // to (UX audit's B1 finding).
+  channel_setup_skipped: boolean;
+
   // Cloud dashboard's Business template card (Settings > Template): Overview
   // card keys (cloud/app/components/account.tsx's OverviewCardKey) hidden
   // from dashboard.$connectionId._index.tsx. Empty = everything shown.

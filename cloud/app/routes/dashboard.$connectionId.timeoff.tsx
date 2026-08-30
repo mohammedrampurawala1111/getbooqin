@@ -9,6 +9,7 @@ import { Data, Settings } from "getbooqin-core";
 import { formatInZone, wallClockToUtc } from "getbooqin-core/booking/tz";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, PageHeader, Field, Input, DataTable, EmptyState, ConfirmDialog } from "~/components/ui";
+import { useVocabulary } from "~/lib/presets";
 
 export const meta: Route.MetaFunction = () => [{ title: "Time off · GetBooqin" }];
 
@@ -56,6 +57,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 export default function TimeOff({ loaderData, actionData }: Route.ComponentProps) {
   const { blocks, resources, timezone } = loaderData;
+  const v = useVocabulary();
 
   return (
     <div className="flex flex-col gap-[18px]">
@@ -105,7 +107,7 @@ export default function TimeOff({ loaderData, actionData }: Route.ComponentProps
 
       <DataTable
         cols="1.3fr 1.3fr 1.3fr 1fr .8fr"
-        columns={["Resource", "Start", "End", "Reason", ""]}
+        columns={[v.resources, "Start", "End", "Reason", ""]}
         rows={blocks}
         rowKey={(b) => String(b.id)}
         renderRow={(b) => [
@@ -113,27 +115,27 @@ export default function TimeOff({ loaderData, actionData }: Route.ComponentProps
           <span className="num">{formatInZone(b.startUtc, timezone)}</span>,
           <span className="num">{formatInZone(b.endUtc, timezone)}</span>,
           b.reason || <span className="text-subtle">—</span>,
-          <>
-            <button
-              type="button"
-              className="btn-link text-danger"
-              onClick={() => (document.getElementById(`remove-timeoff-${b.id}`) as HTMLDialogElement | null)?.showModal()}
-            >
-              Remove
-            </button>
-            <ConfirmDialog
-              id={`remove-timeoff-${b.id}`}
-              title="Remove this time off block?"
-              body="Bookings will be allowed again for this date range. This can't be undone."
-              confirmLabel="Remove"
-            >
-              <Form method="post" id={`remove-timeoff-${b.id}-form`}>
-                <input type="hidden" name="_action" value="delete" />
-                <input type="hidden" name="id" value={b.id} />
-              </Form>
-            </ConfirmDialog>
-          </>,
+          <RemoveTimeoffButton id={b.id} />,
         ]}
+        // Below 640px the five fixed columns broke to one word per line and
+        // "Remove" rendered on top of the reason text instead of beside it
+        // (UX audit's B5 finding — the same class of problem the resources
+        // list already got the stacked-card treatment for, see that
+        // route's own mobileCard for the pattern this mirrors).
+        mobileCard={(b) => (
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <span className="min-w-0 truncate font-medium">
+                {b.resourceId === 0 ? "Whole business" : resources.find((r) => r.id === b.resourceId)?.name ?? `#${b.resourceId}`}
+              </span>
+              <RemoveTimeoffButton id={b.id} />
+            </div>
+            <span className="num text-muted">
+              {formatInZone(b.startUtc, timezone)} – {formatInZone(b.endUtc, timezone)}
+            </span>
+            {b.reason && <span className="min-w-0 truncate text-muted">{b.reason}</span>}
+          </>
+        )}
         empty={
           <EmptyState
             icon={
@@ -147,6 +149,42 @@ export default function TimeOff({ loaderData, actionData }: Route.ComponentProps
           />
         }
       />
+
+      {/* One dialog per block, rendered flat here rather than inside either
+          of DataTable's two per-row renderings — both the desktop row and
+          the mobile card are always present in the DOM with only one made
+          visible via `display` at a given width (see DataTable's own
+          comment), and a <dialog> nested inside a `display:none` ancestor
+          won't actually show even after showModal(). Keeping exactly one
+          copy per block, outside both hidden/visible toggles, means either
+          button — desktop row or mobile card — opens the one real dialog
+          for that block's id. */}
+      {blocks.map((b) => (
+        <ConfirmDialog
+          key={b.id}
+          id={`remove-timeoff-${b.id}`}
+          title="Remove this time off block?"
+          body="Bookings will be allowed again for this date range. This can't be undone."
+          confirmLabel="Remove"
+        >
+          <Form method="post" id={`remove-timeoff-${b.id}-form`}>
+            <input type="hidden" name="_action" value="delete" />
+            <input type="hidden" name="id" value={b.id} />
+          </Form>
+        </ConfirmDialog>
+      ))}
     </div>
+  );
+}
+
+function RemoveTimeoffButton({ id }: { id: number }) {
+  return (
+    <button
+      type="button"
+      className="btn-link text-danger"
+      onClick={() => (document.getElementById(`remove-timeoff-${id}`) as HTMLDialogElement | null)?.showModal()}
+    >
+      Remove
+    </button>
   );
 }
