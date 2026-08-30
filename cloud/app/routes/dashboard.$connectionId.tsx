@@ -281,7 +281,14 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
               <path d="M2 4h12M2 8h12M2 12h12" strokeLinecap="round" />
             </svg>
           </button>
-          <span className="truncate text-[13.5px] font-semibold">{label}</span>
+          <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold">{label}</span>
+          {/* The sidebar's own toggle only reaches whoever opens the
+              off-canvas drawer first — below md that's every screen this
+              app actually ships to, so anyone who hasn't already opened
+              the nav has no visible way to find it (pass 7's E12 finding:
+              tested at 496px, where the sidebar starts off-canvas). This
+              topbar is the one thing that's always on screen there. */}
+          <ThemeToggle className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-field text-muted hover:bg-canvas-alt" />
         </div>
         {/* Not <main> — root.tsx already provides the page's one <main>
             landmark; a second, nested one is itself an accessibility

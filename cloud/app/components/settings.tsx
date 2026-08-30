@@ -99,13 +99,22 @@ export function SettingsShell({
 
 /* ------------------------------------------------------------------ */
 /* The row. `align` = "center" for single controls, "start" when the
-   control has its own stacked hint (e.g. password strength).          */
-/* ------------------------------------------------------------------ */
+   control has its own stacked hint (e.g. password strength). Wraps in a
+   real <label> by default — the label span and the control were two
+   unrelated siblings with no `for`/`id` pair and no wrapping element, so
+   every field built on Row had no accessible name at all (axe: label
+   [critical] — pass 7's N1 finding: General 6/6, Notifications' two plain
+   Row fields). A wrapping <label> is the same implicit-association
+   pattern ui.tsx's Field already uses correctly.
+   `as="div"` opts out for the couple of rows whose child already renders
+   its own <label> (Toggle) — nesting <label> inside <label> is invalid
+   HTML and breaks the association for both. */
 export function Row({
-  label, hint, align = "center", badge, children,
-}: { label: string; hint?: string; align?: "center" | "start"; badge?: ReactNode; children: ReactNode }) {
+  as = "label", label, hint, align = "center", badge, children,
+}: { as?: "label" | "div"; label: string; hint?: string; align?: "center" | "start"; badge?: ReactNode; children: ReactNode }) {
+  const Tag = as;
   return (
-    <div className={`grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-x-6 gap-y-2 border-b border-row px-[18px] py-[14px] ${
+    <Tag className={`grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-x-6 gap-y-2 border-b border-row px-[18px] py-[14px] ${
       align === "start" ? "items-start" : "items-center"
     }`}>
       <div className="flex flex-col gap-[2px]">
@@ -113,7 +122,7 @@ export function Row({
         {hint ? <span className="text-[12px] text-subtle">{hint}</span> : null}
       </div>
       <div className="min-w-0">{children}</div>
-    </div>
+    </Tag>
   );
 }
 

@@ -178,9 +178,14 @@ function ProfileCard({ user, initialPhone }: { user: ClerkUser; initialPhone: st
       </Row>
 
       <Row label="Name">
+        {/* Row's wrapping <label> gives both inputs the same accessible
+            name ("Name") by default, which is fine for one control but
+            ambiguous for two stacked ones — a screen-reader user can't
+            tell first from last apart. aria-label overrides the inherited
+            name per-input without needing two separate Rows. */}
         <div className="flex flex-col gap-2">
-          <RowInput value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="First name" cap={9999} />
-          <RowInput value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Last name" cap={9999} />
+          <RowInput aria-label="First name" value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="First name" cap={9999} />
+          <RowInput aria-label="Last name" value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Last name" cap={9999} />
         </div>
       </Row>
 

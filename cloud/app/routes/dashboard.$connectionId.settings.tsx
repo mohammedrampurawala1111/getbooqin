@@ -235,13 +235,20 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
           <input type="hidden" name="_section" value="payments" />
           {gatewayFields.map((g) => (
             <div key={g.id}>
-              <Row label={g.label} hint="Accept payments through this gateway">
+              {/* as="div": Toggle already renders its own <label> around its
+                  checkbox + "Enabled" text — Row wrapping that in a second
+                  <label> would nest labels, which is invalid HTML and
+                  breaks the association for both. */}
+              <Row as="div" label={g.label} hint="Accept payments through this gateway">
                 <Toggle name="enabled_gateways" value={g.id} defaultChecked={settings.enabled_gateways.includes(g.id)} label="Enabled" />
               </Row>
               {g.fields.map((field) => (
-                <Row key={field.key} label={field.label}>
+                <Row key={field.key} as={field.type === "checkbox" ? "div" : "label"} label={field.label}>
                   {field.type === "checkbox" ? (
-                    <Toggle name={`gateway_${g.id}_${field.key}`} defaultChecked={Boolean(settings.gateways[g.id]?.[field.key])} />
+                    // No wrapping label here (see as="div" above), so this
+                    // Toggle needs its own label text to have any
+                    // accessible name at all.
+                    <Toggle name={`gateway_${g.id}_${field.key}`} defaultChecked={Boolean(settings.gateways[g.id]?.[field.key])} label={field.label} />
                   ) : (
                     <RowInput
                       type={field.type === "password" ? "password" : "text"}

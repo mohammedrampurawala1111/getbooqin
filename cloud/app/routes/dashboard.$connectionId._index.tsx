@@ -279,7 +279,7 @@ function EmptyOverview({
           value={String(setupFacts.serviceCount)}
           note={setupFacts.isManual ? `Added from ${v.services}` : "From your store catalogue"}
         />
-        <EmptyStat label="No-show rate" value="—" note="Needs bookings first" />
+        <EmptyStat label="No-show rate" value="—" note={`Needs ${v.bookingMany} first`} />
       </div>
 
       <SetupChecklist
