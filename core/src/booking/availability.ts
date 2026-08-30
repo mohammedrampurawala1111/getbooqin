@@ -42,6 +42,7 @@ export interface Slot {
   end_utc: string; // ISO
   resource_id: number;
   resources: number[];
+  available: boolean; // always true from slots() — only false when includeBlocked surfaces a taken slot
 }
 
 export function businessTz(shopTimezone: string, resource?: Resource | null): string {
@@ -57,7 +58,15 @@ export async function slots(
   resourceId: number,
   date: string,
   excludeBookingId = 0,
-  extraDurationMin = 0
+  extraDurationMin = 0,
+  // Only ever honored when resourceId resolves to exactly one candidate —
+  // "any available resource" has no single well-defined "blocked" answer
+  // (busy for resource A, free for resource B is legitimately just an
+  // available slot), so this silently behaves as false in that case rather
+  // than guessing. Blocked entries carry available:false; every entry
+  // slots() would already have returned still carries available:true, so
+  // existing callers see byte-identical data plus this one new field.
+  includeBlocked = false
 ): Promise<Slot[]> {
   const service = await Data.catalogService(shop, serviceId);
   if (!service || !service.status) return [];
@@ -75,6 +84,7 @@ export async function slots(
     : await Data.resourcesForService(shop, platform, serviceId);
 
   const found = new Map<string, Slot>();
+  const canShowBlocked = includeBlocked && candidateResources.length === 1;
 
   for (const resource of candidateResources) {
     if (!resource || !resource.status) continue;
@@ -97,10 +107,26 @@ export async function slots(
       excludeBookingId
     );
 
-    generateSlots(date, tz, windows, service, interval, earliest, latest, timeOffRows, bookingRows, extraDurationMin, resource.id, found);
+    generateSlots(
+      date,
+      tz,
+      windows,
+      service,
+      interval,
+      earliest,
+      latest,
+      timeOffRows,
+      bookingRows,
+      extraDurationMin,
+      resource.id,
+      found,
+      canShowBlocked
+    );
   }
 
-  return Array.from(found.values()).sort((a, b) => a.time.localeCompare(b.time));
+  return Array.from(found.values())
+    .filter((slot) => slot.available || canShowBlocked)
+    .sort((a, b) => a.time.localeCompare(b.time));
 }
 
 /**
@@ -122,7 +148,13 @@ function generateSlots(
   bookingRows: BusyRow[],
   extraDurationMin: number,
   resourceId: number,
-  found: Map<string, Slot>
+  found: Map<string, Slot>,
+  // Only ever passed true from slots() when there's exactly one candidate
+  // resource — see that function's comment on why "any resource" has no
+  // single coherent "blocked" answer. daysInMonth() never passes this, so
+  // its day counts stay exactly what they always were (available slots
+  // only).
+  includeUnavailable = false
 ): void {
   for (const window of windows) {
     let cursor = DateTime.fromISO(`${date}T${window.start}:00`, { zone: tz });
@@ -136,8 +168,9 @@ function generateSlots(
       const startUtc = cursor.toUTC();
       const endUtc = slotEnd.toUTC();
       const inRange = startUtc >= earliest && startUtc <= latest;
+      const available = inRange && isFreeLocal(startUtc, endUtc, service, timeOffRows, bookingRows);
 
-      if (inRange && isFreeLocal(startUtc, endUtc, service, timeOffRows, bookingRows)) {
+      if (available || (includeUnavailable && inRange)) {
         const key = cursor.toFormat("HH:mm");
         const existing = found.get(key);
         if (!existing) {
@@ -148,9 +181,11 @@ function generateSlots(
             end_utc: endUtc.toISO()!,
             resource_id: resourceId,
             resources: [resourceId],
+            available,
           });
         } else {
           existing.resources.push(resourceId);
+          existing.available = existing.available || available;
         }
       }
 

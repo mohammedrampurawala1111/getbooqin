@@ -313,6 +313,31 @@
 	color: #fff;
 }
 
+/* A taken slot that's still clickable because the waitlist is on — reads
+   as "different from an open slot" (dashed border, muted text, no
+   hover-to-accent like a bookable one) while the small tag makes the
+   actual available action explicit instead of relying on color alone. */
+.getbooqin-calendar__time--blocked {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	border-style: dashed;
+	color: var(--getbooqin-muted, #6b7280);
+}
+
+.getbooqin-calendar__time--blocked:hover {
+	border-color: var(--getbooqin-muted, #6b7280);
+	background: var(--getbooqin-bg-subtle, #f4f5f7);
+}
+
+.getbooqin-calendar__time-tag {
+	flex-shrink: 0;
+	font-size: 0.8em;
+	font-weight: 600;
+	color: var(--getbooqin-accent, #2563eb);
+}
+
 .getbooqin-calendar__hint {
 	margin-top: 12px;
 	font-size: 0.85em;

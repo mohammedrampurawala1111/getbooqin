@@ -6,7 +6,7 @@ import { Page, Card, IndexTable, Badge, Select, TextField, InlineStack, BlockSta
 import { authenticate } from "~/shopify.server";
 import { Waitlist, Data, Settings, isGetBooqinError } from "getbooqin-core";
 import { term } from "getbooqin-core/booking/settingsShared";
-import { waitlistStatusLabels, type WaitlistStatus } from "getbooqin-core/booking/waitlistShared";
+import { waitlistStatusLabels, formatWaitlistWindow, type WaitlistStatus } from "getbooqin-core/booking/waitlistShared";
 
 const STATUS_TONE: Record<WaitlistStatus, "info" | "attention" | "success" | "critical" | undefined> = {
   waiting: undefined,
@@ -53,8 +53,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         resource: e.resourceId ? resource?.name ?? "" : "Any",
         customer: `${e.customer.firstName} ${e.customer.lastName}`.trim() || e.customer.email,
         email: e.customer.email,
-        window: DateTime.fromJSDate(e.windowStartUtc, { zone: "utc" }).setZone(settings.timezone).toFormat("d LLL")
-          + (e.windowEndUtc ? ` – ${DateTime.fromJSDate(e.windowEndUtc, { zone: "utc" }).setZone(settings.timezone).toFormat("d LLL")}` : "+"),
+        window: formatWaitlistWindow(e.windowStartUtc, e.windowEndUtc, settings.timezone),
         joined: DateTime.fromJSDate(e.createdAt, { zone: "utc" }).setZone(settings.timezone).toFormat("d LLL yyyy"),
       };
     }),

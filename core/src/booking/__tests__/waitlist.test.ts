@@ -219,4 +219,42 @@ describe("Waitlist engine", () => {
     expect(cascadedEntry.status).toBe("offered");
     expect(cascadedEntry.offeredResourceId).toBe(resource1Id);
   });
+
+  it("joining with a specific time only matches a freed slot at that exact instant, not other times the same day", async () => {
+    const wantedTime = "14:00";
+    const entry = await Waitlist.join(shop, platform, "UTC", {
+      service_id: serviceId,
+      resource_id: resource1Id,
+      window_start: testDate,
+      time: wantedTime,
+      first_name: "ExactTime",
+      email: await customerEmail(8),
+    });
+
+    const wantedStart = DateTime.fromISO(`${testDate}T${wantedTime}:00`, { zone: "utc" });
+    expect(entry.windowStartUtc.toISOString()).toBe(wantedStart.toISO());
+    expect(entry.windowEndUtc?.toISOString()).toBe(wantedStart.toISO());
+
+    // A different time freeing up the same day should not match this entry.
+    const missedOffer = await Waitlist.matchAndOffer(shop, platform, {
+      shop,
+      platform,
+      serviceId,
+      resourceId: resource1Id,
+      startUtc: wantedStart.plus({ hours: 1 }).toJSDate(),
+      endUtc: wantedStart.plus({ hours: 1, minutes: 30 }).toJSDate(),
+    });
+    expect(missedOffer?.id).not.toBe(entry.id);
+
+    // The exact requested instant freeing up should match it.
+    const exactOffer = await Waitlist.matchAndOffer(shop, platform, {
+      shop,
+      platform,
+      serviceId,
+      resourceId: resource1Id,
+      startUtc: wantedStart.toJSDate(),
+      endUtc: wantedStart.plus({ minutes: 30 }).toJSDate(),
+    });
+    expect(exactOffer?.id).toBe(entry.id);
+  });
 });

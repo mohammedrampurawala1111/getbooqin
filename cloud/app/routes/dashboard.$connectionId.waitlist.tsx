@@ -1,9 +1,8 @@
-import { DateTime } from "luxon";
 import { Form, redirect } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.waitlist";
 import { Waitlist, Data, Settings } from "getbooqin-core";
 import { formatInZone } from "getbooqin-core/booking/tz";
-import { waitlistStatusLabels } from "getbooqin-core/booking/waitlistShared";
+import { waitlistStatusLabels, formatWaitlistWindow } from "getbooqin-core/booking/waitlistShared";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, PageHeader, Field, Input, DataTable, EmptyState, Badge } from "~/components/ui";
 import { useVocabulary } from "~/lib/presets";
@@ -130,10 +129,7 @@ export default function WaitlistPage({ loaderData, actionData }: Route.Component
           services.find((s) => s.id === e.serviceId)?.name ?? "—",
           e.resourceId ? resources.find((r) => r.id === e.resourceId)?.name ?? "—" : "Any",
           <span className="num">
-            {DateTime.fromJSDate(new Date(e.windowStartUtc), { zone: "utc" }).setZone(timezone).toFormat("d LLL")}
-            {e.windowEndUtc
-              ? ` – ${DateTime.fromJSDate(new Date(e.windowEndUtc), { zone: "utc" }).setZone(timezone).toFormat("d LLL")}`
-              : "+"}
+            {formatWaitlistWindow(new Date(e.windowStartUtc), e.windowEndUtc ? new Date(e.windowEndUtc) : null, timezone)}
           </span>,
           <Badge status={e.status as "waiting" | "offered" | "claimed" | "expired" | "cancelled"} label={labels[e.status as keyof typeof labels]} />,
           <span className="num">{formatInZone(e.createdAt, timezone, "d LLL yyyy")}</span>,

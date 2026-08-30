@@ -28,6 +28,7 @@ export async function action({ request }: ActionFunctionArgs) {
       resource_id: Number(body.resource_id || 0) || undefined,
       window_start: String(body.window_start || ""),
       window_end: String(body.window_end || "") || undefined,
+      time: String(body.time || "") || undefined,
       first_name: String(body.first_name || ""),
       last_name: String(body.last_name || ""),
       email: String(body.email || ""),

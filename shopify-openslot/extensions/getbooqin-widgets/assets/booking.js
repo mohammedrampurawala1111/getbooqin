@@ -386,7 +386,15 @@
 			container.appendChild( joinBtn );
 		}
 
-		function renderWaitlistForm( dateStr, dateLabel ) {
+		/**
+		 * `slotTime` (optional `{ time, label }`) is what distinguishes the two
+		 * join shapes waitlist.ts's join() understands: omitted means "notify
+		 * me of anything this day" (window_start alone); given means "only
+		 * this exact time" (window_start + time, collapsing the entry's window
+		 * to that one instant server-side) — used when a specific
+		 * already-taken slot is clicked in an otherwise-open day.
+		 */
+		function renderWaitlistForm( dateStr, dateLabel, slotTime ) {
 			var wrap = el( 'div', { class: 'getbooqin-waitlist-form' } );
 
 			function field( name, label, type, required ) {
@@ -404,7 +412,7 @@
 			// actual thing to do on this screen once "no times available" has
 			// been said once already, not a second aside.
 			wrap.appendChild( el( 'h4', { text: t.joinWaitlist } ) );
-			wrap.appendChild( el( 'p', { class: 'getbooqin-muted', text: dateLabel } ) );
+			wrap.appendChild( el( 'p', { class: 'getbooqin-muted', text: slotTime ? dateLabel + ' at ' + slotTime.label : dateLabel } ) );
 			wrap.appendChild( el( 'div', { class: 'getbooqin-field-row' }, [
 				field( 'first_name', t.firstName, 'text', true ),
 				field( 'last_name', t.lastName, 'text', false )
@@ -446,6 +454,7 @@
 						resource_id: resourceId,
 						window_start: dateStr,
 						window_end: dateStr,
+						time: slotTime ? slotTime.time : undefined,
 						first_name: firstName,
 						last_name: wrap.querySelector( '[name=last_name]' ).value.trim(),
 						email: email,
@@ -483,7 +492,15 @@
 			var loadingEl = el( 'p', { class: 'getbooqin-muted', text: t.loading } );
 			timesEl.appendChild( loadingEl );
 
-			api( 'slots?service_id=' + serviceId + '&resource_id=' + resourceId + '&date=' + dateStr + '&addon_ids=' + addonIds.join( ',' ) )
+			// include_blocked only does anything useful with a specific
+			// resource and the waitlist actually on — Availability.slots()
+			// already no-ops it otherwise (see that function's comment), but
+			// there's no reason to ask for data nothing here will use.
+			var wantsBlocked = !! resourceId && waitlistEnabled;
+			var slotsUrl = 'slots?service_id=' + serviceId + '&resource_id=' + resourceId + '&date=' + dateStr + '&addon_ids=' + addonIds.join( ',' )
+				+ ( wantsBlocked ? '&include_blocked=1' : '' );
+
+			api( slotsUrl )
 				.then( function ( slots ) {
 					loadingEl.remove();
 					if ( ! slots.length ) {
@@ -495,7 +512,31 @@
 					var list = el( 'div', { class: 'getbooqin-calendar__time-list' } );
 					var buttons = [];
 					var hint = el( 'p', { class: 'getbooqin-muted getbooqin-calendar__hint', text: t.selectTimeHint } );
+					// Holds the per-slot waitlist form once a blocked time is
+					// clicked — one at a time, replacing whichever was there
+					// before, appended once below the whole time list rather
+					// than inline per-button so picking a different blocked
+					// time doesn't stack forms on top of each other.
+					var slotWaitlistArea = el( 'div' );
+
 					slots.forEach( function ( slot ) {
+						if ( slot.available === false ) {
+							var blockedBtn = el( 'button', {
+								type: 'button',
+								class: 'getbooqin-calendar__time getbooqin-calendar__time--blocked',
+								'aria-label': slot.label + ' — ' + t.joinWaitlist,
+								onClick: function () {
+									slotWaitlistArea.innerHTML = '';
+									slotWaitlistArea.appendChild( renderWaitlistForm( dateStr, dateLabel, { time: slot.time, label: slot.label } ) );
+								}
+							}, [
+								el( 'span', { text: slot.label } ),
+								el( 'span', { class: 'getbooqin-calendar__time-tag', text: t.joinWaitlist } )
+							] );
+							list.appendChild( blockedBtn );
+							return;
+						}
+
 						var slotBtn = el( 'button', {
 							type: 'button',
 							class: 'getbooqin-calendar__time',
@@ -524,6 +565,7 @@
 					} );
 					timesEl.appendChild( list );
 					timesEl.appendChild( hint );
+					timesEl.appendChild( slotWaitlistArea );
 				} )
 				.catch( function ( err ) {
 					loadingEl.remove();

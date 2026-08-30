@@ -1,14 +1,21 @@
 /**
- * Waitlist: join by service (+ optional specific resource) and a preferred
- * date window; when a booking's slot frees up early, offer it to the
- * longest-waiting matching entry with a time-boxed claim window instead of
- * silently reopening the slot. See core/prisma/schema.prisma's Waitlist
- * model and events.ts's booking_slot_freed for the trigger.
+ * Waitlist: join by service (+ optional specific resource) and either a
+ * preferred date window or one exact slot time; when a booking's slot
+ * frees up early, offer it to the longest-waiting matching entry with a
+ * time-boxed claim window instead of silently reopening the slot. See
+ * core/prisma/schema.prisma's Waitlist model and events.ts's
+ * booking_slot_freed for the trigger.
  *
- * v1 is admin-entered join (a staff member adds a customer, same as taking
- * a waitlist request by phone) + a public claim link — no self-service
- * "join the waitlist" button on the storefront widget yet (that's a
- * separate follow-up touching extensions/getbooqin-widgets).
+ * Two join shapes, both landing in the same windowStartUtc/windowEndUtc
+ * columns:
+ *  - Whole-day: window_start (+ optional window_end) alone — "notify me of
+ *    anything this day/range". Used when a day has zero slots at all
+ *    (extensions/getbooqin-widgets/assets/booking.js's renderWaitlistJoin).
+ *  - One exact slot: window_start + time together collapse windowStart and
+ *    windowEnd to the same instant, so matchAndOffer() below only ever
+ *    matches a freed slot starting at exactly that moment. Used when a
+ *    specific already-taken time is blocked but the day otherwise has
+ *    openings (booking.js's per-slot "join waitlist for this time").
  */
 import { DateTime } from "luxon";
 import type { Booking, Waitlist } from "@prisma/client";
@@ -17,7 +24,7 @@ import * as Data from "./data.js";
 import * as Availability from "./availability.js";
 import * as Bookings from "./bookings.js";
 import { getSettings } from "./settings.js";
-import { isEmail, validDate } from "./bookingsShared.js";
+import { isEmail, validDate, validTime } from "./bookingsShared.js";
 import { uid, now } from "./ids.js";
 import { GetBooqinError } from "./errors.js";
 import events, { type FreedSlot } from "./events.js";
@@ -26,7 +33,8 @@ export interface JoinWaitlistArgs {
   service_id: number;
   resource_id?: number; // 0/omitted = any resource for the service
   window_start?: string; // yyyy-MM-dd, defaults to today (shop-local)
-  window_end?: string; // yyyy-MM-dd, optional — omitted = no upper bound
+  window_end?: string; // yyyy-MM-dd, optional — omitted = no upper bound. Ignored when time is given.
+  time?: string; // HH:mm, shop/resource-local — with window_start, narrows to that one exact slot instead of the whole day
   first_name: string;
   last_name?: string;
   email: string;
@@ -41,12 +49,19 @@ export async function join(shop: string, platform: string, shopTimezone: string,
   if (!args.first_name) throw new GetBooqinError("getbooqin_missing_name", "Please provide the customer's name.", 400);
 
   const tz = shopTimezone || "UTC";
-  const windowStart =
-    args.window_start && validDate(args.window_start)
+  let windowStart: DateTime;
+  let windowEnd: DateTime | null;
+
+  if (args.window_start && validDate(args.window_start) && args.time && validTime(args.time)) {
+    const exact = DateTime.fromISO(`${args.window_start}T${args.time}:00`, { zone: tz });
+    windowStart = exact;
+    windowEnd = exact;
+  } else {
+    windowStart = args.window_start && validDate(args.window_start)
       ? DateTime.fromISO(args.window_start, { zone: tz }).startOf("day")
       : DateTime.now().setZone(tz).startOf("day");
-  const windowEnd =
-    args.window_end && validDate(args.window_end) ? DateTime.fromISO(args.window_end, { zone: tz }).endOf("day") : null;
+    windowEnd = args.window_end && validDate(args.window_end) ? DateTime.fromISO(args.window_end, { zone: tz }).endOf("day") : null;
+  }
 
   const customerId = await Data.findOrCreateCustomer(shop, platform, {
     first_name: args.first_name,
