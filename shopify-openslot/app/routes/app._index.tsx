@@ -7,10 +7,10 @@ import { Bookings } from "getbooqin-core";
 import { Data } from "getbooqin-core";
 import { Settings } from "getbooqin-core";
 import { term, money } from "getbooqin-core/booking/settingsShared";
-import { isEmbedDetected } from "~/lib/embedStatus.server";
+import { resolveEmbedDetected } from "~/lib/embedStatus.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const settings = await Settings.getSettings(shop, "shopify");
   const url = new URL(request.url);
@@ -35,7 +35,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const revenue = monthBookings.reduce((sum, b) => sum + b.amountDue, 0);
   const recentWithNames = await Data.attachServiceNames(shop, recent);
 
-  const embedDetected = isEmbedDetected(settings);
+  const embedDetected = await resolveEmbedDetected(admin, settings);
 
   return {
     shop,

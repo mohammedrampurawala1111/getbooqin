@@ -41,7 +41,11 @@ api_version = "2025-01"
 # `getbooqin` metafields — see shopify.app.toml's matching comment for
 # details. This scope change means already-installed merchants see a
 # re-consent screen on next login.
-scopes = "read_products,write_products"
+#
+# read_themes added so the admin home page can read the app embed's actual
+# on/off state from the theme instead of only inferring it from a ping —
+# see shopify.app.toml's matching comment for details.
+scopes = "read_products,write_products,read_themes"
 use_legacy_install_flow = false
 
 [auth]

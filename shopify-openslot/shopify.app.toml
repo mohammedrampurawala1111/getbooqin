@@ -47,7 +47,18 @@ api_version = "2025-01"
 # means already-installed merchants see a re-consent screen on next login.
 # Add "read_customers,write_customers" here if you later want to sync
 # booking customers into the Shopify customer list.
-scopes = "read_products,write_products"
+#
+# read_themes added so the admin home page can read the actual on/off state
+# of the getbooqin-widgets app embed from the main theme's
+# config/settings_data.json (app/lib/embedStatus.server.ts's
+# checkEmbedActive) instead of only inferring it from a "seen recently"
+# ping — see that file for why the ping-based heuristic can't tell "off"
+# from "on but quiet" on its own. Only one shop connected at the time this
+# was added (shelfscore.myshopify.com, this app's own test store), so the
+# re-consent-on-next-login cost this scope change carries was negligible;
+# re-evaluate that tradeoff if this app has real installs before adding
+# scopes like this again.
+scopes = "read_products,write_products,read_themes"
 use_legacy_install_flow = false
 
 [auth]
