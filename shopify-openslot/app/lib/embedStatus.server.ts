@@ -68,7 +68,13 @@ export async function checkEmbedActive(admin: AdminApiContext): Promise<boolean 
     const content: string | undefined = body?.data?.themes?.nodes?.[0]?.files?.nodes?.[0]?.body?.content;
     if (!content) return null;
 
-    const settingsData = JSON.parse(content) as ThemeSettingsData;
+    // Shopify writes every settings_data.json with a leading
+    // "/* ... auto-generated ... */" comment before the actual JSON object
+    // (confirmed against a real theme, not theoretical) — plain JSON.parse
+    // rejects that outright, which is exactly why this silently fell back
+    // to the ping heuristic every time before this strip existed.
+    const withoutLeadingComment = content.replace(/^\s*\/\*[\s\S]*?\*\/\s*/, "");
+    const settingsData = JSON.parse(withoutLeadingComment) as ThemeSettingsData;
     const blocks = settingsData.current?.blocks ?? {};
     // App-embed block types look like
     // "shopify://apps/<app>/blocks/<block-file-name>/<uuid>" — matching on
