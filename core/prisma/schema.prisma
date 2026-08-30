@@ -135,6 +135,7 @@ model ServiceConfig {
   resourceLinks     ServiceResource[]
   addonLinks        ServiceAddon[]
   bookings          Booking[]
+  waitlistEntries   Waitlist[]
 
   @@unique([platform, shop, productId])
   @@index([platform, shop, status, position])
@@ -258,18 +259,19 @@ model TimeOff {
 }
 
 model Customer {
-  id        Int       @id @default(autoincrement())
-  shop      String
-  platform  String    @default("shopify")
-  firstName String    @default("")
-  lastName  String    @default("")
-  email     String
-  phone     String    @default("")
-  timezone  String    @default("")
-  notes     String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  bookings  Booking[]
+  id              Int        @id @default(autoincrement())
+  shop            String
+  platform        String     @default("shopify")
+  firstName       String     @default("")
+  lastName        String     @default("")
+  email           String
+  phone           String     @default("")
+  timezone        String     @default("")
+  notes           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  bookings        Booking[]
+  waitlistEntries Waitlist[]
 
   @@unique([platform, shop, email])
 }
@@ -295,7 +297,7 @@ model Booking {
   meetingId       String   @default("")
   notes           String?
   customFields    String?
-  source          String   @default("form") // form|chat
+  source          String   @default("form") // form|chat|waitlist
   reminderSent    Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -326,6 +328,48 @@ model BookingAddon {
   addon       Addon   @relation(fields: [addonId], references: [id])
 
   @@index([platform, shop, bookingId])
+}
+
+// Waitlist entries are matched by service (+ optional specific resource) and
+// a preferred date window, not a specific slot — the specific slot only
+// exists once a cancellation actually offers one (offeredResourceId/
+// offeredStartUtc/offeredEndUtc + a time-boxed offerExpiresAt). Deliberately
+// not a Booking row until claim() actually creates one — see
+// core/src/booking/waitlist.ts.
+model Waitlist {
+  id       Int    @id @default(autoincrement())
+  shop     String
+  platform String @default("shopify")
+  uid      String @unique
+
+  serviceId  Int
+  resourceId Int @default(0) // 0 = any resource for this service — same sentinel as TimeOff.resourceId
+  customerId Int
+
+  windowStartUtc DateTime
+  windowEndUtc   DateTime?
+  notes          String    @default("")
+
+  status String @default("waiting") // waiting|offered|claimed|expired|cancelled
+
+  offerToken        String?   @unique
+  offeredResourceId Int?
+  offeredStartUtc   DateTime?
+  offeredEndUtc     DateTime?
+  offerExpiresAt    DateTime?
+  offerCount        Int       @default(0)
+
+  resultingBookingId Int @default(0) // set once claimed — plain FK-by-convention, no Prisma relation (same as ChatConversation.bookingId)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  service  ServiceConfig @relation(fields: [serviceId], references: [id])
+  customer Customer      @relation(fields: [customerId], references: [id])
+
+  @@index([platform, shop, serviceId, resourceId, status, createdAt])
+  @@index([platform, shop, status, offerExpiresAt])
+  @@index([platform, shop, customerId, status])
 }
 
 model Payment {

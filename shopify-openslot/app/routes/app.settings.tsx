@@ -15,6 +15,7 @@ import {
   Text,
   Banner,
   Toast,
+  Badge,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import { Settings as Backend, Presets, FeatureFlags } from "getbooqin-core";
@@ -22,6 +23,21 @@ import { PaymentManager, MeetingManager, Mailer } from "getbooqin-core";
 
 function slugify(label: string): string {
   return label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "field";
+}
+
+/* "Preset default" vs "Customized" next to a rule field's label — tells a
+   merchant which fields switching "Industry preset" will (and won't)
+   touch: applyPreset() (core's settings.ts) skips any key listed in
+   settings.customized_fields, so a hand-edit here survives picking a
+   different preset later. Mirrors cloud/app/components/settings.tsx's
+   PresetFieldBadge. */
+function PresetFieldLabel({ text, customized }: { text: string; customized: boolean }) {
+  return (
+    <InlineStack gap="150" blockAlign="center">
+      <span>{text}</span>
+      <Badge tone={customized ? "info" : undefined}>{customized ? "Customized" : "Preset default"}</Badge>
+    </InlineStack>
+  );
 }
 
 const INTAKE_FIELD_TYPES = ["text", "phone", "email", "textarea"] as const;
@@ -102,11 +118,46 @@ function parseIntakeFields(raw: FormDataEntryValue | null) {
   }
 }
 
+// Real, wired rule fields (see core/src/booking/presets.ts's
+// PRESET_CONTROLLED_KEYS) each preset sets, merged over the account-wide
+// baseline so "Industry preset" can preview what applying it would actually
+// change before a merchant clicks Apply. Computed server-side (this route
+// module's top-level imports are shared with its client bundle, and
+// core's `Presets`/`Settings` modules pull in Prisma — unlike cloud's
+// getbooqin-core/booking/presets subpath import, that's not safe to
+// reference from code the component itself executes).
+type PresetRulePreview = Pick<
+  Backend.Settings,
+  "min_notice_hours" | "max_advance_days" | "cancel_cutoff_hours" | "auto_confirm" | "require_phone"
+>;
+
+function presetRulePreviews(shop: string): Record<string, PresetRulePreview> {
+  const fallback = Backend.defaultSettings(shop, "");
+  return Object.fromEntries(
+    Object.entries(Presets.PRESETS).map(([id, preset]) => [
+      id,
+      { ...fallback, ...(preset.defaults as Partial<PresetRulePreview>) },
+    ])
+  );
+}
+
+/* Plain-language summary of a PresetRulePreview, for "Industry preset"'s
+   before-you-apply preview. Mirrors cloud/app/lib/presets.ts's ruleChips(). */
+function ruleChips(rules: PresetRulePreview): string[] {
+  return [
+    rules.auto_confirm ? "Confirms bookings automatically" : "New bookings need approval first",
+    `At least ${rules.min_notice_hours}h notice required to book`,
+    `Customers can cancel up to ${rules.cancel_cutoff_hours}h before`,
+    rules.require_phone ? "Phone number required at booking" : "Phone number optional",
+  ];
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   const settings = await Backend.getSettings(session.shop, "shopify");
   return {
     settings,
+    presetRules: presetRulePreviews(session.shop),
     gatewayFields: Object.entries(PaymentManager.gateways()).map(([id, g]) => ({
       id,
       label: g.label({ shop: session.shop, settings, appProxyBase: "", manageUrl: () => "" }),
@@ -151,6 +202,8 @@ export async function action({ request }: ActionFunctionArgs) {
       allow_cancel: form.get("allow_cancel") === "true",
       cancel_cutoff_hours: Number(form.get("cancel_cutoff_hours") || 24),
       require_phone: form.get("require_phone") === "true",
+      waitlist_enabled: form.get("waitlist_enabled") === "true",
+      waitlist_offer_window_hours: Number(form.get("waitlist_offer_window_hours") || 4),
       consent_text: String(form.get("consent_text") || ""),
       intake_fields: parseIntakeFields(form.get("intake_fields")),
     });
@@ -246,6 +299,7 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function Settings() {
   const {
     settings,
+    presetRules,
     gatewayFields,
     videoFields,
     presets,
@@ -279,6 +333,8 @@ export default function Settings() {
   const [allowCancel, setAllowCancel] = useState(settings.allow_cancel);
   const [cancelCutoff, setCancelCutoff] = useState(String(settings.cancel_cutoff_hours));
   const [requirePhone, setRequirePhone] = useState(settings.require_phone);
+  const [waitlistEnabled, setWaitlistEnabled] = useState(settings.waitlist_enabled);
+  const [waitlistOfferWindow, setWaitlistOfferWindow] = useState(String(settings.waitlist_offer_window_hours));
   const [consentText, setConsentText] = useState(settings.consent_text);
   const [intakeFields, setIntakeFields] = useState(settings.intake_fields);
 
@@ -356,6 +412,8 @@ export default function Settings() {
     form.set("allow_cancel", String(allowCancel));
     form.set("cancel_cutoff_hours", cancelCutoff);
     form.set("require_phone", String(requirePhone));
+    form.set("waitlist_enabled", String(waitlistEnabled));
+    form.set("waitlist_offer_window_hours", waitlistOfferWindow);
     form.set("consent_text", consentText);
     form.set(
       "intake_fields",
@@ -477,8 +535,15 @@ export default function Settings() {
                     <Button onClick={savePreset}>Apply preset</Button>
                   </InlineStack>
                   <Text as="p" tone="subdued">
-                    Applying a preset changes the words used throughout the app (e.g. "Doctor" instead of "Staff Member"). It never changes your data.
+                    Applying a preset changes the words used throughout the app (e.g. "Doctor" instead of "Staff
+                    Member") and sets the booking rules below to sensible defaults for that industry — anything
+                    you've already customized there is left as you set it.
                   </Text>
+                  <InlineStack gap="150" wrap>
+                    {ruleChips(presetRules[preset] ?? presetRules.generic).map((chip) => (
+                      <Badge key={chip}>{chip}</Badge>
+                    ))}
+                  </InlineStack>
                 </FormLayout>
               </Card>
               <Card>
@@ -501,15 +566,48 @@ export default function Settings() {
                     helpText="The storefront page holding the GetBooqin Booking block. Used to build manage/cancel links in emails."
                   />
                   <FormLayout.Group>
-                    <TextField label="Slot interval (minutes)" type="number" value={slotInterval} onChange={setSlotInterval} autoComplete="off" />
-                    <TextField label="Minimum notice (hours)" type="number" value={minNotice} onChange={setMinNotice} autoComplete="off" />
-                    <TextField label="Booking horizon (days)" type="number" value={maxAdvance} onChange={setMaxAdvance} autoComplete="off" />
+                    <TextField
+                      label={<PresetFieldLabel text="Slot interval (minutes)" customized={settings.customized_fields.includes("slot_interval")} />}
+                      type="number" value={slotInterval} onChange={setSlotInterval} autoComplete="off"
+                    />
+                    <TextField
+                      label={<PresetFieldLabel text="Minimum notice (hours)" customized={settings.customized_fields.includes("min_notice_hours")} />}
+                      type="number" value={minNotice} onChange={setMinNotice} autoComplete="off"
+                    />
+                    <TextField
+                      label={<PresetFieldLabel text="Booking horizon (days)" customized={settings.customized_fields.includes("max_advance_days")} />}
+                      type="number" value={maxAdvance} onChange={setMaxAdvance} autoComplete="off"
+                    />
                   </FormLayout.Group>
-                  <Checkbox label="Auto-confirm new bookings" checked={autoConfirm} onChange={setAutoConfirm} />
+                  <Checkbox
+                    label={<PresetFieldLabel text="Auto-confirm new bookings" customized={settings.customized_fields.includes("auto_confirm")} />}
+                    checked={autoConfirm} onChange={setAutoConfirm}
+                  />
                   <Checkbox label="Allow customers to cancel online" checked={allowCancel} onChange={setAllowCancel} />
-                  <TextField label="Cancellation cutoff (hours before start)" type="number" value={cancelCutoff} onChange={setCancelCutoff} autoComplete="off" />
-                  <Checkbox label="Require a phone number" checked={requirePhone} onChange={setRequirePhone} />
-                  <TextField label="Consent text shown on the booking form" value={consentText} onChange={setConsentText} multiline={2} autoComplete="off" />
+                  <TextField
+                    label={<PresetFieldLabel text="Cancellation cutoff (hours before start)" customized={settings.customized_fields.includes("cancel_cutoff_hours")} />}
+                    type="number" value={cancelCutoff} onChange={setCancelCutoff} autoComplete="off"
+                  />
+                  <Checkbox
+                    label={<PresetFieldLabel text="Require a phone number" customized={settings.customized_fields.includes("require_phone")} />}
+                    checked={requirePhone} onChange={setRequirePhone}
+                  />
+                  <Checkbox
+                    label={<PresetFieldLabel text="Offer freed slots to the waitlist" customized={settings.customized_fields.includes("waitlist_enabled")} />}
+                    helpText="When a booking is cancelled, declined or marked no-show, offer that slot to the next matching person on the waitlist."
+                    checked={waitlistEnabled} onChange={setWaitlistEnabled}
+                  />
+                  {waitlistEnabled && (
+                    <TextField
+                      label={<PresetFieldLabel text="Waitlist offer window (hours)" customized={settings.customized_fields.includes("waitlist_offer_window_hours")} />}
+                      helpText="How long someone has to claim an offered slot before it's offered to the next person."
+                      type="number" value={waitlistOfferWindow} onChange={setWaitlistOfferWindow} autoComplete="off"
+                    />
+                  )}
+                  <TextField
+                    label={<PresetFieldLabel text="Consent text shown on the booking form" customized={settings.customized_fields.includes("consent_text")} />}
+                    value={consentText} onChange={setConsentText} multiline={2} autoComplete="off"
+                  />
                   <InlineStack align="end">
                     <Button variant="primary" loading={saving} onClick={saveGeneral}>Save</Button>
                   </InlineStack>

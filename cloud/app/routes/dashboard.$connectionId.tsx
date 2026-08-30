@@ -108,6 +108,13 @@ const NAV_ICONS = {
       <path d="M8 4.5V8l2.5 1.5" strokeLinecap="round" strokeLinejoin="round" />
     </>} />
   ),
+  waitlist: (
+    <NavIcon path={<>
+      <circle cx="5.5" cy="6" r="1.8" />
+      <circle cx="10.5" cy="6" r="1.8" />
+      <path d="M2 13c0-2 1.6-3.5 3.5-3.5S9 11 9 13M7 13c0-2 1.6-3.5 3.5-3.5S14 11 14 13" strokeLinecap="round" />
+    </>} />
+  ),
   services: <NavIcon path={<path d="M8 1.5 14.5 8 8 14.5 1.5 8Z" strokeLinejoin="round" />} />,
   customers: (
     <NavIcon path={<>
@@ -143,6 +150,7 @@ function navItems(preset: string | null, pendingCount: number) {
   return [
     { to: "", end: true, label: "Overview", icon: NAV_ICONS.overview },
     { to: "/bookings", label: v.bookingTitle, icon: NAV_ICONS.bookings, badge: pendingCount > 0 ? pendingCount : undefined },
+    { to: "/waitlist", label: "Waitlist", icon: NAV_ICONS.waitlist },
     { to: "/resources", label: v.resources, icon: NAV_ICONS.resources },
     { to: "/timeoff", label: "Time off", icon: NAV_ICONS.timeoff },
     { to: "/services", label: v.services, icon: NAV_ICONS.services },
@@ -281,7 +289,14 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
               <path d="M2 4h12M2 8h12M2 12h12" strokeLinecap="round" />
             </svg>
           </button>
-          <span className="truncate text-[13.5px] font-semibold">{label}</span>
+          <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold">{label}</span>
+          {/* The sidebar's own toggle only reaches whoever opens the
+              off-canvas drawer first — below md that's every screen this
+              app actually ships to, so anyone who hasn't already opened
+              the nav has no visible way to find it (pass 7's E12 finding:
+              tested at 496px, where the sidebar starts off-canvas). This
+              topbar is the one thing that's always on screen there. */}
+          <ThemeToggle className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-field text-muted hover:bg-canvas-alt" />
         </div>
         {/* Not <main> — root.tsx already provides the page's one <main>
             landmark; a second, nested one is itself an accessibility

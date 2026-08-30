@@ -7,7 +7,8 @@
  * `platform` column here.
  */
 import nodemailer from "nodemailer";
-import type { Booking, ChatConversation } from "@prisma/client";
+import { DateTime } from "luxon";
+import type { Booking, ChatConversation, Waitlist } from "@prisma/client";
 import prisma from "../db.js";
 import * as Data from "./data.js";
 import * as Bookings from "./bookings.js";
@@ -107,6 +108,22 @@ export const TEMPLATE_DEFS: { key: string; group: string; label: string; descrip
     description: "Sent to customers ahead of their appointment — see the reminder timing setting above.",
     subject: "Reminder: {{service}} on {{date}} at {{time}}",
     body: "Hi {{customer_name}},\n\nThis is a reminder for your {{booking_term}}:\n\n{{service}} with {{resource}}\n{{date}} at {{time}}\n\n{{meeting_line}}\n\n{{manage_url}}\n\nSee you soon,\n{{business_name}}",
+  },
+  {
+    key: "waitlist_offered",
+    group: "Waitlist",
+    label: "Slot offered from the waitlist",
+    description: "Sent when a cancellation frees a slot that matches someone on the waitlist.",
+    subject: "A spot opened up — {{service}} on {{date}} at {{time}}",
+    body: "Hi {{customer_name}},\n\nGood news — a spot just opened up for {{service}} on {{date}} at {{time}} {{timezone}}.\n\nThis offer is first come, first served and expires at {{expires_at}}. Claim it here:\n{{claim_url}}\n\nIf you don't respond in time, we'll offer it to the next person on the list.\n\n{{business_name}}",
+  },
+  {
+    key: "waitlist_expired",
+    group: "Waitlist",
+    label: "Waitlist offer expired",
+    description: "Sent when a customer doesn't claim their offered slot in time.",
+    subject: "Your offer for {{date}} at {{time}} has expired",
+    body: "Hi {{customer_name}},\n\nYour offer for {{service}} on {{date}} at {{time}} wasn't claimed in time, so we've offered it to the next person on our list.\n\nYou're still on the waitlist — we'll let you know if another time opens up.\n\n{{business_name}}",
   },
   {
     key: "admin_chat_lead",
@@ -498,6 +515,77 @@ function logMailError(context: string, shop: string, uid: string, error: unknown
   console.error(`[getbooqin mailer] ${context} failed for shop ${shop} (booking ${uid}):`, error);
 }
 
+/**
+ * A waitlist entry isn't a Booking row until claimed, so its tokens can't
+ * reuse tokens() above — built from the entry's offered slot instead. The
+ * claim link is the app-proxy route shopify-openslot mounts publicly at
+ * /apps/getbooqin/* (see proxy.server.ts's appProxyBase), not
+ * booking_page_url — there's no storefront widget view for this yet.
+ */
+async function waitlistTokens(shop: string, entry: Waitlist, settings: Settings): Promise<Record<string, string>> {
+  const service = await Data.catalogService(shop, entry.serviceId);
+  const resource = entry.offeredResourceId ? await Data.resource(shop, entry.offeredResourceId) : null;
+  const customer = await prisma.customer.findFirst({ where: { shop, id: entry.customerId } });
+  const tz = settings.timezone || "UTC";
+  const start = entry.offeredStartUtc ? DateTime.fromJSDate(entry.offeredStartUtc, { zone: "utc" }).setZone(tz) : null;
+
+  return {
+    "{{business_name}}": settings.business_name,
+    "{{service}}": service?.name ?? "",
+    "{{resource}}": resource?.name ?? "",
+    "{{date}}": start?.toFormat("DDD") ?? "",
+    "{{time}}": start?.toFormat("h:mm a") ?? "",
+    "{{timezone}}": start ? start.toFormat("z") : "",
+    "{{customer_name}}": customer ? `${customer.firstName} ${customer.lastName}`.trim() : "",
+    "{{expires_at}}": entry.offerExpiresAt ? DateTime.fromJSDate(entry.offerExpiresAt, { zone: "utc" }).setZone(tz).toFormat("h:mm a") : "",
+    "{{claim_url}}": `https://${shop}/apps/getbooqin/waitlist/${entry.offerToken ?? ""}`,
+  };
+}
+
+async function sendToWaitlistCustomer(shop: string, entry: Waitlist, settings: Settings, subject: string, body: string) {
+  const customer = await prisma.customer.findFirst({ where: { shop, id: entry.customerId } });
+  if (!customer || !Bookings.isEmail(customer.email)) {
+    console.warn(
+      `[getbooqin mailer] skipped waitlist email for entry ${entry.uid} — ${!customer ? "no customer record" : `invalid email "${customer.email}"`}`
+    );
+    return;
+  }
+  const t = await waitlistTokens(shop, entry, settings);
+  await mail(customer.email, replace(subject, t), replace(body, t), settings);
+}
+
+async function onWaitlistOffered(entry: Waitlist) {
+  const settings = await getSettings(entry.shop, entry.platform);
+  if (!settings.notify_customer || !templateEnabled(settings, "waitlist_offered")) return;
+  await sendToWaitlistCustomer(
+    entry.shop,
+    entry,
+    settings,
+    settingTemplate(settings, "waitlist_offered_subject", "A spot opened up — {{service}} on {{date}} at {{time}}"),
+    settingTemplate(
+      settings,
+      "waitlist_offered_body",
+      "Hi {{customer_name}},\n\nGood news — a spot just opened up for {{service}} on {{date}} at {{time}} {{timezone}}.\n\nThis offer is first come, first served and expires at {{expires_at}}. Claim it here:\n{{claim_url}}\n\nIf you don't respond in time, we'll offer it to the next person on the list.\n\n{{business_name}}"
+    )
+  );
+}
+
+async function onWaitlistExpired(entry: Waitlist) {
+  const settings = await getSettings(entry.shop, entry.platform);
+  if (!settings.notify_customer || !templateEnabled(settings, "waitlist_expired")) return;
+  await sendToWaitlistCustomer(
+    entry.shop,
+    entry,
+    settings,
+    settingTemplate(settings, "waitlist_expired_subject", "Your offer for {{date}} at {{time}} has expired"),
+    settingTemplate(
+      settings,
+      "waitlist_expired_body",
+      "Hi {{customer_name}},\n\nYour offer for {{service}} on {{date}} at {{time}} wasn't claimed in time, so we've offered it to the next person on our list.\n\nYou're still on the waitlist — we'll let you know if another time opens up.\n\n{{business_name}}"
+    )
+  );
+}
+
 export function init() {
   events.onEvent("booking_created", (booking) =>
     onCreated(booking).catch((err) => logMailError("booking_created", booking.shop, booking.uid, err))
@@ -515,5 +603,11 @@ export function init() {
   );
   events.onEvent("payment_completed", (booking) =>
     onPaymentCompleted(booking).catch((err) => logMailError("payment_completed", booking.shop, booking.uid, err))
+  );
+  events.onEvent("waitlist_offered", (entry) =>
+    onWaitlistOffered(entry).catch((err) => logMailError("waitlist_offered", entry.shop, entry.uid, err))
+  );
+  events.onEvent("waitlist_expired", (entry) =>
+    onWaitlistExpired(entry).catch((err) => logMailError("waitlist_expired", entry.shop, entry.uid, err))
   );
 }

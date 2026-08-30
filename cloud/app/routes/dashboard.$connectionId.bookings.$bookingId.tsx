@@ -205,6 +205,7 @@ export default function BookingDetail({ loaderData, actionData, params }: Route.
         title="Cancel this booking?"
         body="The customer will be notified. This can't be undone."
         confirmLabel="Cancel booking"
+        cancelLabel="Keep booking"
       >
         <Form method="post" id="cancel-booking-form" className="flex flex-col gap-2">
           <input type="hidden" name="_action" value="cancel" />

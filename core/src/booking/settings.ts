@@ -9,7 +9,7 @@
  * DB-touching module along. They are re-exported here too, for convenience.
  */
 import prisma from "../db.js";
-import { getPreset } from "./presets.js";
+import { getPreset, PRESET_CONTROLLED_KEYS } from "./presets.js";
 import type { Settings } from "./settingsShared.js";
 
 export type { Settings, GatewaySettings, VideoSettings } from "./settingsShared.js";
@@ -38,6 +38,9 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
     consent_text: "",
     booking_page_url: `https://${shopDomain}`,
     intake_fields: [],
+
+    waitlist_enabled: false,
+    waitlist_offer_window_hours: 4,
 
     enabled_gateways: [],
     gateways: {},
@@ -74,6 +77,7 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
     onboarding_completed: false,
 
     hidden_overview_cards: [],
+    customized_fields: [],
   };
 }
 
@@ -92,9 +96,49 @@ export async function getSettings(shop: string, platform = "shopify"): Promise<S
   return merged;
 }
 
-export async function setSettings(shop: string, platform: string, values: Partial<Settings>): Promise<Settings> {
+function valueChanged(a: unknown, b: unknown): boolean {
+  if (a === b) return false;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return true;
+  return JSON.stringify(a) !== JSON.stringify(b);
+}
+
+// `fromPreset` is applyPreset()'s own escape hatch, not a merchant-facing
+// option: a normal save (settings form, onboarding) marks any
+// PRESET_CONTROLLED_KEYS whose value actually changes as customized, so a
+// later preset switch knows to leave that field alone. applyPreset()
+// already computed its own next `customized_fields` value (respecting
+// existing customizations, or clearing them under `force`) and passes it
+// through `values` — this flag just stops that from being reinterpreted as
+// "the merchant just customized these keys."
+//
+// Comparing values (not just checking which keys are present in `values`)
+// matters because at least one settings form submits its whole section on
+// every save — shopify-openslot's General tab always includes
+// slot_interval/min_notice_hours/etc. in the payload even when a merchant
+// only meant to change business_name. A presence check would have marked
+// every rule field "customized" on that app's very first save of anything,
+// silently defeating preset switching for it from day one.
+export async function setSettings(
+  shop: string,
+  platform: string,
+  values: Partial<Settings>,
+  opts: { fromPreset?: boolean } = {}
+): Promise<Settings> {
   const current = await getSettings(shop, platform);
-  const merged = { ...current, ...values };
+
+  let customizedFields = current.customized_fields ?? [];
+  if (!opts.fromPreset) {
+    const touched = (Object.keys(values) as (keyof Settings)[]).filter(
+      (key) =>
+        (PRESET_CONTROLLED_KEYS as readonly string[]).includes(key as string) &&
+        valueChanged(values[key], current[key])
+    );
+    if (touched.length > 0) {
+      customizedFields = Array.from(new Set([...customizedFields, ...(touched as string[])]));
+    }
+  }
+
+  const merged: Settings = { ...current, ...values, customized_fields: values.customized_fields ?? customizedFields };
 
   await prisma.shopSettings.upsert({
     where: { platform_shop: { platform, shop } },
@@ -105,11 +149,41 @@ export async function setSettings(shop: string, platform: string, values: Partia
   return merged;
 }
 
-export async function applyPreset(shop: string, platform: string, key: string): Promise<Settings> {
+/**
+ * Applies a preset's terms + rule defaults. Vocabulary (`terms`) always
+ * updates — it is purely cosmetic and safe to reapply. Rule defaults only
+ * overwrite fields the merchant has not already hand-edited (tracked via
+ * `customized_fields`), so switching presets — or re-visiting onboarding —
+ * can never silently discard a customization made after the last preset
+ * apply. Pass `force: true` (an explicit "Reset to industry defaults"
+ * action) to overwrite everything and clear that preset's customizations.
+ */
+export async function applyPreset(
+  shop: string,
+  platform: string,
+  key: string,
+  opts: { force?: boolean } = {}
+): Promise<Settings> {
   const preset = getPreset(key);
-  return setSettings(shop, platform, {
-    preset: key,
-    terms: preset.terms,
-    ...(preset.defaults as Partial<Settings>),
-  });
+  const current = await getSettings(shop, platform);
+  const customized = new Set(current.customized_fields ?? []);
+
+  const defaults = preset.defaults as Partial<Settings>;
+  const toApply: Partial<Settings> = {};
+  for (const field of Object.keys(defaults) as (keyof Settings)[]) {
+    if (opts.force || !customized.has(field)) {
+      (toApply as Record<string, unknown>)[field] = defaults[field];
+    }
+  }
+
+  const nextCustomized = opts.force
+    ? [...customized].filter((field) => !(field in defaults))
+    : [...customized];
+
+  return setSettings(
+    shop,
+    platform,
+    { preset: key, terms: preset.terms, ...toApply, customized_fields: nextCustomized },
+    { fromPreset: true }
+  );
 }

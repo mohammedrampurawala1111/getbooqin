@@ -1,4 +1,5 @@
-import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
+import { useEffect } from "react";
+import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLocation } from "react-router";
 import { ClerkProvider } from "@clerk/react-router";
 import { clerkMiddleware, rootAuthLoader } from "@clerk/react-router/server";
 import type { Route } from "./+types/root";
@@ -39,6 +40,32 @@ export const meta: Route.MetaFunction = () => [
   { name: "description", content: "Bookings, staff schedules and payments for every store you connect." },
 ];
 
+// The inline bootstrap script below only runs once, on the initial
+// document load — it can't fire again for a client-side navigation, since
+// <head>'s script tags don't re-execute when only the <Outlet> content
+// changes. Pass 7's audit found /timeoff specifically rendering light with
+// data-theme unset after navigating there from another (dark) page, then
+// reverting back to dark on navigating away — that pattern points at
+// something transiently clearing or racing the attribute for that one
+// route's transition, not a route that never had it applied in the first
+// place (this component wraps every route identically; nothing here is
+// /timeoff-specific). Re-asserting the stored theme on every navigation,
+// not just the first one, closes that gap regardless of what's causing it.
+function ThemeSync() {
+  const location = useLocation();
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("gb-theme");
+      if (stored === "light" || stored === "dark") {
+        document.documentElement.setAttribute("data-theme", stored);
+      }
+    } catch {
+      // Private browsing etc. — nothing to resync from.
+    }
+  }, [location.key]);
+  return null;
+}
+
 export default function Root({ loaderData }: Route.ComponentProps) {
   return (
     <ClerkProvider loaderData={loaderData}>
@@ -64,6 +91,7 @@ export default function Root({ loaderData }: Route.ComponentProps) {
           <Links />
         </head>
         <body>
+          <ThemeSync />
           <a href="#main" className="skip-link">Skip to content</a>
           {/* Single <main> landmark for the whole app — every nested
               route's chrome (sidebar, headers) renders inside it. One

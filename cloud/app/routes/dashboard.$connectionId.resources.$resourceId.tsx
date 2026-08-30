@@ -201,10 +201,16 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
                       track can't shrink to fit without this, so the input
                       overflowed the card's edge instead (UX audit's #11
                       finding). Same class of fix as Row/RowInput in
-                      settings.tsx for the identical reason. */}
+                      settings.tsx for the identical reason.
+                      aria-label: this grid isn't a Row/Field, so neither
+                      gets an implicit label from anywhere — Toggle's own
+                      `label` covers the day name, but the two time inputs
+                      had nothing at all (pass 7's N1 finding: 7 days × 2
+                      inputs = 14, exactly the count axe flagged here). */}
                   <input
                     type="time"
                     name={`day_${day}_start`}
+                    aria-label={`${label} start time`}
                     defaultValue={existing?.startTime ?? "09:00"}
                     disabled={!dayEnabled}
                     className={`input min-w-0 ${!dayEnabled ? "bg-canvas" : ""}`}
@@ -212,6 +218,7 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
                   <input
                     type="time"
                     name={`day_${day}_end`}
+                    aria-label={`${label} end time`}
                     defaultValue={existing?.endTime ?? "17:00"}
                     disabled={!dayEnabled}
                     className={`input ${!dayEnabled ? "bg-canvas" : ""}`}

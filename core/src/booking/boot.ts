@@ -5,6 +5,7 @@
 import * as PaymentManager from "./paymentManager.js";
 import * as MeetingManager from "./meetingManager.js";
 import * as Mailer from "./mailer.js";
+import * as Waitlist from "./waitlist.js";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -21,6 +22,7 @@ export function boot() {
   PaymentManager.init();
   MeetingManager.init();
   Mailer.init();
+  Waitlist.init();
 }
 
 boot();

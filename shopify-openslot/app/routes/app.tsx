@@ -50,6 +50,7 @@ export default function AppLayout() {
             Dashboard
           </Link>
           <Link to="/app/bookings">Bookings</Link>
+          <Link to="/app/waitlist">Waitlist</Link>
           <Link to="/app/calendar">Calendar</Link>
           <Link to="/app/services">Services</Link>
           <Link to="/app/addons">Add-ons</Link>

@@ -86,6 +86,10 @@ const STATUS = {
   unpaid: ["badge-neutral", "Unpaid"],
   refunded: ["badge-neutral", "Refunded"],
   failed: ["badge-danger", "Failed"],
+  waiting: ["badge-neutral", "Waiting"],
+  offered: ["badge-pending", "Offered"],
+  claimed: ["badge-ok", "Claimed"],
+  expired: ["badge-danger", "Expired"],
 } as const;
 
 export function Badge({
@@ -436,8 +440,21 @@ export function ConfirmDialog({
   title,
   body,
   confirmLabel,
+  cancelLabel = "Cancel",
   children,
-}: { id: string; title: string; body: string; confirmLabel: string; children?: ReactNode }) {
+}: {
+  id: string;
+  title: string;
+  body: string;
+  confirmLabel: string;
+  // Hardcoded "Keep booking" regardless of what was actually being
+  // confirmed — removing a time-off block or deleting a resource got a
+  // cancel button that named the wrong object entirely (pass 7's N3
+  // finding). Defaults to the generic "Cancel"; only the one dialog this
+  // was written for still has something more specific to say.
+  cancelLabel?: string;
+  children?: ReactNode;
+}) {
   // Confirm submits the form passed as `children` via HTML's `form=` attribute
   // (works regardless of DOM nesting) — that form's id must be `${id}-form`.
   return (
@@ -460,7 +477,7 @@ export function ConfirmDialog({
             className="btn-sec"
             onClick={(e) => (e.currentTarget.closest("dialog") as HTMLDialogElement | null)?.close()}
           >
-            Keep booking
+            {cancelLabel}
           </button>
           <button
             form={`${id}-form`}

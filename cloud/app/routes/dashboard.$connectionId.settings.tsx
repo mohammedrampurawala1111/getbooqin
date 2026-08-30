@@ -7,7 +7,7 @@ import { getClerkClient } from "~/session.server";
 import { Badge, TimezoneSelect, Toggle } from "~/components/ui";
 import { IntegrationRow } from "~/components/onboarding";
 import { TemplateConfig, overviewCards, type OverviewCardKey } from "~/components/account";
-import { SettingsShell, Row, RowInput, ToggleRow, SettingsCard, isSettingsPage } from "~/components/settings";
+import { SettingsShell, Row, RowInput, ToggleRow, SettingsCard, isSettingsPage, PresetFieldBadge } from "~/components/settings";
 import { INTEGRATIONS, type PresetId } from "~/lib/presets";
 import { PHONE_PATTERN } from "~/lib/validation";
 
@@ -88,6 +88,9 @@ export async function action({ request, params }: Route.ActionArgs) {
       auto_confirm: form.get("auto_confirm") === "on",
       allow_cancel: form.get("allow_cancel") === "on",
       cancel_cutoff_hours: Number(form.get("cancel_cutoff_hours") ?? 24),
+      require_phone: form.get("require_phone") === "on",
+      waitlist_enabled: form.get("waitlist_enabled") === "on",
+      waitlist_offer_window_hours: Number(form.get("waitlist_offer_window_hours") ?? 4),
     });
   } else if (section === "template") {
     const preset = String(form.get("preset") ?? "");
@@ -190,19 +193,32 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
       {page === "rules" && (
         <SettingsCard saveLabel="Save booking rules" savedAt={savedAt}>
           <input type="hidden" name="_section" value="rules" />
-          <Row label="Slot interval (minutes)" hint="The spacing between bookable start times.">
+          <Row label="Slot interval (minutes)" hint="The spacing between bookable start times."
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("slot_interval")} />}>
             <RowInput type="number" name="slot_interval" min={5} defaultValue={settings.slot_interval} cap={140} />
           </Row>
-          <Row label="Minimum notice (hours)" hint="How soon before a slot someone can still book it.">
+          <Row label="Minimum notice (hours)" hint="How soon before a slot someone can still book it."
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("min_notice_hours")} />}>
             <RowInput type="number" name="min_notice_hours" min={0} defaultValue={settings.min_notice_hours} cap={140} />
           </Row>
-          <Row label="Max advance booking (days)" hint="How far ahead your calendar opens up.">
+          <Row label="Max advance booking (days)" hint="How far ahead your calendar opens up."
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("max_advance_days")} />}>
             <RowInput type="number" name="max_advance_days" min={1} defaultValue={settings.max_advance_days} cap={140} />
           </Row>
-          <Row label="Cancellation cutoff (hours before start)" hint="How late a customer can still cancel.">
+          <Row label="Cancellation cutoff (hours before start)" hint="How late a customer can still cancel."
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("cancel_cutoff_hours")} />}>
             <RowInput type="number" name="cancel_cutoff_hours" min={0} defaultValue={settings.cancel_cutoff_hours} cap={140} />
           </Row>
-          <ToggleRow name="auto_confirm" label="Auto-confirm new bookings" hint="Skip manual approval for new bookings" defaultChecked={settings.auto_confirm} />
+          <ToggleRow name="auto_confirm" label="Auto-confirm new bookings" hint="Skip manual approval for new bookings" defaultChecked={settings.auto_confirm}
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("auto_confirm")} />} />
+          <ToggleRow name="require_phone" label="Require a phone number" hint="Ask for a phone number when booking" defaultChecked={settings.require_phone}
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("require_phone")} />} />
+          <ToggleRow name="waitlist_enabled" label="Offer freed slots to the waitlist" hint="Cancelled, declined or no-show bookings get offered to the next matching waitlist entry" defaultChecked={settings.waitlist_enabled}
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("waitlist_enabled")} />} />
+          <Row label="Waitlist offer window (hours)" hint="How long someone has to claim an offered slot before it moves to the next person."
+            badge={<PresetFieldBadge customized={settings.customized_fields.includes("waitlist_offer_window_hours")} />}>
+            <RowInput type="number" name="waitlist_offer_window_hours" min={0.25} step={0.25} defaultValue={settings.waitlist_offer_window_hours} cap={140} />
+          </Row>
           <ToggleRow name="allow_cancel" label="Allow customers to cancel" hint="Let customers cancel their own bookings" defaultChecked={settings.allow_cancel} />
         </SettingsCard>
       )}
@@ -227,13 +243,20 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
           <input type="hidden" name="_section" value="payments" />
           {gatewayFields.map((g) => (
             <div key={g.id}>
-              <Row label={g.label} hint="Accept payments through this gateway">
+              {/* as="div": Toggle already renders its own <label> around its
+                  checkbox + "Enabled" text — Row wrapping that in a second
+                  <label> would nest labels, which is invalid HTML and
+                  breaks the association for both. */}
+              <Row as="div" label={g.label} hint="Accept payments through this gateway">
                 <Toggle name="enabled_gateways" value={g.id} defaultChecked={settings.enabled_gateways.includes(g.id)} label="Enabled" />
               </Row>
               {g.fields.map((field) => (
-                <Row key={field.key} label={field.label}>
+                <Row key={field.key} as={field.type === "checkbox" ? "div" : "label"} label={field.label}>
                   {field.type === "checkbox" ? (
-                    <Toggle name={`gateway_${g.id}_${field.key}`} defaultChecked={Boolean(settings.gateways[g.id]?.[field.key])} />
+                    // No wrapping label here (see as="div" above), so this
+                    // Toggle needs its own label text to have any
+                    // accessible name at all.
+                    <Toggle name={`gateway_${g.id}_${field.key}`} defaultChecked={Boolean(settings.gateways[g.id]?.[field.key])} label={field.label} />
                   ) : (
                     <RowInput
                       type={field.type === "password" ? "password" : "text"}
