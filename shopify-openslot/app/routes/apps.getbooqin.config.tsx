@@ -13,6 +13,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
       currency: settings.currency,
       symbol: settings.currency_symbol,
       timezone: settings.timezone,
+      // The widget's proxy-error fallback (a real outage, not "nothing
+      // linked") needs a human escape hatch — a phone number to call when
+      // the booking flow itself can't be reached.
+      business_phone: settings.business_phone,
       require_phone: settings.require_phone,
       consent_text: settings.consent_text,
       widget_text: settings.widget_text,

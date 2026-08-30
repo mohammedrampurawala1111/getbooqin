@@ -80,6 +80,14 @@
 			// "Loading…" flash) still uses the built-in default; there's no
 			// way around that without server-rendering the widget's strings.
 			configPromise = api( 'config' ).then( function ( cfg ) {
+				// terms lets a merchant rename what a "resource"/"service" is
+				// called in their business ("Stylist" instead of the generic
+				// default) — config() already fetched it, it just never got
+				// applied to the labels that actually use it.
+				if ( cfg && cfg.terms ) {
+					if ( cfg.terms.resource_single ) t.teamMemberLabel = cfg.terms.resource_single;
+					if ( cfg.terms.service_single ) t.serviceLabel = cfg.terms.service_single;
+				}
 				if ( cfg && cfg.widget_text ) {
 					Object.keys( cfg.widget_text ).forEach( function ( key ) {
 						if ( cfg.widget_text[ key ] ) {
@@ -1560,8 +1568,34 @@
 				// that lands here is a real failure: the proxy route 5xx'd,
 				// or the request didn't complete at all (err.status === 0).
 				// Rendering nothing for that is indistinguishable from "not
-				// bookable" and hides an outage — show it instead.
-				container.appendChild( el( 'p', { class: 'getbooqin-error', role: 'alert', text: ( err && err.message ) || t.genericError } ) );
+				// bookable" and hides an outage — show it instead, with a way
+				// to try again and a human fallback that doesn't depend on
+				// the same proxy that just failed.
+				var box = el( 'div', { class: 'getbooqin-embed-error' } );
+				box.appendChild( el( 'p', { class: 'getbooqin-error', role: 'alert', text: ( err && err.message ) || t.genericError } ) );
+
+				var retryBtn = el( 'button', { type: 'button', class: 'getbooqin-btn getbooqin-btn--ghost', text: 'Try again' } );
+				retryBtn.addEventListener( 'click', function () {
+					// The module-level cache is what makes a bare retry a no-op
+					// (it would just hand back the same rejected promise) —
+					// clearing this entry is what makes "Try again" actually
+					// hit the network again instead of replaying the failure.
+					delete productServicePromises[ handle ];
+					box.remove();
+					initProductEmbed( container );
+				} );
+				box.appendChild( retryBtn );
+
+				config().then( function ( cfg ) {
+					if ( cfg && cfg.business_phone ) {
+						box.appendChild( el( 'p', { class: 'getbooqin-muted' }, [
+							document.createTextNode( 'Or call us: ' ),
+							el( 'a', { href: 'tel:' + cfg.business_phone.replace( /\s/g, '' ), text: cfg.business_phone } )
+						] ) );
+					}
+				} ).catch( function () {} );
+
+				container.appendChild( box );
 			} );
 	}
 

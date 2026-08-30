@@ -60,6 +60,18 @@
           <div {{ block.shopify_attributes }}>
             {% render 'price', product: product %}
           </div>
+          {%- comment -%}
+            The app pushes its own duration_min as a product metafield on
+            every save (see core/src/platforms/shopifyAdmin.ts's
+            pushServiceConfigMetafields) — reading it back here means the
+            number a customer sees can never drift from what actually gets
+            booked the way hand-typed "45 minutes" prose in the description
+            can. Silent if the app hasn't set one yet (a retail product, or
+            a service that's never been saved through the app).
+          {%- endcomment -%}
+          {% if product.metafields.getbooqin.duration_min != blank %}
+            <p class="product-page__duration">{{ product.metafields.getbooqin.duration_min }} min</p>
+          {% endif %}
 
         {% when 'description' %}
           {% if product.description != blank %}

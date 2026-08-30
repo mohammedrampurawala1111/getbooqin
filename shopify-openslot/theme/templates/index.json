@@ -10,10 +10,10 @@
     "services": {
       "type": "collection-list",
       "blocks": {
-        "service-1": { "type": "service", "settings": { "title": "Manicure", "subtitle": "from $35", "icon": "manicure" } },
-        "service-2": { "type": "service", "settings": { "title": "Pedicure", "subtitle": "from $45", "icon": "pedicure" } },
-        "service-3": { "type": "service", "settings": { "title": "Gel & Extensions", "subtitle": "from $65", "icon": "gel" } },
-        "service-4": { "type": "service", "settings": { "title": "Nail Art", "subtitle": "from $10", "icon": "nail-art" } }
+        "service-1": { "type": "service", "settings": { "title": "Manicure", "icon": "manicure", "product": "classic-manicure" } },
+        "service-2": { "type": "service", "settings": { "title": "Pedicure", "icon": "pedicure", "product": "classic-pedicure" } },
+        "service-3": { "type": "service", "settings": { "title": "Gel & Extensions", "icon": "gel", "product": "gel-extensions-full-set" } },
+        "service-4": { "type": "service", "settings": { "title": "Nail Art", "icon": "nail-art", "product": "nail-art-per-nail" } }
       },
       "block_order": ["service-1", "service-2", "service-3", "service-4"],
       "settings": {}

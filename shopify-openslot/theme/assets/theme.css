@@ -476,6 +476,16 @@ section {
 .product-page__vendor { color: var(--color-text-muted); font-size: 0.85rem; margin: 0 0 6px; }
 .product-page__title { font-size: clamp(1.6rem, 2.4vw, 2.2rem); margin: 0; }
 .product-page__info .price { font-size: 1.2rem; }
+.product-page__duration {
+  display: inline-block;
+  margin: 8px 0 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--color-background-secondary);
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
 .product-page__description { color: var(--color-text-muted); }
 .product-page__description p:first-child { margin-top: 0; }
 

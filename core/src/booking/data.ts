@@ -16,6 +16,7 @@
 import prisma from "../db.js";
 import type { Resource, ServiceConfig, ProductCache } from "@prisma/client";
 import type { ServiceConfigFields } from "./serviceMetafields.js";
+import { GetBooqinError } from "./errors.js";
 
 /* ------------------------------------------------------------- Services */
 
@@ -121,12 +122,26 @@ export interface ServiceConfigInput {
 }
 
 export async function saveServiceConfig(shop: string, platform: string, data: ServiceConfigInput, id = 0) {
+  // Duration silently floored to a 5-minute minimum used to also mean a
+  // missing/zero value quietly became "5 minutes" instead of failing — five
+  // real services ended up wrong at once (auto-sync's 30-minute default,
+  // see createServiceConfigsFromProducts) because nothing forced a real
+  // value in. A wrong duration means every slot's end_utc is wrong too,
+  // which is exactly what lets two customers get booked into one chair.
+  if (!Number.isFinite(data.duration_min) || data.duration_min < 5) {
+    throw new GetBooqinError(
+      "getbooqin_invalid_duration",
+      "Duration is required and must be at least 5 minutes.",
+      400
+    );
+  }
+
   const row = {
     shop,
     platform,
     productId: data.product_id,
     productHandle: data.product_handle,
-    durationMin: Math.max(5, data.duration_min),
+    durationMin: data.duration_min,
     bufferBeforeMin: Math.max(0, data.buffer_before_min ?? 0),
     bufferAfterMin: Math.max(0, data.buffer_after_min ?? 0),
     capacity: Math.max(1, data.capacity ?? 1),
@@ -164,9 +179,16 @@ export async function saveServiceConfig(shop: string, platform: string, data: Se
 
 /**
  * Creates a ServiceConfig for each given product that doesn't already have
- * one (1:1, same convention as shopify-openslot). Duration defaults to 30
- * minutes. A product that already has a config is skipped rather than
- * failing the whole batch.
+ * one (1:1, same convention as shopify-openslot). A product that already
+ * has a config is skipped rather than failing the whole batch.
+ *
+ * The real duration is never known at sync time (Shopify has no such field
+ * to read), so this can't set one that means anything — it used to guess 30
+ * minutes and go live immediately, which is exactly how five services ended
+ * up bookable with the wrong length. Created inactive (status: false)
+ * instead: the placeholder duration is a DB-required non-null column, not a
+ * claim about the real service, and a merchant has to open it, set the
+ * actual duration, and activate it before it's ever offered to a customer.
  */
 export async function createServiceConfigsFromProducts(
   shop: string,
@@ -186,6 +208,7 @@ export async function createServiceConfigsFromProducts(
       product_id: product.id,
       product_handle: product.handle,
       duration_min: 30,
+      status: false,
     });
     created.push(saved);
   }

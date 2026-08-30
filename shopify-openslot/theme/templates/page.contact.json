@@ -6,7 +6,9 @@
     },
     "contact": {
       "type": "contact-form",
-      "settings": {}
+      "settings": {
+        "phone": "+91 73788 99726"
+      }
     }
   },
   "order": ["main", "contact"]

@@ -40,7 +40,7 @@
             "type": "text",
             "settings": {
               "heading": "Visit us",
-              "text": "<p>Open Tue–Sat, 10am–7pm</p>"
+              "text": "<p>Open Tue–Sat, 10am–7pm<br><a href=\"tel:+917378899726\">+91 73788 99726</a></p>"
             }
           }
         },

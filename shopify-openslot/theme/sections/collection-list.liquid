@@ -10,14 +10,18 @@
 
   <div class="service-grid__items">
     {% for block in section.blocks %}
-      {%- assign card_url = block.settings.collection.url | default: block.settings.link -%}
       {%- comment -%}
-        Prefer the linked collection's actual cheapest product over the
-        merchant-typed subtitle, so "from $X" can't quietly drift out of
-        sync with real prices the way a hand-typed number always can.
+        Priority: a specific product (the normal case now that each tile
+        maps to a real service) > a collection > a plain link. Whichever is
+        set also drives the price, so "from $X" can't drift from the real
+        price the way a hand-typed number always could.
       {%- endcomment -%}
+      {%- assign card_url = block.settings.product.url | default: block.settings.collection.url | default: block.settings.link -%}
       {%- assign price_text = blank -%}
-      {%- if block.settings.collection != blank -%}
+      {%- if block.settings.product != blank -%}
+        {%- assign price_money = block.settings.product.price_min | money -%}
+        {%- assign price_text = 'from ' | append: price_money -%}
+      {%- elsif block.settings.collection != blank -%}
         {%- assign cheapest = block.settings.collection.products | sort: 'price_min' | first -%}
         {%- if cheapest -%}
           {%- assign price_money = cheapest.price_min | money -%}
@@ -34,6 +38,14 @@
               alt=""
               width="{{ block.settings.image.width }}"
               height="{{ block.settings.image.height }}"
+              loading="lazy"
+            >
+          {% elsif block.settings.product.featured_image %}
+            <img
+              src="{{ block.settings.product.featured_image | image_url: width: 800 }}"
+              alt=""
+              width="{{ block.settings.product.featured_image.width }}"
+              height="{{ block.settings.product.featured_image.height }}"
               loading="lazy"
             >
           {% elsif block.settings.collection.featured_image %}
@@ -60,7 +72,7 @@
             </div>
           {% endif %}
         </div>
-        <h3 class="service-card__title">{{ block.settings.title | default: block.settings.collection.title }}</h3>
+        <h3 class="service-card__title">{{ block.settings.title | default: block.settings.product.title | default: block.settings.collection.title }}</h3>
         {% if price_text != blank %}
           <p class="service-card__subtitle">{{ price_text }}</p>
         {% endif %}
@@ -105,10 +117,11 @@
             { "value": "nail-art", "label": "Nail art" }
           ]
         },
-        { "type": "collection", "id": "collection", "label": "Collection" },
+        { "type": "product", "id": "product", "label": "Product (points the tile at one service and drives its price)" },
+        { "type": "collection", "id": "collection", "label": "Collection (used if no product is chosen)" },
         { "type": "text", "id": "title", "label": "Title override" },
-        { "type": "text", "id": "subtitle", "label": "Subtitle", "default": "from $45" },
-        { "type": "url", "id": "link", "label": "Link (used if no collection is chosen)" }
+        { "type": "text", "id": "subtitle", "label": "Subtitle (used only if neither product nor collection is chosen)", "default": "from $45" },
+        { "type": "url", "id": "link", "label": "Link (used if none of the above are chosen)" }
       ]
     }
   ],

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { redirect, useLoaderData, useNavigate, useSubmit, Form } from "react-router";
+import { redirect, useLoaderData, useActionData, useNavigate, useSubmit, Form } from "react-router";
 import {
   Page,
   Card,
@@ -14,9 +14,10 @@ import {
   ChoiceList,
   Thumbnail,
   Text,
+  Banner,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
-import { Data, Settings, ServiceMetafields } from "getbooqin-core";
+import { Data, Settings, ServiceMetafields, GetBooqinError } from "getbooqin-core";
 import { term, money } from "getbooqin-core/booking/settingsShared";
 import { pushServiceConfigMetafields } from "~/lib/serviceMetafields.server";
 
@@ -63,26 +64,38 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const beforeResourceIds = before ? await Data.resourceIdsForService(shop, before.id) : [];
   const beforeAddonIds = before ? await Data.addonIdsForService(shop, before.id) : [];
 
-  const saved = await Data.saveServiceConfig(
-    shop,
-    "shopify",
-    {
-      product_id: productId,
-      product_handle: productHandle,
-      duration_min: Number(form.get("duration_min") || 30),
-      buffer_before_min: Number(form.get("buffer_before_min") || 0),
-      buffer_after_min: Number(form.get("buffer_after_min") || 0),
-      capacity: Number(form.get("capacity") || 1),
-      location_type: String(form.get("location_type") || "onsite") as "onsite" | "video" | "phone",
-      payment_required: form.get("payment_required") === "true",
-      deposit_percent: Number(form.get("deposit_percent") || 100),
-      status: form.get("status") === "true",
-      color: String(form.get("color") || ""),
-      resource_ids: resourceIds,
-      addon_ids: addonIds,
-    },
-    id
-  );
+  let saved;
+  try {
+    saved = await Data.saveServiceConfig(
+      shop,
+      "shopify",
+      {
+        product_id: productId,
+        product_handle: productHandle,
+        // No `|| 30` fallback: a blank/missing field must fail validation in
+        // Data.saveServiceConfig (NaN isn't finite), not silently become the
+        // same wrong default that got five services booked at the wrong
+        // length in the first place.
+        duration_min: Number(form.get("duration_min")),
+        buffer_before_min: Number(form.get("buffer_before_min") || 0),
+        buffer_after_min: Number(form.get("buffer_after_min") || 0),
+        capacity: Number(form.get("capacity") || 1),
+        location_type: String(form.get("location_type") || "onsite") as "onsite" | "video" | "phone",
+        payment_required: form.get("payment_required") === "true",
+        deposit_percent: Number(form.get("deposit_percent") || 100),
+        status: form.get("status") === "true",
+        color: String(form.get("color") || ""),
+        resource_ids: resourceIds,
+        addon_ids: addonIds,
+      },
+      id
+    );
+  } catch (err) {
+    if (err instanceof GetBooqinError) {
+      return { error: err.message };
+    }
+    throw err;
+  }
 
   // Write-through: only push metafields for fields that actually changed,
   // so an unrelated field edit doesn't spam metafieldsSet with a full

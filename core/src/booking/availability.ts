@@ -14,6 +14,26 @@ import type { Resource } from "@prisma/client";
 import type { CatalogService } from "./data.js";
 import * as Data from "./data.js";
 import { getSettings } from "./settings.js";
+import { GetBooqinError } from "./errors.js";
+
+/**
+ * Data.saveServiceConfig now rejects a non-positive duration at write time,
+ * but the slot generator is the one place a wrong duration turns directly
+ * into a wrong end_utc for every slot it produces — the exact mechanism
+ * that let five real services get double-booked. A loud failure here on a
+ * row that somehow still has no real duration is far better than silently
+ * falling back to some default and generating slots nobody actually
+ * reserved the right length for.
+ */
+function assertDuration(service: CatalogService): void {
+  if (!Number.isFinite(service.durationMin) || service.durationMin <= 0) {
+    throw new GetBooqinError(
+      "getbooqin_missing_duration",
+      `Service "${service.name}" has no valid duration set — refusing to generate slots for it.`,
+      500
+    );
+  }
+}
 
 export interface Slot {
   time: string; // "HH:MM" in the business timezone
@@ -41,6 +61,7 @@ export async function slots(
 ): Promise<Slot[]> {
   const service = await Data.catalogService(shop, serviceId);
   if (!service || !service.status) return [];
+  assertDuration(service);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
 
   const settings = await getSettings(shop, platform);
@@ -189,6 +210,7 @@ export async function daysInMonth(
     Array.from({ length: daysInThisMonth }, (_, i) => ({ date: monthStart.plus({ days: i }).toFormat("yyyy-MM-dd"), count: 0 }));
 
   if (!service || !service.status) return emptyMonth();
+  assertDuration(service);
 
   const settings = await getSettings(shop, platform);
   const interval = Math.max(5, settings.slot_interval);
