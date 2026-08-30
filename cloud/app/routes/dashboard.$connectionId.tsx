@@ -157,17 +157,21 @@ function navItemClass({ isActive }: { isActive: boolean }): string {
 
 export default function ConnectionDashboard({ loaderData, params }: Route.ComponentProps) {
   const { channelCount, pendingCount, label, preset, user } = loaderData;
+  const v = vocabFor(preset);
   const NAV_ITEMS = navItems(preset, pendingCount);
   const base = `/dashboard/${params.connectionId}`;
 
-  // Below md: <aside> is an off-canvas drawer toggled by this checkbox (no
-  // JS needed for the toggle itself — a topbar <label htmlFor> flips it —
-  // so it still works with JS disabled). The state below is a JS-only
-  // enhancement layered on top: closed, off-canvas but not `inert`, the
-  // drawer's 12 nav links stayed in the tab order ahead of the page, and
-  // the toggle button had no `aria-expanded` for a screen-reader user to
-  // tell it was closed at all (UX audit's M9 finding).
-  const navToggleRef = useRef<HTMLInputElement>(null);
+  // Below md: <aside> is an off-canvas drawer toggled by the topbar button
+  // below. That button used to be a <label htmlFor> wearing role="button"
+  // so it could carry aria-expanded/aria-controls (a bare <label> can't) —
+  // it wasn't itself focusable or keyboard-operable, so the accessible
+  // toggle a screen-reader user could reach was a label announcing the
+  // right state, sitting right next to a real, tabbable but unlabeled
+  // checkbox with none of that state (UX audit's #13 finding, on top of
+  // the earlier #M9 aria-expanded fix). A real <button> is both at once;
+  // the dashboard already requires JS for everything else on the page, so
+  // there's nothing left to preserve by keeping a JS-optional checkbox
+  // here too.
   const [navOpen, setNavOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const location = useLocation();
@@ -181,7 +185,6 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
   }, []);
 
   useEffect(() => {
-    if (navToggleRef.current) navToggleRef.current.checked = false;
     setNavOpen(false);
   }, [location.pathname]);
 
@@ -208,23 +211,17 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
 
   return (
     <div className="flex min-h-dvh">
-      <input
-        ref={navToggleRef}
-        type="checkbox"
-        id="nav-toggle"
-        className="peer sr-only"
-        checked={navOpen}
-        onChange={(e) => setNavOpen(e.currentTarget.checked)}
-      />
-      <label
-        htmlFor="nav-toggle"
-        aria-hidden="true"
-        className="fixed inset-0 z-30 hidden bg-black/40 peer-checked:block md:!hidden"
-      />
+      {navOpen && (
+        <div
+          aria-hidden="true"
+          onClick={() => setNavOpen(false)}
+          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+        />
+      )}
       <aside
         ref={asideRef}
         id="dashboard-nav"
-        className="side-dark fixed inset-y-0 left-0 z-40 flex w-[252px] shrink-0 -translate-x-full flex-col overflow-y-auto border-r border-line px-[14px] py-[18px] transition-transform duration-200 peer-checked:translate-x-0 md:sticky md:top-0 md:h-dvh md:translate-x-0">
+        className={`side-dark fixed inset-y-0 left-0 z-40 flex w-[252px] shrink-0 flex-col overflow-y-auto border-r border-line px-[14px] py-[18px] transition-transform duration-200 md:sticky md:top-0 md:h-dvh md:translate-x-0 ${navOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex items-center justify-between gap-2">
           <span className="flex h-[30px] w-[30px] shrink-0 flex-col justify-center gap-[3px] rounded-[8px] bg-brand-950 p-[6px]">
             <span className="h-[6px] rounded-[2px] bg-brand-500" />
@@ -271,19 +268,19 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-center gap-3 border-b border-line bg-surface px-4 py-3 md:hidden">
-          <label
-            htmlFor="nav-toggle"
-            role="button"
+          <button
+            type="button"
             aria-label="Toggle navigation"
             aria-expanded={navOpen}
             aria-controls="dashboard-nav"
+            onClick={() => setNavOpen((v) => !v)}
             className="btn-sec cursor-pointer px-[10px] py-[6px]"
           >
             <span className="sr-only">Toggle navigation</span>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
               <path d="M2 4h12M2 8h12M2 12h12" strokeLinecap="round" />
             </svg>
-          </label>
+          </button>
           <span className="truncate text-[13.5px] font-semibold">{label}</span>
         </div>
         {/* Not <main> — root.tsx already provides the page's one <main>
@@ -291,7 +288,7 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
             violation (only one <main> per document). */}
         <div className="min-w-0 flex-1">
           <div className="page">
-            <Outlet />
+            <Outlet context={{ vocab: v }} />
           </div>
         </div>
       </div>

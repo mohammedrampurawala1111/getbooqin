@@ -39,6 +39,21 @@ export const SETTINGS_NAV = [
 
 export type SettingsKey = typeof SETTINGS_NAV[number]["items"][number]["key"];
 
+// The route's own ?page= value used to be cast straight to SettingsKey with
+// `as` — an unrecognized value (a typo, a stale link, a preset id someone
+// pasted into the wrong param) matched none of the route's `page === "x"`
+// blocks, so the content pane rendered nothing while the nav/title still
+// looked normal via settingsMeta's own fallback below (UX audit's #7
+// finding). "profile"/"security" are the /account route's own tab values,
+// not valid here.
+const SETTINGS_PAGE_KEYS: readonly string[] = SETTINGS_NAV.find((g) => g.group === "Business")!.items.map(
+  (i) => i.key
+);
+
+export function isSettingsPage(value: string | null): value is SettingsKey {
+  return !!value && SETTINGS_PAGE_KEYS.includes(value);
+}
+
 export function settingsMeta(key: string) {
   for (const g of SETTINGS_NAV) {
     const hit = g.items.find((i) => i.key === key);
@@ -148,12 +163,20 @@ export function ToggleRow({
   name, label, hint, defaultChecked,
 }: { name: string; label: string; hint: string; defaultChecked?: boolean }) {
   return (
-    <label className="flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-1 border-b border-row px-[18px] py-[13px]">
+    <label className="group flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-1 border-b border-row px-[18px] py-[13px]">
       <input type="checkbox" name={name} defaultChecked={defaultChecked} className="peer sr-only" />
       <span className="flex-[0_0_200px] text-[13px] font-medium">{label}</span>
       <span className="min-w-0 flex-[1_1_160px] text-meta text-muted">{hint}</span>
       <span className="flex h-5 w-[34px] shrink-0 rounded-full bg-[#d3d7e0] p-[2px] peer-checked:bg-brand-500">
-        <span className="h-4 w-4 rounded-full bg-white shadow-[0_1px_2px_rgba(16,24,40,.2)] transition-transform peer-checked:translate-x-[14px]" />
+        {/* `peer-checked` only matches true siblings of the checkbox — this
+            knob is a child of the track span above, one level too deep, so
+            peer-checked never applied and the knob never visibly moved,
+            only the track's background did (UX audit's #4 finding — the
+            same class of bug already fixed in ui.tsx's Toggle and the
+            inline toggle in account.tsx; this row had drifted from that
+            pattern). group-has-checked reaches into descendants via
+            `:has()` on the <label>, which does match here. */}
+        <span className="h-4 w-4 rounded-full bg-white shadow-[0_1px_2px_rgba(16,24,40,.2)] transition-transform group-has-checked:translate-x-[14px]" />
       </span>
     </label>
   );

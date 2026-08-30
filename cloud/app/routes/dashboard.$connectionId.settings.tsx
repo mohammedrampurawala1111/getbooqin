@@ -7,13 +7,28 @@ import { getClerkClient } from "~/session.server";
 import { Badge, TimezoneSelect, Toggle } from "~/components/ui";
 import { IntegrationRow } from "~/components/onboarding";
 import { TemplateConfig, overviewCards, type OverviewCardKey } from "~/components/account";
-import { SettingsShell, Row, RowInput, ToggleRow, SettingsCard, type SettingsKey } from "~/components/settings";
+import { SettingsShell, Row, RowInput, ToggleRow, SettingsCard, isSettingsPage } from "~/components/settings";
 import { INTEGRATIONS, type PresetId } from "~/lib/presets";
 import { PHONE_PATTERN } from "~/lib/validation";
 
 export const meta: Route.MetaFunction = () => [{ title: "Settings · GetBooqin" }];
 
 export async function loader({ request, params }: Route.LoaderArgs) {
+  const url = new URL(request.url);
+  // Settings moved off tab-nav onto the ?page= rail; a bookmarked or
+  // linked ?tab=... URL from before that migration used to silently land
+  // on General instead of the section it named (UX audit's #7 finding,
+  // second half — the dashboard._index.tsx empty-state hrefs already
+  // worked around this same gap by never emitting a ?tab= link in the
+  // first place, but an old external link still can). Only rewrites when
+  // ?page= isn't already present, so a modern link that happens to also
+  // carry a stray ?tab= isn't clobbered.
+  if (url.searchParams.has("tab") && !url.searchParams.has("page")) {
+    url.searchParams.set("page", url.searchParams.get("tab")!);
+    url.searchParams.delete("tab");
+    throw redirect(url.pathname + url.search);
+  }
+
   const { userId, connection, shop, platform } = await requireTenant(request, params.connectionId);
   const settings = await Settings.getSettings(shop, platform);
   const connections = await listUserConnections(userId);
@@ -134,7 +149,8 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
   const businessEmailValue = settings.business_email || accountEmail;
   const adminEmailValue = settings.admin_email || accountEmail;
   const [searchParams] = useSearchParams();
-  const page = (searchParams.get("page") || "general") as SettingsKey;
+  const rawPage = searchParams.get("page");
+  const page = isSettingsPage(rawPage) ? rawPage : "general";
   const savedAt = actionData?.saved ? "just now" : undefined;
   const base = `/dashboard/${currentConnectionId}`;
 

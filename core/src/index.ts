@@ -22,6 +22,7 @@ export * as MeetingManager from "./booking/meetingManager.js";
 export * as Mailer from "./booking/mailer.js";
 export * as ChatFlow from "./booking/chatFlow.js";
 export * as Settings from "./booking/settings.js";
+export * as TZ from "./booking/tz.js";
 export * as Metrics from "./booking/metrics.js";
 export * as ServiceMetafields from "./booking/serviceMetafields.js";
 export * as Presets from "./booking/presets.js";

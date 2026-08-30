@@ -3,8 +3,12 @@ import type { Route } from "./+types/dashboard.$connectionId.bookings";
 import { Bookings, Data } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { PageHeader, Badge, EmptyState } from "~/components/ui";
+import { useVocabulary, vocabFor } from "~/lib/presets";
+import { dashboardPreset } from "~/lib/dashboardMeta";
 
-export const meta: Route.MetaFunction = () => [{ title: "Bookings · GetBooqin" }];
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: `${vocabFor(dashboardPreset(matches)).bookingTitle} · GetBooqin` },
+];
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId);
@@ -35,10 +39,11 @@ export default function BookingsList({ loaderData, params }: Route.ComponentProp
   const { bookings, status, search, filtered, totalCount, statuses, labels } = loaderData;
   const base = `/dashboard/${params.connectionId}`;
   const noBookingsAtAll = !filtered && totalCount === 0;
+  const v = useVocabulary();
 
   return (
     <div className="flex flex-col gap-[18px]">
-      <PageHeader title="Bookings" />
+      <PageHeader title={v.bookingTitle} />
 
       <div className="card">
         <div className="card-header">
@@ -71,7 +76,7 @@ export default function BookingsList({ loaderData, params }: Route.ComponentProp
                 <path d="M2.5 7h13M6 2v3M12 2v3" strokeLinecap="round" />
               </svg>
             }
-            title={noBookingsAtAll ? "No bookings yet" : "No bookings match this filter"}
+            title={noBookingsAtAll ? `No ${v.bookingMany} yet` : `No ${v.bookingMany} match this filter`}
             body={
               noBookingsAtAll
                 ? "Once someone books, it shows up here."

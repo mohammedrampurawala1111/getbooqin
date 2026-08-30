@@ -5,7 +5,7 @@ import type { Route } from "./+types/onboarding";
 import { getClerkClient, requireUserSession } from "~/session.server";
 import { AlertError, Field, Input, Toggle, TimezoneSelect } from "~/components/ui";
 import { OnboardingShell, PresetTiles, PresetScaffold, IntegrationRow } from "~/components/onboarding";
-import { INTEGRATIONS, getPreset, type PresetId } from "~/lib/presets";
+import { INTEGRATIONS, getPreset, vocabFor, type PresetId } from "~/lib/presets";
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 import { CURRENCIES, guessCurrency } from "~/lib/currency";
 import { Data, Settings, createManualConnection, getUserConnection, listUserConnections } from "getbooqin-core";
@@ -468,6 +468,7 @@ function StepSetup({
 }) {
   const [touched, setTouched] = useState(false);
   const nameMissing = touched && !state.resourceName.trim();
+  const v = vocabFor(state.preset);
 
   function handleNext() {
     if (!state.resourceName.trim()) {
@@ -482,10 +483,15 @@ function StepSetup({
       <h1 className="ob-h1">Your setup</h1>
       <PresetScaffold presetId={state.preset} />
       <div className="card p-[18px]">
-        <h2 className="card-title mb-3">Add your first {getPreset(state.preset).vocab.resource.toLowerCase()}</h2>
+        <h2 className="card-title mb-3">Add your first {v.resourceOne}</h2>
         <Field
           label="Name"
-          hint={nameMissing ? undefined : "A staff member, room, table or bay — whatever takes your bookings. You can add more later."}
+          // Genericized to "staff member, room, table or bay" for every
+          // industry, even restaurants (whose "resource" is a table, not a
+          // person) and clinics (whose auditor expects "Practitioner", not
+          // "staff member") — vocabFor's resourceOne/bookingMany already
+          // carry the right noun for this preset (UX audit's #5 finding).
+          hint={nameMissing ? undefined : `A ${v.resourceOne} — whatever takes your ${v.bookingMany}. You can add more later.`}
           error={nameMissing ? "A booking system needs at least one of these — add a name to continue." : undefined}
         >
           <Input value={state.resourceName} onChange={(e) => update({ resourceName: e.target.value })} placeholder="e.g. Alex Rivera" />
@@ -549,6 +555,7 @@ function StepIntegrations({
 function StepGoLive({
   state, cid, update, onBack,
 }: { state: OnboardingState; cid: string; update: (p: Partial<OnboardingState>) => void; onBack: () => void }) {
+  const v = vocabFor(state.preset);
   return (
     <>
       <h1 className="ob-h1">Go live</h1>
@@ -569,7 +576,7 @@ function StepGoLive({
       <div className="card p-[18px]">
         <h2 className="card-title mb-3">Finish setup</h2>
         <p className="mb-3 -mt-1 text-meta text-muted">
-          Connect Shopify to sync your product catalogue as bookable services, or go live now and connect a
+          Connect Shopify to sync your product catalogue as {v.services.toLowerCase()}, or go live now and connect a
           store later from Settings.
         </p>
         <ShopifyConnectForm state={state} cid={cid} submitLabel="Connect your store & go live" />

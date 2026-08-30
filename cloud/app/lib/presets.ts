@@ -7,6 +7,8 @@
    preview data (sample services, hours, tint) used before a real store
    exists to attach real Services/Settings to. */
 
+import { useOutletContext } from "react-router";
+
 export type PresetId =
   | "generic" | "clinic" | "salon" | "automotive" | "legal"
   | "education" | "fitness" | "realestate" | "restaurant" | "homeservice";
@@ -24,7 +26,6 @@ export type Preset = {
     resources: string;        // section heading for who/what takes them
   };
   services: { name: string; minutes: number }[];
-  hours: string;              // human summary shown in onboarding
   open: boolean[];            // Mon..Sun
   range: string;              // default open range for open days
 };
@@ -39,7 +40,6 @@ export const PRESETS: Preset[] = [
       { name: "Consultation", minutes: 30 },
       { name: "Follow-up", minutes: 45 },
     ],
-    hours: "Mon–Fri 09:00–17:00, weekends closed",
     open: [true, true, true, true, true, false, false], range: "09:00–17:00",
   },
   {
@@ -51,7 +51,6 @@ export const PRESETS: Preset[] = [
       { name: "Physiotherapy session", minutes: 40 },
       { name: "Vaccination", minutes: 15 },
     ],
-    hours: "Mon–Fri 08:00–18:00, Sat mornings",
     open: [true, true, true, true, true, true, false], range: "08:00–18:00",
   },
   {
@@ -63,7 +62,6 @@ export const PRESETS: Preset[] = [
       { name: "Gel manicure", minutes: 45 },
       { name: "Beard trim", minutes: 20 },
     ],
-    hours: "Tue–Sat 09:00–18:00, late Thursdays",
     open: [false, true, true, true, true, true, false], range: "09:00–18:00",
   },
   {
@@ -75,7 +73,6 @@ export const PRESETS: Preset[] = [
       { name: "Tyre change", minutes: 45 },
       { name: "Diagnostics", minutes: 90 },
     ],
-    hours: "Mon–Fri 08:00–17:30",
     open: [true, true, true, true, true, false, false], range: "08:00–17:30",
   },
   {
@@ -87,7 +84,6 @@ export const PRESETS: Preset[] = [
       { name: "Document review", minutes: 90 },
       { name: "Quarterly review", minutes: 60 },
     ],
-    hours: "Mon–Fri 09:00–18:00",
     open: [true, true, true, true, true, false, false], range: "09:00–18:00",
   },
   {
@@ -99,7 +95,6 @@ export const PRESETS: Preset[] = [
       { name: "Trial lesson", minutes: 30 },
       { name: "Exam prep block", minutes: 120 },
     ],
-    hours: "Mon–Fri 15:00–20:00, Sat 09:00–14:00",
     open: [true, true, true, true, true, true, false], range: "15:00–20:00",
   },
   {
@@ -111,7 +106,6 @@ export const PRESETS: Preset[] = [
       { name: "Assessment", minutes: 30 },
       { name: "Recovery session", minutes: 30 },
     ],
-    hours: "Mon–Sun 06:00–21:00",
     open: [true, true, true, true, true, true, true], range: "06:00–21:00",
   },
   {
@@ -123,7 +117,6 @@ export const PRESETS: Preset[] = [
       { name: "Valuation visit", minutes: 60 },
       { name: "Open house slot", minutes: 120 },
     ],
-    hours: "Mon–Sat 09:00–19:00",
     open: [true, true, true, true, true, true, false], range: "09:00–19:00",
   },
   {
@@ -135,7 +128,6 @@ export const PRESETS: Preset[] = [
       { name: "Private dining", minutes: 180 },
       { name: "Bar seating", minutes: 60 },
     ],
-    hours: "Tue–Sun 12:00–23:00",
     open: [false, true, true, true, true, true, true], range: "12:00–23:00",
   },
   {
@@ -147,12 +139,31 @@ export const PRESETS: Preset[] = [
       { name: "Annual service", minutes: 60 },
       { name: "Emergency callout", minutes: 90 },
     ],
-    hours: "Mon–Sat 07:30–17:00",
     open: [true, true, true, true, true, true, false], range: "07:30–17:00",
   },
 ];
 
 export const DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+
+// Onboarding's business-hours preview used to carry its own hand-written
+// summary line (Preset.hours) alongside the real open/range data shown
+// right below it — Clinic's said "Sat mornings" while its data had Saturday
+// open the same full 08:00–18:00 as every other day, and Education's said a
+// distinct "Sat 09:00–14:00" that didn't exist anywhere in its data either
+// (UX audit's #9 finding, and the same shape of bug in a preset the
+// auditor's pass hadn't reached yet). Generating the summary from open/range
+// instead means it can't drift from the schedule shown beneath it, for any
+// preset, ever again.
+export function summarizeHours(open: readonly boolean[], range: string): string {
+  const openDays = open.map((isOpen, i) => (isOpen ? i : -1)).filter((i) => i >= 0);
+  if (openDays.length === 0) return "Closed";
+  if (openDays.length === 7) return `Every day ${range}`;
+  const isContiguousRun = openDays.every((day, idx) => idx === 0 || day === openDays[idx - 1] + 1);
+  const dayPart = isContiguousRun
+    ? `${DAY_ABBR[openDays[0]]}–${DAY_ABBR[openDays[openDays.length - 1]]}`
+    : openDays.map((day) => DAY_ABBR[day]).join(", ");
+  return `${dayPart} ${range}`;
+}
 
 export function getPreset(id: string | null | undefined): Preset {
   return PRESETS.find((p) => p.id === id) ?? PRESETS[0];
@@ -172,6 +183,21 @@ export function vocabFor(id: string | null | undefined) {
     resources: p.vocab.resources,
     services: p.vocab.services,
   };
+}
+
+export type Vocabulary = ReturnType<typeof vocabFor>;
+
+// Every dashboard.$connectionId.* route is a direct child of that layout's
+// <Outlet>, which passes { vocab } down via context — one Settings lookup
+// per request instead of every list/detail route re-querying it just to
+// reach the same preset id. Only the sidebar nav (dashboard.$connectionId.
+// tsx itself) used vocabFor() before; page <h1>s, stat tiles and empty
+// states elsewhere still read the generic English nouns hardcoded in each
+// route (UX audit's #5 finding) — this is the one place to call instead so
+// that gap can't reopen route by route.
+export function useVocabulary(): Vocabulary {
+  const ctx = useOutletContext<{ vocab: Vocabulary } | undefined>();
+  return ctx?.vocab ?? vocabFor(null);
 }
 
 /* ------------------------------------------------------------------ */

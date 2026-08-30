@@ -6,7 +6,7 @@ import { paymentStatusLabels } from "getbooqin-core/booking/bookingsShared";
 import { requireTenant } from "~/tenant.server";
 import { PageHeader, StatCard, BarChart, MeterRow, EmptyState } from "~/components/ui";
 import { SetupChecklist, EmptyStat } from "~/components/onboarding";
-import { setupSummary } from "~/lib/presets";
+import { setupSummary, useVocabulary } from "~/lib/presets";
 
 export const meta: Route.MetaFunction = () => [{ title: "Overview · GetBooqin" }];
 
@@ -85,6 +85,8 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
   const totalBookings = overview.bookingsSeries.reduce((sum, d) => sum + d.count, 0);
   const paymentLabels = paymentStatusLabels();
   const paymentTotal = overview.paymentBreakdown.reduce((sum, p) => sum + p.count, 0);
+  const v = useVocabulary();
+  const resourceOneCap = v.resourceOne.charAt(0).toUpperCase() + v.resourceOne.slice(1);
 
   if (allTimeBookingCount === 0) {
     return <EmptyOverview connectionId={params.connectionId} setupFacts={setupFacts} />;
@@ -117,9 +119,9 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
         <div className={`grid gap-[14px] ${STAT_GRID[statCount]}`}>
           {showStats && (
             <>
-              <StatCard label="Bookings in range" value={String(totalBookings)} />
+              <StatCard label={`${v.bookingTitle} in range`} value={String(totalBookings)} />
               <StatCard label="Pending approval" value={String(pendingCount)} tone={pendingCount > 0 ? "warn" : "muted"} />
-              <StatCard label="Active services" value={String(activeServiceCount)} />
+              <StatCard label={`Active ${v.services.toLowerCase()}`} value={String(activeServiceCount)} />
             </>
           )}
           {showNoShow && (
@@ -135,7 +137,7 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
       {showChart && (
         <div className="card">
           <div className="card-header">
-            <h2 className="card-title">Bookings</h2>
+            <h2 className="card-title">{v.bookingTitle}</h2>
           </div>
           <div className="card-body">
             <BarChart data={overview.bookingsSeries} />
@@ -191,11 +193,11 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
           {showTopServices && (
             <div className="card">
               <div className="card-header">
-                <h2 className="card-title">Top services</h2>
+                <h2 className="card-title">Top {v.services.toLowerCase()}</h2>
               </div>
               <div className="card-body">
                 {overview.topServices.length === 0 ? (
-                  <p className="m-0 text-body text-muted">No bookings in range yet.</p>
+                  <p className="m-0 text-body text-muted">No {v.bookingMany} in range yet.</p>
                 ) : (
                   <div className="flex flex-col gap-3">
                     {overview.topServices.map((s) => (
@@ -217,11 +219,11 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
       {showUtilisation && (
         <div className="card">
           <div className="card-header">
-            <h2 className="card-title">Resource utilization</h2>
+            <h2 className="card-title">{resourceOneCap} utilization</h2>
           </div>
           <div className="card-body flex flex-col gap-4">
             {overview.resourceUtilization.length === 0 ? (
-              <p className="m-0 text-body text-muted">No active resources.</p>
+              <p className="m-0 text-body text-muted">No active {v.resources.toLowerCase()}.</p>
             ) : (
               overview.resourceUtilization.map((r) => (
                 <MeterRow
@@ -251,6 +253,7 @@ function EmptyOverview({
 }) {
   const base = `/dashboard/${connectionId}`;
   const summary = setupSummary(setupFacts);
+  const v = useVocabulary();
   const hrefs: Record<string, string> = {
     // Was ?tab=… — stale since Settings moved off tabs onto the rail
     // (?page=…); every one of these silently landed on General instead of
@@ -269,12 +272,12 @@ function EmptyOverview({
       <PageHeader title="Overview" subtitle={summary.headline} />
 
       <div className="grid grid-cols-2 gap-[14px] md:grid-cols-4">
-        <EmptyStat label="Bookings" value="0" note="Waiting on setup" />
+        <EmptyStat label={v.bookingTitle} value="0" note="Waiting on setup" />
         <EmptyStat label="Pending approval" value="0" note="Waiting on setup" />
         <EmptyStat
-          label="Active services"
+          label={`Active ${v.services.toLowerCase()}`}
           value={String(setupFacts.serviceCount)}
-          note={setupFacts.isManual ? "Added from Services" : "From your store catalogue"}
+          note={setupFacts.isManual ? `Added from ${v.services}` : "From your store catalogue"}
         />
         <EmptyStat label="No-show rate" value="—" note="Needs bookings first" />
       </div>
@@ -293,7 +296,7 @@ function EmptyOverview({
               <path d="M2.5 7h13M6 2v3M12 2v3" strokeLinecap="round" />
             </svg>
           }
-          title="No bookings yet"
+          title={`No ${v.bookingMany} yet`}
           body="Once your setup is finished and someone books, activity shows up here."
         />
       </div>

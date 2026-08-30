@@ -3,8 +3,12 @@ import type { Route } from "./+types/dashboard.$connectionId.customers";
 import { Data } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { PageHeader, EmptyState } from "~/components/ui";
+import { useVocabulary, vocabFor } from "~/lib/presets";
+import { dashboardPreset } from "~/lib/dashboardMeta";
 
-export const meta: Route.MetaFunction = () => [{ title: "Customers · GetBooqin" }];
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: `${vocabFor(dashboardPreset(matches)).customers} · GetBooqin` },
+];
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId);
@@ -16,10 +20,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
 export default function Customers({ loaderData }: Route.ComponentProps) {
   const { customers, search } = loaderData;
+  const v = useVocabulary();
 
   return (
     <div className="flex flex-col gap-[18px]">
-      <PageHeader title="Customers" />
+      <PageHeader title={v.customers} />
 
       <div className="card">
         <div className="card-header">
@@ -39,7 +44,7 @@ export default function Customers({ loaderData }: Route.ComponentProps) {
                 <path d="M3.5 15c.6-3 2.8-5 5.5-5s4.9 2 5.5 5" strokeLinecap="round" />
               </svg>
             }
-            title={search ? "No results" : "No customers yet"}
+            title={search ? "No results" : `No ${v.customers.toLowerCase()} yet`}
             body={search ? `Nothing matches "${search}".` : "Once someone books, they show up here."}
           />
         ) : (

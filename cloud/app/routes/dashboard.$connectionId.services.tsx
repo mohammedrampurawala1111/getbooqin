@@ -3,8 +3,12 @@ import type { Route } from "./+types/dashboard.$connectionId.services";
 import { Data, Settings, ShopifyAdmin, decryptCredentials } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, PageHeader, DataTable, EmptyState, Badge } from "~/components/ui";
+import { useVocabulary, vocabFor } from "~/lib/presets";
+import { dashboardPreset } from "~/lib/dashboardMeta";
 
-export const meta: Route.MetaFunction = () => [{ title: "Services · GetBooqin" }];
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: `${vocabFor(dashboardPreset(matches)).services} · GetBooqin` },
+];
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform, connection } = await requireTenant(request, params.connectionId);
@@ -34,15 +38,16 @@ export async function action({ request, params }: Route.ActionArgs) {
 export default function ServicesList({ loaderData, actionData, params }: Route.ComponentProps) {
   const { services, platform, currencySymbol } = loaderData;
   const base = `/dashboard/${params.connectionId}`;
+  const v = useVocabulary();
 
   return (
     <div className="flex flex-col gap-[18px]">
       <PageHeader
-        title="Services"
+        title={v.services}
         subtitle={
           platform === "shopify"
             ? "Name, price, and description come from the connected store's product catalog. Click a service to configure booking settings only."
-            : "Add and edit the services you offer, or configure booking settings for an existing one."
+            : `Add and edit the ${v.services.toLowerCase()} you offer, or configure booking settings for an existing one.`
         }
         actions={
           platform === "shopify" ? (
@@ -101,11 +106,11 @@ export default function ServicesList({ loaderData, actionData, params }: Route.C
                 <path d="M6 9h6M9 6v6" strokeLinecap="round" />
               </svg>
             }
-            title="No services yet"
+            title={`No ${v.services.toLowerCase()} yet`}
             body={
               platform === "shopify"
                 ? 'Sync products, then a product typed "Service" becomes bookable automatically.'
-                : "Add your first service to start taking bookings."
+                : `Add some ${v.services.toLowerCase()} to start taking ${v.bookingMany}.`
             }
             action={
               platform !== "shopify" ? (

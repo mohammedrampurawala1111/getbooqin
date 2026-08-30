@@ -48,13 +48,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
   return (
     <div className="mkt-shell">
-      {/* group + group-has-checked (not peer-checked — see ui.tsx's Toggle
-          for why: the mobile panel below isn't a direct sibling of the
-          checkbox) drives the collapsed menu. Below md, Product/
+      {/* navOpen drives the collapsed menu directly. Below md, Product/
           Integrations/Industries/Pricing used to just disappear with
           nothing replacing them (UX audit's M4 finding) — a visitor on a
           phone couldn't reach pricing except by scrolling the whole page. */}
-      <div className="mkt-bar group">
+      <div className="mkt-bar">
         <div className="mkt-wrap flex h-[60px] items-center gap-7">
           <a href="/" className="flex items-center gap-[9px] no-underline hover:no-underline">
             <LogoMark size={26} />
@@ -89,35 +87,33 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 <a href="/signup" className="mkt-cta text-[13px] no-underline hover:no-underline">Sign up free</a>
               </>
             )}
-            <input
-              type="checkbox"
-              id="mkt-nav-toggle"
-              className="peer sr-only md:hidden"
-              checked={navOpen}
-              onChange={(e) => setNavOpen(e.currentTarget.checked)}
-            />
-            {/* role="button" because aria-expanded/aria-controls aren't
-                allowed on a bare <label> — browsers silently drop them, so
-                a screen-reader user has no way to tell the menu's open
-                state (same fix as the dashboard sidebar's toggle, UX
-                audit's K2 finding). Still a real <label htmlFor>, so this
-                keeps working with JS disabled — navOpen is a client-side
-                enhancement layered on top, not a requirement. */}
-            <label
-              htmlFor="mkt-nav-toggle"
-              role="button"
+            {/* Was a <label role="button"> for a hidden checkbox — role=
+                "button" let it carry aria-expanded/aria-controls (a bare
+                <label> can't), but the label itself was never focusable or
+                keyboard-operable, so a keyboard/screen-reader user could
+                only tab onto the plain, unlabeled checkbox next to it —
+                the element actually describing "menu, collapsed" was
+                unreachable (UX audit's #13 finding; same fix applied to
+                the dashboard sidebar's identical toggle). A real <button>
+                is both focusable and the thing announcing its own state.
+                This page hydrates like the rest of the app, so nothing
+                that worked pre-JS via the label→checkbox click delegation
+                is lost in practice. */}
+            <button
+              type="button"
               aria-label="Toggle menu"
               aria-expanded={navOpen}
               aria-controls="mkt-mobile-nav"
+              onClick={() => setNavOpen((v) => !v)}
               className="btn-sec cursor-pointer px-[10px] py-[6px] md:hidden"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path d="M2 4h12M2 8h12M2 12h12" strokeLinecap="round" />
               </svg>
-            </label>
+            </button>
           </div>
         </div>
-        <nav id="mkt-mobile-nav" className="hidden flex-col gap-1 border-t border-line px-7 py-3 group-has-checked:flex md:hidden">
+        <nav id="mkt-mobile-nav" className={`${navOpen ? "flex" : "hidden"} flex-col gap-1 border-t border-line px-7 py-3 md:hidden`}>
           <a href="#product" className="mkt-link py-[9px]">Product</a>
           <a href="#integrations" className="mkt-link py-[9px]">Integrations</a>
           <a href="#industries" className="mkt-link py-[9px]">Industries</a>

@@ -1,12 +1,16 @@
 import { useState } from "react";
 import { Form, data, redirect } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.resources.$resourceId";
-import { Data } from "getbooqin-core";
+import { Data, Settings } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
-import { Field, Input, Toggle, CheckCard } from "~/components/ui";
+import { Field, Input, Toggle, CheckCard, TimezoneSelect, ConfirmDialog } from "~/components/ui";
+import { getPreset, useVocabulary, vocabFor } from "~/lib/presets";
+import { dashboardPreset } from "~/lib/dashboardMeta";
 
-export const meta: Route.MetaFunction = ({ params }) => [
-  { title: `${params.resourceId === "new" ? "Add" : "Edit"} staff / resource · GetBooqin` },
+export const meta: Route.MetaFunction = ({ params, matches }) => [
+  {
+    title: `${params.resourceId === "new" ? "Add" : "Edit"} ${vocabFor(dashboardPreset(matches)).resourceOne} · GetBooqin`,
+  },
 ];
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -19,15 +23,35 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const resource = isNew ? null : await Data.resource(shop, id);
   if (!isNew && !resource) throw data("Resource not found", { status: 404 });
 
-  const [services, schedule, linkedServiceIds] = await Promise.all([
+  const [services, schedule, linkedServiceIds, settings] = await Promise.all([
     Data.catalogServices(shop, platform, true),
     isNew ? Promise.resolve([]) : Data.schedule(shop, id),
     isNew ? Promise.resolve([]) : Data.serviceIdsForResource(shop, id),
+    Settings.getSettings(shop, platform),
   ]);
 
-  const scheduleByDay = new Map(schedule.map((s) => [s.dayOfWeek, s]));
+  const scheduleByDay: Record<number, { startTime: string; endTime: string }> = {};
+  for (const s of schedule) scheduleByDay[s.dayOfWeek] = { startTime: s.startTime, endTime: s.endTime };
 
-  return { resource, services, scheduleByDay: Object.fromEntries(scheduleByDay), linkedServiceIds, isNew };
+  // A resource created with every day off and 0 bookable hours can't take
+  // any bookings, yet the Overview checklist counted "Add resources" done
+  // the moment one merely existed — onboarding's own step 2 already
+  // *previewed* the business's hours from its industry preset and then
+  // never carried them into the resource it creates (UX audit's #2
+  // finding). Seed a brand-new resource's schedule from that same preset
+  // instead of leaving every day unchecked; the merchant can still turn
+  // any day off before saving, same as always.
+  if (isNew) {
+    const preset = getPreset(settings.preset);
+    const [start, end] = preset.range.split("–");
+    for (let day = 0; day < 7; day++) {
+      // DAYS below is Sunday-first (index 0); preset.open is Monday-first.
+      const presetDay = day === 0 ? 6 : day - 1;
+      if (preset.open[presetDay]) scheduleByDay[day] = { startTime: start, endTime: end };
+    }
+  }
+
+  return { resource, services, scheduleByDay, linkedServiceIds, isNew, timezone: settings.timezone };
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
@@ -65,7 +89,16 @@ export async function action({ request, params }: Route.ActionArgs) {
     id
   );
 
-  return redirect(`/dashboard/${params.connectionId}/resources/${saved.id}`);
+  // A new resource still needs the redirect — its URL is /resources/new
+  // until it has a real id. Editing an existing one redirected to the
+  // exact URL it was already on, so a save looked like nothing had
+  // happened at all (UX audit's #14 finding); returning saved:true instead
+  // renders the same "Saved." feedback the rest of the app already uses
+  // (SettingsCard's savedAt, PasswordCard) without a pointless navigation.
+  if (isNew) {
+    return redirect(`/dashboard/${params.connectionId}/resources/${saved.id}`);
+  }
+  return { saved: true };
 }
 
 function hoursBetween(start: string, end: string): number {
@@ -78,10 +111,11 @@ function formatHours(h: number): string {
   return h % 1 === 0 ? `${h}h` : `${h.toFixed(1)}h`;
 }
 
-export default function ResourceDetail({ loaderData, params }: Route.ComponentProps) {
-  const { resource, services, scheduleByDay, linkedServiceIds, isNew } = loaderData;
+export default function ResourceDetail({ loaderData, actionData, params }: Route.ComponentProps) {
+  const { resource, services, scheduleByDay, linkedServiceIds, isNew, timezone } = loaderData;
   const base = `/dashboard/${params.connectionId}`;
   const byDay = scheduleByDay as Record<number, { startTime: string; endTime: string } | undefined>;
+  const v = useVocabulary();
 
   const [enabled, setEnabled] = useState<boolean[]>(DAYS.map((_, day) => !!byDay[day]));
   const totalHours = DAYS.reduce((sum, _, day) => {
@@ -120,8 +154,16 @@ export default function ResourceDetail({ loaderData, params }: Route.ComponentPr
             <Field label="Video meeting link">
               <Input name="meeting_link" defaultValue={resource?.meetingLink ?? ""} />
             </Field>
-            <Field label="Timezone override" hint="e.g. America/New_York">
-              <Input name="timezone" defaultValue={resource?.timezone ?? ""} placeholder="e.g. America/New_York" />
+            {/* Free-text timezone with the placeholder repeated as its own
+                hint underneath — both patterns already fixed elsewhere
+                (Settings' own timezone field, and the Shopify-domain
+                field's duplicated hint) and both back here (UX audit's
+                #10 finding). Defaults to the business's own timezone
+                rather than empty, so this resource always has one
+                concrete, valid zone selected — not a landmine unset value
+                a booking calculation could silently misread later. */}
+            <Field label="Timezone" hint="Business default, unless changed here">
+              <TimezoneSelect name="timezone" defaultValue={resource?.timezone || timezone} />
             </Field>
             <div className="col-span-2">
               <Field label="Description">
@@ -153,12 +195,19 @@ export default function ResourceDetail({ loaderData, params }: Route.ComponentPr
                     label={label}
                     onChange={(checked) => setEnabled((prev) => prev.map((v, i) => (i === day ? checked : v)))}
                   />
+                  {/* min-w-0: grid items default to min-width:auto, which
+                      for a native <input type="time"> is wider than these
+                      1fr tracks actually have room for below ~520px — the
+                      track can't shrink to fit without this, so the input
+                      overflowed the card's edge instead (UX audit's #11
+                      finding). Same class of fix as Row/RowInput in
+                      settings.tsx for the identical reason. */}
                   <input
                     type="time"
                     name={`day_${day}_start`}
                     defaultValue={existing?.startTime ?? "09:00"}
                     disabled={!dayEnabled}
-                    className={`input ${!dayEnabled ? "bg-canvas" : ""}`}
+                    className={`input min-w-0 ${!dayEnabled ? "bg-canvas" : ""}`}
                   />
                   <input
                     type="time"
@@ -178,11 +227,11 @@ export default function ResourceDetail({ loaderData, params }: Route.ComponentPr
 
         <div className="card">
           <div className="card-header">
-            <h2 className="card-title">Assigned services</h2>
+            <h2 className="card-title">Assigned {v.services.toLowerCase()}</h2>
           </div>
           <div className="card-body grid grid-cols-2 gap-2">
             {services.length === 0 ? (
-              <p className="col-span-2 m-0 text-body text-muted">No services yet.</p>
+              <p className="col-span-2 m-0 text-body text-muted">No {v.services.toLowerCase()} yet.</p>
             ) : (
               services.map((s) => (
                 <CheckCard
@@ -198,11 +247,18 @@ export default function ResourceDetail({ loaderData, params }: Route.ComponentPr
         </div>
 
         <div className="flex items-center justify-between gap-2">
-          <button type="submit" className="btn-pri">
-            Save
-          </button>
+          <div className="flex items-center gap-3">
+            <button type="submit" className="btn-pri">
+              Save
+            </button>
+            {actionData?.saved && <span className="alert-success">Saved.</span>}
+          </div>
           {!isNew && (
-            <button type="submit" form="delete-resource" className="btn-del">
+            <button
+              type="button"
+              className="btn-del"
+              onClick={() => (document.getElementById("delete-resource") as HTMLDialogElement | null)?.showModal()}
+            >
               Delete resource
             </button>
           )}
@@ -210,9 +266,16 @@ export default function ResourceDetail({ loaderData, params }: Route.ComponentPr
       </Form>
 
       {!isNew && (
-        <Form method="post" id="delete-resource" className="hidden">
-          <input type="hidden" name="_action" value="delete" />
-        </Form>
+        <ConfirmDialog
+          id="delete-resource"
+          title={`Delete this ${v.resourceOne}?`}
+          body="This can't be undone."
+          confirmLabel="Delete"
+        >
+          <Form method="post" id="delete-resource-form">
+            <input type="hidden" name="_action" value="delete" />
+          </Form>
+        </ConfirmDialog>
       )}
     </div>
   );

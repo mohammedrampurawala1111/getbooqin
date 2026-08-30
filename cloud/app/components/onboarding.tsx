@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { PRESETS, DAY_ABBR, getPreset, type Preset, type PresetId } from "~/lib/presets";
+import { PRESETS, DAY_ABBR, getPreset, summarizeHours, type Preset, type PresetId } from "~/lib/presets";
 import { LogoutButton } from "~/components/ui";
 
 /* ==================================================================
@@ -163,7 +163,7 @@ export function PresetScaffold({ presetId }: { presetId: PresetId }) {
 
       <div className="card p-[18px]">
         <h2 className="card-title mb-3">Business hours</h2>
-        <p className="mb-3 text-meta text-muted">{preset.hours}</p>
+        <p className="mb-3 text-meta text-muted">{summarizeHours(preset.open, preset.range)}</p>
         <div className="flex flex-col gap-[7px]">
           {DAY_ABBR.map((abbr, i) => {
             const open = preset.open[i];

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { useClerk, useReverification, useSession, useUser } from "@clerk/react-router";
 import { isClerkAPIResponseError, isReverificationCancelledError } from "@clerk/react-router/errors";
@@ -356,6 +356,7 @@ function SecurityTab() {
 }
 
 function PasswordCard({ user }: { user: ClerkUser }) {
+  const { session } = useSession();
   const [signOutOthers, setSignOutOthers] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -367,14 +368,61 @@ function PasswordCard({ user }: { user: ClerkUser }) {
   // after a successful save remounts both PasswordFields fresh.
   const [resetKey, setResetKey] = useState(0);
 
+  // The form already collected currentPassword above — stash it here right
+  // before calling updatePassword() so the reverification handler below can
+  // reuse it instead of a popup asking the merchant to type the same
+  // password again a few seconds later (UX audit's #3 finding, second
+  // half). A ref, not state: it only needs to be read once, synchronously,
+  // inside the reverification callback that fires during this same submit.
+  const pendingCurrentPassword = useRef("");
+
   // Clerk requires a fresh sign-in ("reverification") before it'll let a
   // change-password request through — without this, that request just
   // 403s with a session_reverification_required error and there's no UI
-  // anywhere to complete it (UX audit's R2 finding). useReverification
-  // handles the whole round trip: it shows Clerk's own re-auth modal when
-  // needed, then retries updatePassword() automatically.
-  const updatePassword = useReverification((args: Parameters<ClerkUser["updatePassword"]>[0]) =>
-    user.updatePassword(args)
+  // anywhere to complete it (UX audit's R2 finding). For a password-enabled
+  // user, the "fresh sign-in" Clerk wants *is* the current password we
+  // already collected, so onNeedsReverification verifies it directly
+  // against the session and completes silently — no modal, no second
+  // prompt. Only wired up when a password exists to reuse; a Google-only
+  // user setting their first password has nothing to reuse and keeps
+  // Clerk's own default reverification UI (that path was never the "asked
+  // twice" complaint, since there's no first password to double-collect).
+  const handleNeedsReverification = useCallback(
+    async ({ cancel, complete, level }: { cancel: () => void; complete: () => void; level?: string }) => {
+      if (!session || !pendingCurrentPassword.current) {
+        cancel();
+        setError("Re-enter your current password and try again.");
+        return;
+      }
+      try {
+        const verification = await session.startVerification({ level: (level as "first_factor") ?? "first_factor" });
+        const supportsPassword = verification.supportedFirstFactors?.some((f) => f.strategy === "password");
+        if (verification.status !== "needs_first_factor" || !supportsPassword) {
+          cancel();
+          setError("Couldn't verify your identity for this change — try again.");
+          return;
+        }
+        const attempt = await session.attemptFirstFactorVerification({
+          strategy: "password",
+          password: pendingCurrentPassword.current,
+        });
+        if (attempt.status === "complete") {
+          complete();
+          return;
+        }
+        cancel();
+        setError("Your current password didn't match — re-enter it and try again.");
+      } catch (err) {
+        cancel();
+        setError(clerkMessage(err) ?? "Couldn't verify your identity — try again.");
+      }
+    },
+    [session]
+  );
+
+  const updatePassword = useReverification(
+    (args: Parameters<ClerkUser["updatePassword"]>[0]) => user.updatePassword(args),
+    user.passwordEnabled ? { onNeedsReverification: handleNeedsReverification } : undefined
   );
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -383,6 +431,7 @@ function PasswordCard({ user }: { user: ClerkUser }) {
     const form = new FormData(formEl);
     const currentPassword = String(form.get("currentPassword") ?? "");
     const newPassword = String(form.get("password") ?? "");
+    pendingCurrentPassword.current = currentPassword;
     setSaving(true);
     setSaved(false);
     setError(null);
@@ -401,6 +450,7 @@ function PasswordCard({ user }: { user: ClerkUser }) {
       }
     } finally {
       setSaving(false);
+      pendingCurrentPassword.current = "";
     }
   }
 
