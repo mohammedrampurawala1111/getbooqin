@@ -47,6 +47,19 @@ export default function Root({ loaderData }: Route.ComponentProps) {
           <meta charSet="utf-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
           <meta name="theme-color" content="#131118" />
+          {/* Sets data-theme on <html> before first paint, straight from
+              localStorage — a stored choice would otherwise only apply
+              after ThemeToggle's own useEffect runs post-hydration, which
+              means every page load flashed the OS-default theme first
+              whenever that choice disagreed with it. Deliberately outside
+              React's render tree (this <html> tag never declares
+              data-theme itself) so this plain DOM mutation can't collide
+              with hydration. */}
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `try{var t=localStorage.getItem("gb-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}`,
+            }}
+          />
           <Meta />
           <Links />
         </head>

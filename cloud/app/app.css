@@ -267,9 +267,17 @@
    touching a single call site (UX audit's T2 finding). Ratios verified
    >=4.5:1 for every text token and every status fg/bg pair. Unlayered
    like the block above — @theme's output lives in Tailwind's own layer,
-   and only unlayered rules are guaranteed to win over it. */
+   and only unlayered rules are guaranteed to win over it.
+
+   Two entry points, same token values, by design (see ThemeToggle in
+   ui.tsx): the @media block is the OS-default path, guarded so an
+   explicit "light" choice can override a dark OS — and :root[data-theme
+   ="dark"] is that same override in the other direction, for a dark
+   choice on a light OS. Neither can replace the other: media queries
+   can't be turned on by a data attribute, and a plain selector can't
+   read prefers-color-scheme. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
 
     --color-brand-50:  #2a2033; /* was a near-white wash; a dark tint keeps
@@ -314,3 +322,39 @@
   .alert-error    { color: var(--color-danger); }
   .readonly-panel { border-color: var(--color-line); }
 }
+
+/* Explicit dark choice (ThemeToggle in ui.tsx), independent of the OS
+   setting — same token values as the @media block above, see the comment
+   there for why this can't just be one rule. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-brand-50:  #2a2033;
+  --color-brand-200: #4a3457;
+  --color-brand-500: #c69ce2;
+  --color-brand-600: #b98cd6;
+  --color-brand-fill: #8f3aa9;
+
+  --color-canvas:      #121016;
+  --color-canvas-alt:  #19151f;
+  --color-surface:     #1c1822;
+  --color-line:        #2c2733;
+  --color-line-strong: #3a3441;
+  --color-row:         #221e29;
+  --color-ink:         #f1eef6;
+  --color-ink-2:       #d4cddd;
+  --color-ink-3:       #b3aabf;
+  --color-muted:       #9389a1;
+  --color-subtle:      #a89bb5;
+  --color-faint:       #4a4453;
+
+  --color-ok:       #6fd0a4;  --color-ok-bg:      #132a21;
+  --color-warn:     #e8b855;  --color-warn-bg:    #332811;
+  --color-danger:   #ff9d8f;  --color-danger-bg:  #3a1f1c;
+  --color-danger-line: #522a26;
+  --color-neutral:  #a89fb3;  --color-neutral-bg: #2c2733;
+  --color-chart-ok: #52c78d;  --color-chart-warn: #e0a325;  --color-chart-off: #4a4453;
+}
+:root[data-theme="dark"] .input-error    { background: var(--color-danger-bg); border-color: #7a4038; }
+:root[data-theme="dark"] .alert-error    { color: var(--color-danger); }
+:root[data-theme="dark"] .readonly-panel { border-color: var(--color-line); }

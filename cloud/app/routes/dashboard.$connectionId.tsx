@@ -5,6 +5,7 @@ import { Settings, Bookings } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { tenantSelectHeaders, getClerkClient } from "~/session.server";
 import { UserMenu } from "~/components/account";
+import { ThemeToggle } from "~/components/ui";
 import { vocabFor } from "~/lib/presets";
 
 // Tenant-scoped dashboard layout. Mints the TenantSession cookie for this
@@ -224,16 +225,19 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
         ref={asideRef}
         id="dashboard-nav"
         className="side-dark fixed inset-y-0 left-0 z-40 flex w-[252px] shrink-0 -translate-x-full flex-col overflow-y-auto border-r border-line px-[14px] py-[18px] transition-transform duration-200 peer-checked:translate-x-0 md:sticky md:top-0 md:h-dvh md:translate-x-0">
-        <span className="flex h-[30px] w-[30px] shrink-0 flex-col justify-center gap-[3px] rounded-[8px] bg-brand-950 p-[6px]">
-          <span className="h-[6px] rounded-[2px] bg-brand-500" />
-          <span className="h-[6px] rounded-[2px] border-[1.5px] border-brand-500" />
-        </span>
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex h-[30px] w-[30px] shrink-0 flex-col justify-center gap-[3px] rounded-[8px] bg-brand-950 p-[6px]">
+            <span className="h-[6px] rounded-[2px] bg-brand-500" />
+            <span className="h-[6px] rounded-[2px] border-[1.5px] border-brand-500" />
+          </span>
+          <ThemeToggle className="flex h-[30px] w-[30px] shrink-0 cursor-pointer items-center justify-center rounded-field text-[#a49caf] hover:bg-white/5 hover:text-[#ece9f0]" />
+        </div>
 
         <div className="mt-3 flex flex-col gap-1">
           <span className="truncate text-[13.5px] font-semibold" title={label}>
             {label}
           </span>
-          <a href={`${base}/settings?tab=integrations`} className="flex items-center text-[12px] font-medium text-[#a49caf] no-underline max-md:min-h-[44px] hover:underline">
+          <a href={`${base}/settings?page=integrations`} className="flex items-center text-[12px] font-medium text-[#a49caf] no-underline max-md:min-h-[44px] hover:underline">
             {channelCount} channel{channelCount === 1 ? "" : "s"} connected
           </a>
         </div>

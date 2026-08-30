@@ -3,7 +3,7 @@ import type { Route } from "./+types/_index";
 import { getUserSession } from "~/session.server";
 import { LogoMark, PlanCard } from "~/components/onboarding";
 import { PRESETS, INTEGRATIONS } from "~/lib/presets";
-import { Badge, LegalFooter, LogoutButton } from "~/components/ui";
+import { Badge, LegalFooter, LogoutButton, ThemeToggle } from "~/components/ui";
 
 export const meta: Route.MetaFunction = () => [
   { title: "GetBooqin — Bookings, staff and payments for every store" },
@@ -66,6 +66,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             <a href="#industries" className="mkt-link">Industries</a>
             <a href="#pricing" className="mkt-link">Pricing</a>
           </nav>
+          {/* Lives here, not the .ml-auto action group on the right — that
+              row is already at its 341px overflow limit below (K3 above).
+              Desktop has room in the anchor nav; mobile gets its own copy
+              in the collapsed panel below instead of a second squeeze
+              point. */}
+          <ThemeToggle className="btn-sec hidden px-[9px] py-[7px] md:inline-flex" />
           <div className="ml-auto flex items-center gap-2">
             {loggedIn ? (
               <>
@@ -116,6 +122,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           <a href="#integrations" className="mkt-link py-[9px]">Integrations</a>
           <a href="#industries" className="mkt-link py-[9px]">Industries</a>
           <a href="#pricing" className="mkt-link py-[9px]">Pricing</a>
+          <ThemeToggle className="mkt-link flex items-center gap-2 py-[9px] text-left" showLabel />
           {loggedIn ? (
             <LogoutButton className="mkt-link py-[9px] text-left min-[400px]:hidden" />
           ) : null}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useClerk } from "@clerk/react-router";
 import { LogoMark } from "./onboarding";
@@ -526,5 +526,77 @@ export function LegalFooter() {
         </div>
       </div>
     </footer>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* ThemeToggle — explicit light/dark override on top of the OS default.
+   Reads/writes localStorage directly rather than any shared app state:
+   there's no server-side session concept for "theme" and no other
+   component needs to react to it — app.css's :root[data-theme] rules
+   pick it up purely from the DOM attribute this sets. root.tsx's inline
+   bootstrap script applies a stored choice before first paint; this
+   component only needs to handle *changes* after that.
+
+   Starts at null ("unknown") rather than reading localStorage/matchMedia
+   synchronously — that value can differ between the server (which has
+   neither) and the client, and rendering it on first client render,
+   before hydration reconciles, would still be a hydration mismatch. The
+   real value arrives one effect tick later; the placeholder button below
+   keeps that from shifting layout.                                     */
+/* ------------------------------------------------------------------ */
+export function ThemeToggle({
+  className = "btn-sec px-[9px] py-[7px]", showLabel = false,
+}: { className?: string; showLabel?: boolean }) {
+  const [theme, setThemeState] = useState<"light" | "dark" | null>(null);
+
+  useEffect(() => {
+    const stored = localStorage.getItem("gb-theme");
+    if (stored === "light" || stored === "dark") {
+      setThemeState(stored);
+    } else {
+      setThemeState(window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    }
+  }, []);
+
+  function setTheme(next: "light" | "dark") {
+    setThemeState(next);
+    try {
+      localStorage.setItem("gb-theme", next);
+    } catch {
+      // Private browsing etc. — the toggle still works for this page load,
+      // it just won't be remembered next visit.
+    }
+    document.documentElement.setAttribute("data-theme", next);
+  }
+
+  if (theme === null) {
+    return <span className={`${className} invisible`} aria-hidden="true" />;
+  }
+
+  const label = theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
+  const icon =
+    theme === "dark" ? (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="shrink-0">
+        <circle cx="8" cy="8" r="3.5" />
+        <path d="M8 1.5v1.4M8 13.1v1.4M14.5 8h-1.4M2.9 8H1.5M12.5 3.5l-1 1M4.5 11.5l-1 1M12.5 12.5l-1-1M4.5 4.5l-1-1" strokeLinecap="round" />
+      </svg>
+    ) : (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="shrink-0">
+        <path d="M13.7 9.3A5.8 5.8 0 0 1 6.7 2.3a5.8 5.8 0 1 0 7 7Z" strokeLinejoin="round" />
+      </svg>
+    );
+
+  return (
+    <button
+      type="button"
+      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      className={className}
+      aria-label={showLabel ? undefined : label}
+      title={label}
+    >
+      {icon}
+      {showLabel ? label.replace("Switch to ", "").replace(" theme", " mode") : null}
+    </button>
   );
 }
