@@ -12,5 +12,12 @@ export function isValidPhone(value: string): boolean {
 
 // For <input pattern>, which matches against the raw (unstripped) value —
 // allow the same separators inline rather than asking the browser to strip
-// them first.
-export const PHONE_PATTERN = "^\\+?[0-9][0-9\\s()-]{6,18}$";
+// them first. Both ( ) and the trailing - must be escaped: browsers compile
+// <input pattern> with the regex "v" flag, which is stricter about
+// character-class contents than a normal /.../ literal — unescaped parens
+// are a syntax error there, and (unlike outside v-mode, where a trailing -
+// is safely literal) a bare trailing - is one too. Verified directly with
+// `new RegExp(PHONE_PATTERN, "v")` — that throw was crashing the phone
+// field on every page that renders it (onboarding, signup, settings,
+// account).
+export const PHONE_PATTERN = "^\\+?[0-9][0-9\\s\\(\\)\\-]{6,18}$";

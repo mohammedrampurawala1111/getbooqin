@@ -5,6 +5,7 @@ import {
   buildSessionCookie,
   createSessionToken,
   resolveTenantSession,
+  prisma,
   type TenantSession,
 } from "getbooqin-core";
 
@@ -60,4 +61,26 @@ export async function requireUserSession(request: Request): Promise<UserSession>
     throw redirect("/login");
   }
   return session;
+}
+
+// Connection.userId is a hard FK against User — webhooks.clerk.tsx's
+// user.created event is the normal way that row gets created, but it's an
+// async webhook, not part of the signup request itself, and signup.tsx only
+// forces the issue by calling dashboard/profile-phone when a phone number
+// was entered (the Google OAuth path never calls it at all). A user who
+// reaches a Connection-creating action before that webhook lands — or never
+// lands, e.g. if the webhook isn't registered against whichever Clerk
+// instance is live — hits a P2003 foreign key violation and can't finish
+// onboarding. Call this immediately before any Connection.create() so the
+// row is guaranteed to exist by then, regardless of webhook timing.
+export async function ensureUserRow(userId: string): Promise<void> {
+  const existing = await prisma.user.findUnique({ where: { id: userId } });
+  if (existing) return;
+
+  const clerkUser = await getClerkClient().users.getUser(userId);
+  const email =
+    clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId)?.emailAddress ??
+    clerkUser.emailAddresses[0]?.emailAddress ??
+    "";
+  await prisma.user.upsert({ where: { id: userId }, create: { id: userId, email }, update: {} });
 }

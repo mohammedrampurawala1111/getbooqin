@@ -12,7 +12,7 @@ import {
   verifyCallbackHmac,
   verifyOAuthState,
 } from "getbooqin-core";
-import { getUserSession } from "~/session.server";
+import { getUserSession, ensureUserRow } from "~/session.server";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
@@ -38,6 +38,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   }
 
   const { accessToken } = await exchangeCodeForToken({ shop, code });
+
+  await ensureUserRow(state.userId);
 
   let connection;
   try {
