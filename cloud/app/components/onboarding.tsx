@@ -72,7 +72,7 @@ const STEP_NAMES = ["Business", "Your setup", "Integrations", "Go live"] as cons
 export function OnboardingShell({
   step,
   onStep,
-  finishLaterHref = "/connect/shopify",
+  finishLaterHref = "/dashboard",
   children,
 }: { step: number; onStep?: (n: number) => void; finishLaterHref?: string; children: ReactNode }) {
   return (

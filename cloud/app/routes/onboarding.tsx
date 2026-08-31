@@ -16,34 +16,53 @@ import { Data, Settings, FeatureFlags, createManualConnection, getUserConnection
 // state to connect.shopify.callback.tsx, since there's no Connection row to
 // attach them to until that store exists), or "Go live without Shopify"
 // (handleGoLive below), which applies everything to a manual, non-Shopify
-// Connection created back on step 1.
+// Connection created by the loader below, before step 1 ever renders.
 //
-// That Connection is created (and saved to) on every step's Continue, not
-// just at the end — a re-test found that clicking Continue on step 1 fired
-// no network request at all, so a name typed there and never submitted
-// could vanish, and cross-account bleed was possible because the only
-// record of progress lived in a sessionStorage key (UX audit's B1/B2
-// findings). Persisting each step server-side against a real Connection
-// closes both: there's nothing left in the browser to leak, and nothing
-// entered is lost if the tab closes before step 4.
+// Each step's Continue saves real values against that Connection (not just
+// at the end) — a re-test found that clicking Continue on step 1 fired no
+// network request at all, so a name typed there and never submitted could
+// vanish, and cross-account bleed was possible because the only record of
+// progress lived in a sessionStorage key (UX audit's B1/B2 findings).
+// Persisting each step server-side closes both: there's nothing left in the
+// browser to leak, and nothing entered past step 1 is lost if the tab
+// closes early.
+//
+// The Connection itself used to come from step 1's first successful
+// Continue instead of the loader — which meant anyone who left before that
+// (the wizard's own "Finish later" link, a closed tab, browser back) had no
+// Connection yet, so /dashboard's "no active connection → back to
+// onboarding" redirect sent them right back to where they started, reading
+// as stuck. Creating it on first render closes that gap for every exit
+// point at once, not just "Finish later" specifically.
 export const meta: Route.MetaFunction = () => [{ title: "Set up your business · GetBooqin" }];
 
 export async function loader({ request }: Route.LoaderArgs) {
   const session = await requireUserSession(request);
   const url = new URL(request.url);
 
-  // No `cid` means this isn't a draft already in progress — if the account
-  // already has a store, this is a stale/bookmarked link or the Back
-  // button after finishing, and letting step 1's Continue run again would
-  // silently mint a second manual Connection with no way back to the first
-  // (UX audit's D1 finding). Same "active connections" definition
+  // No `cid` means this isn't a draft already in progress — check for an
+  // existing active connection first (same "active connections" definition
   // dashboard.tsx's loader uses, so the two routes agree on what "already
-  // set up" means. Deliberately adding another store is Settings ›
-  // Integrations' own "+ Connect a Shopify store" flow, not this wizard.
+  // set up" means) before creating anything, or a stale/bookmarked link or
+  // the Back button after finishing would silently mint a second manual
+  // Connection with no way back to the first (UX audit's D1 finding).
+  // Deliberately adding another store is Settings › Integrations' own
+  // "+ Connect a Shopify store" flow, not this wizard.
   if (!url.searchParams.get("cid")) {
     const connections = await listUserConnections(session.userId);
     const active = connections.find((c) => c.status === "active");
     if (active) throw redirect(`/dashboard/${active.id}`);
+
+    // Genuinely nothing yet — create the manual draft right here, before
+    // step 1 ever renders, rather than waiting for its first successful
+    // Continue (see header comment). Redirecting with `cid` now set means
+    // every subsequent render of this route — any step, a rail-jump, a
+    // reload — carries it, so this branch can't run twice and mint a
+    // second draft for the same visit.
+    await ensureUserRow(session.userId);
+    const draft = await createManualConnection({ userId: session.userId });
+    url.searchParams.set("cid", draft.id);
+    throw redirect(`${url.pathname}?${url.searchParams.toString()}`);
   }
 
   // Best-effort carry from signup.tsx's own business-name/preset/phone
@@ -335,7 +354,7 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
   }
 
   return (
-    <OnboardingShell step={step} onStep={goToStep} finishLaterHref="/connect/shopify">
+    <OnboardingShell step={step} onStep={goToStep} finishLaterHref="/dashboard">
       {error && <AlertError className="mb-1">{error}</AlertError>}
       {step === 1 && (
         <StepBusiness state={state} update={update} saving={saving} onNext={() => submitStep1(2)} />

@@ -68,10 +68,12 @@ export async function action({ request }: Route.ActionArgs) {
   throw redirect(authorizationUrl);
 }
 
-// Reachable directly (Settings › Integrations' "+ Connect another store",
-// onboarding's "Finish later" link) as well as via the wizard's own
-// ShopifyConnectForm — a logo + way back so it doesn't read as a dead end
-// when someone lands here on its own (UX audit's B3/R6 findings).
+// Reachable directly (Settings › Integrations' "+ Connect another store")
+// as well as via the wizard's own ShopifyConnectForm — a logo + way back so
+// it doesn't read as a dead end when someone lands here on its own (UX
+// audit's B3/R6 findings). Not onboarding's "Finish later" link — that
+// goes straight to /dashboard, which lands on the (still-empty) dashboard
+// for the manual Connection step 1 already created, not through here.
 export default function ConnectShopify({ actionData }: Route.ComponentProps) {
   return (
     <div className="flex min-h-dvh items-center justify-center bg-canvas px-8">
