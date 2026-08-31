@@ -119,7 +119,7 @@ export default function WaitlistPage({ loaderData, actionData }: Route.Component
 
       <DataTable
         cols="1.2fr 1fr 1fr 1.1fr .8fr .9fr .7fr"
-        columns={["Customer", v.services || "Service", v.resources || "Resource", "Window", "Status", "Joined", ""]}
+        columns={[v.customers || "Customer", v.services || "Service", v.resources || "Resource", "Window", "Status", "Joined", ""]}
         rows={entries}
         rowKey={(e) => String(e.id)}
         renderRow={(e) => [
@@ -152,7 +152,7 @@ export default function WaitlistPage({ loaderData, actionData }: Route.Component
               </svg>
             }
             title="No one on the waitlist"
-            body="Add someone above, and we'll offer them a slot automatically if a matching booking is cancelled."
+            body={`Add someone above, and we'll offer them a slot automatically if a matching ${v.bookingOne} is cancelled.`}
           />
         }
       />

@@ -183,6 +183,14 @@
   /* dark sidebar variant: wrap sidebar in .side-dark */
   .side-dark { @apply bg-brand-950 text-[#ece9f0]; }
   .side-dark .nav-item { @apply text-[#a49caf] hover:bg-white/5; }
+  /* .text-subtle resolves to whichever value the *page* theme currently
+     has — #5f6675 in light mode — but .side-dark's own background is
+     always dark regardless of page theme (see comment below), so the
+     "Owner" role label under the user's name rendered that light-mode
+     value on the permanently-dark plate: 3.25:1, below the 4.5:1 required
+     for 11px text (UX audit's C2 finding). Same fixed-color-on-a-fixed-
+     plate fix as .nav-item just above, reusing its exact color. */
+  .side-dark .text-subtle { color: #a49caf; }
   .side-dark .nav-item-active {
     /* Mixed from the literal light-mode brand-500 hex, not the token —
        .side-dark is always a dark plate regardless of page theme, so this

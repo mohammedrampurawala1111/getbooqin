@@ -147,7 +147,12 @@ export default function BookingDetail({ loaderData, actionData, params }: Route.
                       <Input type="date" name="date" required />
                     </Field>
                     <Field label="Time">
-                      <Input type="time" name="time" required />
+                      {/* Forces 24-hour display regardless of browser
+                          locale, matching the rest of the app and avoiding
+                          the AM/PM clipping the weekly-hours editor had at
+                          narrow widths (UX audit's C6 finding) — display
+                          only, the submitted value is always "HH:mm". */}
+                      <Input type="time" name="time" lang="en-GB" required />
                     </Field>
                     <Field label="Resource">
                       <select name="resource_id" defaultValue={String(booking.resourceId)} className="input">

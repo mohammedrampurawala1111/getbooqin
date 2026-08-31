@@ -220,9 +220,17 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
                       `label` covers the day name, but the two time inputs
                       had nothing at all (pass 7's N1 finding: 7 days × 2
                       inputs = 14, exactly the count axe flagged here). */}
+                  {/* lang="en-GB": a native <input type="time"> renders in
+                      whatever clock format the browser's locale prefers —
+                      12-hour with the meridiem cut off entirely at narrow
+                      widths (UX audit's C6 finding), while the rest of the
+                      app always prints 24-hour ("08:00–18:00"). This only
+                      changes display; the value/submitted format is always
+                      "HH:mm" regardless of lang. */}
                   <input
                     type="time"
                     name={`day_${day}_start`}
+                    lang="en-GB"
                     aria-label={`${label} start time`}
                     defaultValue={existing?.startTime ?? "09:00"}
                     disabled={!dayEnabled}
@@ -231,6 +239,7 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
                   <input
                     type="time"
                     name={`day_${day}_end`}
+                    lang="en-GB"
                     aria-label={`${label} end time`}
                     defaultValue={existing?.endTime ?? "17:00"}
                     disabled={!dayEnabled}

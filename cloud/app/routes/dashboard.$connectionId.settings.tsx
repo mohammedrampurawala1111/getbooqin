@@ -153,7 +153,12 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
   const adminEmailValue = settings.admin_email || accountEmail;
   const [searchParams] = useSearchParams();
   const rawPage = searchParams.get("page");
-  const page = isSettingsPage(rawPage) ? rawPage : "general";
+  // An unknown ?page= value already fell back to General correctly — but
+  // "payments" is a *known* slug that renders a heading and nav highlight
+  // with zero form fields whenever the feature flag is off, since nothing
+  // upstream of this line knew to reject it (UX audit's C4 finding). Same
+  // fallback, just extended to a slug that's real but not buildable yet.
+  const page = isSettingsPage(rawPage) && (rawPage !== "payments" || paymentsEnabled) ? rawPage : "general";
   const savedAt = actionData?.saved ? "just now" : undefined;
   const base = `/dashboard/${currentConnectionId}`;
 

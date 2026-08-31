@@ -263,7 +263,7 @@ export function SetupChecklist({
 }: {
   summary: {
     tasks: { key: string; name: string; hint: string; done: boolean }[];
-    done: number; total: number; pct: number;
+    done: number; total: number; pct: number; complete: boolean;
   };
   hrefs: Record<string, string>;
   resumeHref: string;
@@ -272,7 +272,13 @@ export function SetupChecklist({
     <div className="card">
       <div className="card-header">
         <div className="flex flex-1 flex-col gap-[7px]">
-          <h2 className="card-title">Finish setting up</h2>
+          {/* This card used to say "Finish setting up" / "Continue setup"
+              unconditionally — on a genuinely finished account it sat right
+              next to a subtitle already saying setup was complete,
+              disagreeing with itself on the same screen (UX audit's C3
+              finding). summary.complete is the same flag that headline
+              text already reflects; this just lets the card agree with it. */}
+          <h2 className="card-title">{summary.complete ? "Setup complete" : "Finish setting up"}</h2>
           <div className="flex items-center gap-[10px]">
             <span className="h-[6px] max-w-[220px] flex-1 rounded-[4px] bg-row">
               <span className="block h-[6px] rounded-[4px] bg-brand-500" style={{ width: `${summary.pct}%` }} />
@@ -280,7 +286,9 @@ export function SetupChecklist({
             <span className="num text-[12px] text-muted">{summary.done} of {summary.total} done</span>
           </div>
         </div>
-        <a href={resumeHref} className="btn-pri no-underline hover:no-underline">Continue setup</a>
+        {!summary.complete && (
+          <a href={resumeHref} className="btn-pri no-underline hover:no-underline">Continue setup</a>
+        )}
       </div>
       {summary.tasks.map((t) => (
         <a key={t.key} href={hrefs[t.key] ?? resumeHref} className="task-row no-underline hover:no-underline">

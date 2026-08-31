@@ -280,9 +280,13 @@ function EmptyOverview({
     <div className="flex flex-col gap-[18px]">
       <PageHeader title="Overview" subtitle={summary.headline} />
 
+      {/* "Waiting on setup" stayed on these two tiles even once setup was
+          genuinely finished (6 of 6 done) and the merchant was just
+          waiting on their first real booking — the same disagreement as
+          the checklist card itself (UX audit's C3 finding). */}
       <div className="grid grid-cols-2 gap-[14px] md:grid-cols-4">
-        <EmptyStat label={v.bookingTitle} value="0" note="Waiting on setup" />
-        <EmptyStat label="Pending approval" value="0" note="Waiting on setup" />
+        <EmptyStat label={v.bookingTitle} value="0" note={summary.complete ? `No ${v.bookingMany} yet` : "Waiting on setup"} />
+        <EmptyStat label="Pending approval" value="0" note={summary.complete ? "Nothing pending" : "Waiting on setup"} />
         <EmptyStat
           label={`Active ${v.services.toLowerCase()}`}
           value={String(setupFacts.serviceCount)}

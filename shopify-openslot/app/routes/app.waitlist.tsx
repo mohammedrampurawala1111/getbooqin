@@ -160,7 +160,7 @@ export default function WaitlistPage() {
           itemCount={entries.length}
           selectable={false}
           headings={[
-            { title: "Customer" },
+            { title: term(settings, "customer_plural") },
             { title: term(settings, "service_single") },
             { title: term(settings, "resource_single") },
             { title: "Window" },

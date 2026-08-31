@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { redirect, useFetcher, useSearchParams } from "react-router";
 import type { Route } from "./+types/onboarding";
-import { getClerkClient, requireUserSession } from "~/session.server";
+import { getClerkClient, requireUserSession, ensureUserRow } from "~/session.server";
 import { AlertError, Field, Input, Toggle, TimezoneSelect } from "~/components/ui";
 import { OnboardingShell, PresetTiles, PresetScaffold, IntegrationRow } from "~/components/onboarding";
 import { INTEGRATIONS, getPreset, vocabFor, type PresetId } from "~/lib/presets";
@@ -81,6 +81,7 @@ async function handleStep1(userId: string, form: FormData): Promise<ActionResult
   const cid = String(form.get("cid") || "");
   let connection = cid ? await getUserConnection(userId, cid) : null;
   if (!connection || connection.platform !== "manual") {
+    await ensureUserRow(userId);
     connection = await createManualConnection({ userId });
   }
   const { shop, platform } = connection;
@@ -192,6 +193,7 @@ async function handleGoLive(userId: string, form: FormData) {
   // creates this connection first, so `cid` should already be set by the
   // time this submits.
   if (!connection || connection.platform !== "manual") {
+    await ensureUserRow(userId);
     connection = await createManualConnection({ userId });
   }
 
@@ -245,26 +247,35 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
   const step = Math.min(4, Math.max(1, Number(searchParams.get("step")) || 1));
   const cid = searchParams.get("cid") || "";
 
-  const [state, setState] = useState<OnboardingState>(() => {
-    const timezone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC";
-    const guessed = guessCurrency(timezone);
-    return {
-      businessName: seed.businessName,
-      preset: seed.preset ?? "generic",
-      email: seed.email,
-      phone: seed.phone,
-      timezone,
-      currency: guessed.code,
-      currencySymbol: guessed.symbol,
-      teamSize: "1",
-      resourceName: "",
-      remindersOn: true,
-    };
-  });
+  // "UTC"/USD here, not the browser's real timezone/currency: Intl reads the
+  // *server's* clock during SSR and the *visitor's* during hydration's first
+  // client render, which must match exactly or React throws a hydration
+  // mismatch (#418/#425/#423) on this whole page. The effect below swaps in
+  // the real detected values right after mount — a plain client-side update,
+  // not part of hydration, so it can safely differ from what SSR rendered.
+  const [state, setState] = useState<OnboardingState>(() => ({
+    businessName: seed.businessName,
+    preset: seed.preset ?? "generic",
+    email: seed.email,
+    phone: seed.phone,
+    timezone: "UTC",
+    currency: "USD",
+    currencySymbol: "$",
+    teamSize: "1",
+    resourceName: "",
+    remindersOn: true,
+  }));
 
   function update(patch: Partial<OnboardingState>) {
     setState((prev) => ({ ...prev, ...patch }));
   }
+
+  useEffect(() => {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const guessed = guessCurrency(timezone);
+    update({ timezone, currency: guessed.code, currencySymbol: guessed.symbol });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetcher = useFetcher<ActionResult>();
   const [error, setError] = useState<string | null>(null);

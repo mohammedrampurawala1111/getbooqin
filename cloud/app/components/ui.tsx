@@ -567,18 +567,34 @@ export function LegalFooter() {
    value arrives one effect tick later; the placeholder button below
    keeps that from shifting layout.                                     */
 /* ------------------------------------------------------------------ */
+// Two <ThemeToggle> instances render at once on the dashboard (sidebar +
+// mobile topbar), each with its own React state that's only ever read from
+// localStorage once, on mount. Clicking one never told the other — so the
+// second instance's next click computed its target from its own stale
+// belief instead of the real theme, not from whatever the first click had
+// just set (UX audit's C1 finding: dark→light worked once, then light→dark
+// never did again). Reading the live DOM attribute at the moment of the
+// click, instead of trusting the closed-over `theme` state, makes every
+// instance's toggle correct regardless of what any other instance did.
+function currentTheme(): "light" | "dark" {
+  return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+}
+
 export function ThemeToggle({
   className = "btn-sec px-[9px] py-[7px]", showLabel = false,
 }: { className?: string; showLabel?: boolean }) {
   const [theme, setThemeState] = useState<"light" | "dark" | null>(null);
 
   useEffect(() => {
-    const stored = localStorage.getItem("gb-theme");
-    setThemeState(stored === "dark" ? "dark" : "light");
+    setThemeState(currentTheme());
+    // Keeps this instance's own label/icon in sync when a *different*
+    // mounted instance is the one clicked.
+    const onChange = () => setThemeState(currentTheme());
+    window.addEventListener("gb-theme-change", onChange);
+    return () => window.removeEventListener("gb-theme-change", onChange);
   }, []);
 
   function setTheme(next: "light" | "dark") {
-    setThemeState(next);
     try {
       localStorage.setItem("gb-theme", next);
     } catch {
@@ -586,6 +602,8 @@ export function ThemeToggle({
       // it just won't be remembered next visit.
     }
     document.documentElement.setAttribute("data-theme", next);
+    setThemeState(next);
+    window.dispatchEvent(new Event("gb-theme-change"));
   }
 
   if (theme === null) {
@@ -608,7 +626,7 @@ export function ThemeToggle({
   return (
     <button
       type="button"
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      onClick={() => setTheme(currentTheme() === "dark" ? "light" : "dark")}
       className={className}
       aria-label={showLabel ? undefined : label}
       title={label}
