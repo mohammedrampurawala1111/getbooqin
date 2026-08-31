@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs } from "react-router";
-import { proxyShop, getSettings } from "~/lib/proxy.server";
+import { proxyShop, getSettings, waitlistPayload } from "~/lib/proxy.server";
 import { Waitlist, GetBooqinError } from "getbooqin-core";
 import { ok, fail, throttle, clientIp } from "~/lib/http.server";
 
@@ -35,7 +35,11 @@ export async function action({ request }: ActionFunctionArgs) {
       phone: String(body.phone || ""),
     });
 
-    return ok({ uid: entry.uid });
+    // Task 5b (fixpromptwaitlist.md): the success screen used to say only
+    // "you're on the list", nothing to confirm what was actually queued —
+    // full payload (service/date/time/reference) matches what
+    // confirmationDetails() already shows for a real booking.
+    return ok(await waitlistPayload(shop, settings, entry));
   } catch (err) {
     return fail(err);
   }

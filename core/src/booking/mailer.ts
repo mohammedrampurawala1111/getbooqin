@@ -12,6 +12,7 @@ import type { Booking, ChatConversation, Waitlist } from "@prisma/client";
 import prisma from "../db.js";
 import * as Data from "./data.js";
 import * as Bookings from "./bookings.js";
+import { manageUrl as waitlistManageUrl } from "./waitlist.js";
 import { getSettings, term, money, template as settingTemplate, type Settings } from "./settings.js";
 import events from "./events.js";
 import { GetBooqinError } from "./errors.js";
@@ -110,12 +111,20 @@ export const TEMPLATE_DEFS: { key: string; group: string; label: string; descrip
     body: "Hi {{customer_name}},\n\nThis is a reminder for your {{booking_term}}:\n\n{{service}} with {{resource}}\n{{date}} at {{time}}\n\n{{meeting_line}}\n\n{{manage_url}}\n\nSee you soon,\n{{business_name}}",
   },
   {
+    key: "waitlist_joined",
+    group: "Waitlist",
+    label: "Added to the waitlist",
+    description: "Sent when a customer joins the waitlist, confirming what they're queued for.",
+    subject: "You're on the waitlist — {{service}} on {{date}} at {{time}}",
+    body: "Hi {{customer_name}},\n\nYou're on the waitlist for {{service}} on {{date}} at {{time}} {{timezone}}.\n\nWe'll email you the moment a spot opens up.\n\nChanged your mind? Leave the waitlist here:\n{{leave_url}}\n\n{{business_name}}",
+  },
+  {
     key: "waitlist_offered",
     group: "Waitlist",
     label: "Slot offered from the waitlist",
     description: "Sent when a cancellation frees a slot that matches someone on the waitlist.",
     subject: "A spot opened up — {{service}} on {{date}} at {{time}}",
-    body: "Hi {{customer_name}},\n\nGood news — a spot just opened up for {{service}} on {{date}} at {{time}} {{timezone}}.\n\nThis offer is first come, first served and expires at {{expires_at}}. Claim it here:\n{{claim_url}}\n\nIf you don't respond in time, we'll offer it to the next person on the list.\n\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nGood news — a spot just opened up for {{service}} on {{date}} at {{time}} {{timezone}}.\n\nThis offer is first come, first served and expires at {{expires_at}}. Claim it here:\n{{claim_url}}\n\nNo longer need it? Leave the waitlist here:\n{{leave_url}}\n\nIf you don't respond in time, we'll offer it to the next person on the list.\n\n{{business_name}}",
   },
   {
     key: "waitlist_expired",
@@ -517,17 +526,23 @@ function logMailError(context: string, shop: string, uid: string, error: unknown
 
 /**
  * A waitlist entry isn't a Booking row until claimed, so its tokens can't
- * reuse tokens() above — built from the entry's offered slot instead. The
- * claim link is the app-proxy route shopify-openslot mounts publicly at
- * /apps/getbooqin/* (see proxy.server.ts's appProxyBase), not
- * booking_page_url — there's no storefront widget view for this yet.
+ * reuse tokens() above — built from the entry's offered slot instead, or
+ * (before an offer exists yet — the join-confirmation email) its requested
+ * window. The claim link is the app-proxy route shopify-openslot mounts
+ * publicly at /apps/getbooqin/* (see proxy.server.ts's appProxyBase), not
+ * booking_page_url — there's no storefront widget view for that flow. The
+ * leave link is the opposite: it does have a storefront view (Waitlist.
+ * manageUrl -> booking_page_url + ?getbooqin_waitlist=uid, same convention
+ * as Bookings.manageUrl), same as every other waitlist email regardless of
+ * whether an offer has been made yet.
  */
 async function waitlistTokens(shop: string, entry: Waitlist, settings: Settings): Promise<Record<string, string>> {
   const service = await Data.catalogService(shop, entry.serviceId);
   const resource = entry.offeredResourceId ? await Data.resource(shop, entry.offeredResourceId) : null;
   const customer = await prisma.customer.findFirst({ where: { shop, id: entry.customerId } });
   const tz = settings.timezone || "UTC";
-  const start = entry.offeredStartUtc ? DateTime.fromJSDate(entry.offeredStartUtc, { zone: "utc" }).setZone(tz) : null;
+  const startUtc = entry.offeredStartUtc ?? entry.windowStartUtc;
+  const start = startUtc ? DateTime.fromJSDate(startUtc, { zone: "utc" }).setZone(tz) : null;
 
   return {
     "{{business_name}}": settings.business_name,
@@ -539,6 +554,7 @@ async function waitlistTokens(shop: string, entry: Waitlist, settings: Settings)
     "{{customer_name}}": customer ? `${customer.firstName} ${customer.lastName}`.trim() : "",
     "{{expires_at}}": entry.offerExpiresAt ? DateTime.fromJSDate(entry.offerExpiresAt, { zone: "utc" }).setZone(tz).toFormat("h:mm a") : "",
     "{{claim_url}}": `https://${shop}/apps/getbooqin/waitlist/${entry.offerToken ?? ""}`,
+    "{{leave_url}}": waitlistManageUrl(entry, settings),
   };
 }
 
@@ -554,6 +570,22 @@ async function sendToWaitlistCustomer(shop: string, entry: Waitlist, settings: S
   await mail(customer.email, replace(subject, t), replace(body, t), settings);
 }
 
+async function onWaitlistJoined(entry: Waitlist) {
+  const settings = await getSettings(entry.shop, entry.platform);
+  if (!settings.notify_customer || !templateEnabled(settings, "waitlist_joined")) return;
+  await sendToWaitlistCustomer(
+    entry.shop,
+    entry,
+    settings,
+    settingTemplate(settings, "waitlist_joined_subject", "You're on the waitlist — {{service}} on {{date}} at {{time}}"),
+    settingTemplate(
+      settings,
+      "waitlist_joined_body",
+      "Hi {{customer_name}},\n\nYou're on the waitlist for {{service}} on {{date}} at {{time}} {{timezone}}.\n\nWe'll email you the moment a spot opens up.\n\nChanged your mind? Leave the waitlist here:\n{{leave_url}}\n\n{{business_name}}"
+    )
+  );
+}
+
 async function onWaitlistOffered(entry: Waitlist) {
   const settings = await getSettings(entry.shop, entry.platform);
   if (!settings.notify_customer || !templateEnabled(settings, "waitlist_offered")) return;
@@ -565,7 +597,7 @@ async function onWaitlistOffered(entry: Waitlist) {
     settingTemplate(
       settings,
       "waitlist_offered_body",
-      "Hi {{customer_name}},\n\nGood news — a spot just opened up for {{service}} on {{date}} at {{time}} {{timezone}}.\n\nThis offer is first come, first served and expires at {{expires_at}}. Claim it here:\n{{claim_url}}\n\nIf you don't respond in time, we'll offer it to the next person on the list.\n\n{{business_name}}"
+      "Hi {{customer_name}},\n\nGood news — a spot just opened up for {{service}} on {{date}} at {{time}} {{timezone}}.\n\nThis offer is first come, first served and expires at {{expires_at}}. Claim it here:\n{{claim_url}}\n\nNo longer need it? Leave the waitlist here:\n{{leave_url}}\n\nIf you don't respond in time, we'll offer it to the next person on the list.\n\n{{business_name}}"
     )
   );
 }
@@ -603,6 +635,9 @@ export function init() {
   );
   events.onEvent("payment_completed", (booking) =>
     onPaymentCompleted(booking).catch((err) => logMailError("payment_completed", booking.shop, booking.uid, err))
+  );
+  events.onEvent("waitlist_joined", (entry) =>
+    onWaitlistJoined(entry).catch((err) => logMailError("waitlist_joined", entry.shop, entry.uid, err))
   );
   events.onEvent("waitlist_offered", (entry) =>
     onWaitlistOffered(entry).catch((err) => logMailError("waitlist_offered", entry.shop, entry.uid, err))

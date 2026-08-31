@@ -1,26 +1,39 @@
 import { DateTime } from "luxon";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { redirect, useLoaderData, Form } from "react-router";
-import { proxyShop, getSettings } from "~/lib/proxy.server";
-import { throttle, clientIp } from "~/lib/http.server";
-import { Waitlist, Data, Bookings, isGetBooqinError } from "getbooqin-core";
+import { proxyShop, getSettings, waitlistPayload } from "~/lib/proxy.server";
+import { throttle, clientIp, ok, fail } from "~/lib/http.server";
+import { Waitlist, Data, Bookings, GetBooqinError, isGetBooqinError } from "getbooqin-core";
 
 /**
- * Public claim page for a waitlist offer — reached by clicking the link in
- * the "a spot opened up" email (mailer.ts's waitlist_offered template), not
- * through the storefront booking widget. There's no widget view for this
- * yet (see waitlist.ts's header comment), so this is a small standalone
- * page: Shopify's App Proxy passes a non-`application/liquid` response
- * straight through rather than wrapping it in the shop's theme, and
- * root.tsx's Document shell is intentionally bare (no Polaris/App Bridge —
- * those only load inside app.tsx's embedded-admin layout), so plain inline
- * styles are the right call here, same reasoning as root.tsx's own
- * ErrorBoundary.
+ * Two things share this one route, both reached by an entry's own
+ * identifier: the "a spot opened up" claim link from mailer.ts's
+ * waitlist_offered email (keyed by the entry's secret offerToken) and the
+ * widget's manage/leave card fetch (keyed by the entry's public uid, sent
+ * with Accept: application/json — see booking.js's api()). They can't be
+ * separate route files: React Router's file-based routing treats
+ * `waitlist.$token` and a hypothetical `waitlist.$uid` as the identical
+ * `/apps/getbooqin/waitlist/:id` pattern, so a second single-segment
+ * dynamic file here would just collide. A plain browser GET (no JSON
+ * Accept header) always gets this page's own bare-styled HTML — Shopify's
+ * App Proxy passes a non-`application/liquid` response straight through
+ * rather than wrapping it in the shop's theme, and root.tsx's Document
+ * shell is intentionally bare (no Polaris/App Bridge — those only load
+ * inside app.tsx's embedded-admin layout), so plain inline styles are the
+ * right call here, same reasoning as root.tsx's own ErrorBoundary.
  */
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const shop = await proxyShop(request);
   const settings = await getSettings(shop);
-  const entry = await Waitlist.getByToken(shop, params.token || "");
+  const id = params.token || "";
+  const entry = (await Waitlist.getByToken(shop, id)) ?? (await Waitlist.getByUid(shop, id));
+  const wantsJson = (request.headers.get("accept") || "").includes("application/json");
+
+  if (wantsJson) {
+    if (!entry) return fail(new GetBooqinError("getbooqin_not_found", "Waitlist entry not found.", 404));
+    return ok(await waitlistPayload(shop, settings, entry));
+  }
+
   const url = new URL(request.url);
   const errorMessage = url.searchParams.get("error");
 
@@ -43,14 +56,20 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     }
   }
 
+  // Reached via uid (the widget's manage/leave link, no offer yet) as well
+  // as via offerToken (the "spot opened up" email) — offeredStartUtc only
+  // exists in the latter case, so fall back to the requested window.
+  const startUtc = entry.offeredStartUtc ?? entry.windowStartUtc;
+
   return {
     businessName: settings.business_name,
     errorMessage,
     entry: {
+      uid: entry.uid,
       status: isExpired && entry.status === "offered" ? "expired" : entry.status,
       service: service?.name ?? "",
-      date: entry.offeredStartUtc ? DateTime.fromJSDate(entry.offeredStartUtc, { zone: "utc" }).setZone(settings.timezone).toFormat("DDD") : "",
-      time: entry.offeredStartUtc ? DateTime.fromJSDate(entry.offeredStartUtc, { zone: "utc" }).setZone(settings.timezone).toFormat("h:mm a") : "",
+      date: startUtc ? DateTime.fromJSDate(startUtc, { zone: "utc" }).setZone(settings.timezone).toFormat("DDD") : "",
+      time: startUtc ? DateTime.fromJSDate(startUtc, { zone: "utc" }).setZone(settings.timezone).toFormat("h:mm a") : "",
       expiresAt: entry.offerExpiresAt ? DateTime.fromJSDate(entry.offerExpiresAt, { zone: "utc" }).setZone(settings.timezone).toFormat("h:mm a") : "",
     },
     booking,
@@ -94,6 +113,17 @@ const button: React.CSSProperties = {
   fontSize: 14,
   fontWeight: 600,
   border: "none",
+  cursor: "pointer",
+};
+const ghostButton: React.CSSProperties = {
+  marginTop: 8,
+  padding: "10px 20px",
+  borderRadius: 8,
+  background: "transparent",
+  color: "#545b68",
+  fontSize: 13,
+  fontWeight: 600,
+  border: "1px solid #d8dbe0",
   cursor: "pointer",
 };
 const errorBanner: React.CSSProperties = {
@@ -145,6 +175,20 @@ export default function WaitlistClaimPage() {
             <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>You're no longer on the waitlist</h1>
             <p style={{ margin: 0, color: "#545b68", fontSize: 14 }}>Contact {businessName} if you'd like to rejoin.</p>
           </>
+        ) : entry.status === "waiting" ? (
+          <>
+            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>You're on the waitlist</h1>
+            <p style={{ margin: 0, color: "#545b68", fontSize: 14 }}>
+              {entry.service}{entry.date ? ` on ${entry.date}` : ""}{entry.time ? ` at ${entry.time}` : ""}.
+              <br />
+              We'll email you the moment a spot opens up.
+            </p>
+            <Form method="post" action={`/apps/getbooqin/waitlist/${entry.uid}/leave`}>
+              <button type="submit" style={ghostButton}>
+                Leave the waitlist
+              </button>
+            </Form>
+          </>
         ) : (
           <>
             <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>A spot opened up!</h1>
@@ -156,6 +200,11 @@ export default function WaitlistClaimPage() {
             <Form method="post">
               <button type="submit" style={button}>
                 Claim this spot
+              </button>
+            </Form>
+            <Form method="post" action={`/apps/getbooqin/waitlist/${entry.uid}/leave`}>
+              <button type="submit" style={ghostButton}>
+                Leave the waitlist
               </button>
             </Form>
           </>

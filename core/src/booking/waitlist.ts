@@ -24,7 +24,7 @@ import prisma from "../db.js";
 import * as Data from "./data.js";
 import * as Availability from "./availability.js";
 import * as Bookings from "./bookings.js";
-import { getSettings } from "./settings.js";
+import { getSettings, type Settings } from "./settings.js";
 import { isEmail, validDate, validTime } from "./bookingsShared.js";
 import { uid, now } from "./ids.js";
 import { GetBooqinError } from "./errors.js";
@@ -126,6 +126,15 @@ export async function join(shop: string, platform: string, shopTimezone: string,
   if (!isEmail(args.email)) throw new GetBooqinError("getbooqin_invalid_email", "Please provide a valid email address.", 400);
   if (!args.first_name) throw new GetBooqinError("getbooqin_missing_name", "Please provide the customer's name.", 400);
 
+  // Task 5a (fixpromptwaitlist.md): a waitlist offer is the time-critical
+  // one — the business needs to be able to reach someone fast once a spot
+  // opens — so it honours the same require_phone setting Bookings.create()
+  // already enforces, not a looser rule of its own.
+  const settings = await getSettings(shop, platform);
+  if (settings.require_phone && !args.phone) {
+    throw new GetBooqinError("getbooqin_missing_phone", "Please provide a phone number.", 400);
+  }
+
   const tz = shopTimezone || "UTC";
   let windowStart: DateTime;
   let windowEnd: DateTime | null;
@@ -175,7 +184,7 @@ export async function join(shop: string, platform: string, shopTimezone: string,
   if (existing) return existing;
 
   try {
-    return await prisma.waitlist.create({
+    const created = await prisma.waitlist.create({
       data: {
         shop,
         platform,
@@ -188,6 +197,8 @@ export async function join(shop: string, platform: string, shopTimezone: string,
         notes: args.notes ?? "",
       },
     });
+    events.emitEvent("waitlist_joined", created);
+    return created;
   } catch (err) {
     // Lost a race against another request for the same join between the
     // check above and this insert — the partial unique index (see the
@@ -228,9 +239,34 @@ export async function leave(shop: string, id: number): Promise<void> {
   });
 }
 
+/**
+ * Public self-service withdrawal by the entry's own uid (see leave() above
+ * for the staff/admin id-based equivalent used by the dashboard). Same
+ * trust model as Bookings' uid-based cancel — no login, the uid itself
+ * (already handed to the customer at join time) is the credential.
+ */
+export async function leaveByUid(shop: string, entryUid: string): Promise<void> {
+  await prisma.waitlist.updateMany({
+    where: { shop, uid: entryUid, status: { in: ["waiting", "offered"] } },
+    data: { status: "cancelled", updatedAt: now() },
+  });
+}
+
 /** Powers the public claim page's loader. */
 export function getByToken(shop: string, token: string) {
   return prisma.waitlist.findFirst({ where: { shop, offerToken: token }, include: { service: true, customer: true } });
+}
+
+/** Powers the storefront manage/leave routes — public self-service lookup by the entry's own uid. */
+export function getByUid(shop: string, entryUid: string) {
+  return prisma.waitlist.findFirst({ where: { shop, uid: entryUid }, include: { service: true, customer: true } });
+}
+
+/** Same convention as Bookings.manageUrl — booking_page_url plus the query param booking.js's liquid block already knows how to branch on. */
+export function manageUrl(entry: Waitlist, settings: Settings): string {
+  const base = settings.booking_page_url || "/";
+  const separator = base.includes("?") ? "&" : "?";
+  return `${base}${separator}getbooqin_waitlist=${entry.uid}`;
 }
 
 /**
@@ -333,9 +369,18 @@ async function cascade(shop: string, platform: string, entry: Waitlist): Promise
   });
 }
 
-/** Turns an active offer into a real booking. Throws GetBooqinError on an expired/already-resolved offer or a lost slot race. */
+/**
+ * Turns an active offer into a real booking. Throws GetBooqinError on an
+ * expired/already-resolved offer or a lost slot race. Accepts either the
+ * offer's own offerToken (the "spot opened up" email's claim link) or the
+ * entry's uid (a customer who navigated to their own manage/leave page —
+ * see the $token route's header comment — while it happened to be in the
+ * "offered" state) — both are equally unguessable random ids, and the
+ * status check right below is what actually gates whether claiming is
+ * valid, not which identifier was used to find the row.
+ */
 export async function claim(shop: string, platform: string, shopTimezone: string, token: string): Promise<Booking> {
-  const entry = await prisma.waitlist.findFirst({ where: { shop, offerToken: token } });
+  const entry = await prisma.waitlist.findFirst({ where: { shop, OR: [{ offerToken: token }, { uid: token }] } });
   if (!entry) throw new GetBooqinError("getbooqin_not_found", "This waitlist offer was not found.", 404);
   if (entry.status !== "offered") {
     throw new GetBooqinError(
@@ -440,6 +485,30 @@ export async function expireStaleOffers(limit = 100): Promise<{ expired: number;
   }
 
   return { expired, cascaded };
+}
+
+/**
+ * fixpromptwaitlist.md Task 7.4: a "waiting" entry whose own window has
+ * fully elapsed can never be matched (matchAndOffer and join() both already
+ * refuse a start time at or before now), so left alone it just sits in the
+ * queue looking active. Only sweeps entries with a definite end that has
+ * passed — an unbounded whole-day/range join (windowEndUtc null, no
+ * window_end given) is deliberately open-ended and must not be swept just
+ * because its original start date is behind us. Call alongside
+ * expireStaleOffers from the same cron (see cron.waitlist.tsx).
+ */
+export async function expirePastWaiting(limit = 200): Promise<number> {
+  const stale = await prisma.waitlist.findMany({
+    where: { status: "waiting", windowEndUtc: { lt: now() } },
+    take: limit,
+    select: { id: true },
+  });
+  if (!stale.length) return 0;
+  const result = await prisma.waitlist.updateMany({
+    where: { id: { in: stale.map((s) => s.id) }, status: "waiting" },
+    data: { status: "expired", updatedAt: now() },
+  });
+  return result.count;
 }
 
 export function init() {

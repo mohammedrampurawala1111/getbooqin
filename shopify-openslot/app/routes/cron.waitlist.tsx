@@ -19,8 +19,11 @@ async function run(request: Request) {
   }
 
   const result = await Waitlist.expireStaleOffers();
+  // Task 7.4 (fixpromptwaitlist.md): also sweep waiting entries whose own
+  // window has fully passed, so they're never notified.
+  const sweptPast = await Waitlist.expirePastWaiting();
 
-  return new Response(JSON.stringify({ ok: true, ...result }), {
+  return new Response(JSON.stringify({ ok: true, ...result, sweptPast }), {
     headers: { "Content-Type": "application/json" },
   });
 }

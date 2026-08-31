@@ -31,6 +31,7 @@ export interface GetBooqinEvents {
   paid_booking_cancelled: [booking: Booking, reason: string];
   meeting_created: [booking: Booking, meeting: { url: string; id?: string }];
   meeting_failed: [booking: Booking, error: string];
+  waitlist_joined: [entry: Waitlist];
   waitlist_offered: [entry: Waitlist];
   waitlist_expired: [entry: Waitlist];
   waitlist_claimed: [entry: Waitlist, booking: Booking];

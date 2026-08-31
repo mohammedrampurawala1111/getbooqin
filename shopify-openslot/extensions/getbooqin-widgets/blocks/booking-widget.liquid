@@ -7,6 +7,11 @@
   confirmation emails can link straight back to this page. booking.js reads
   the uid off data-uid and fetches the details itself; Liquid has no way to
   call the app's API while rendering the page.
+
+  ?getbooqin_waitlist=UID is the same idea for a waitlist entry — the
+  "you're on the list" and "a spot opened up" emails both link here now
+  (fixpromptwaitlist.md Task 4/6), landing on the same page a booking's
+  manage link does rather than a separate one.
 {%- endcomment -%}
 {%- assign booking_uid = blank -%}
 {%- if request.query_string contains 'getbooqin_booking=' -%}
@@ -14,9 +19,17 @@
   {%- assign after = parts[1] | split: '&' -%}
   {%- assign booking_uid = after[0] -%}
 {%- endif -%}
+{%- assign waitlist_uid = blank -%}
+{%- if request.query_string contains 'getbooqin_waitlist=' -%}
+  {%- assign wl_parts = request.query_string | split: 'getbooqin_waitlist=' -%}
+  {%- assign wl_after = wl_parts[1] | split: '&' -%}
+  {%- assign waitlist_uid = wl_after[0] -%}
+{%- endif -%}
 
 {%- if booking_uid != blank -%}
   <div class="getbooqin-card getbooqin-manage" data-uid="{{ booking_uid }}" data-getbooqin-manage {{ block.shopify_attributes }}></div>
+{%- elsif waitlist_uid != blank -%}
+  <div class="getbooqin-card getbooqin-manage" data-uid="{{ waitlist_uid }}" data-getbooqin-waitlist-manage {{ block.shopify_attributes }}></div>
 {%- else -%}
   <div class="getbooqin-booking"
     data-service-id="{{ block.settings.service_id | default: 0 }}"

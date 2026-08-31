@@ -4,9 +4,13 @@
  *    schedule instead of accepting anything with a valid email/name.
  *  - Task 3: a repeat join (same person, same slot) must not create a
  *    second row.
+ *  - Task 4: a customer can look up and leave their own entry by uid.
+ *  - Task 5a: require_phone is honoured on the waitlist form too.
  *  - Task 7: freeing a booking must notify waitlist entries queued on
  *    *adjacent* slots that newly overlap the freed window, not only an
- *    entry waiting on the freed booking's own exact start time.
+ *    entry waiting on the freed booking's own exact start time (7.1); a
+ *    "waiting" entry whose own window has already passed is swept instead
+ *    of lingering (7.4).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
@@ -19,6 +23,8 @@ import "../boot.js";
 import * as Waitlist from "../waitlist.js";
 import * as Bookings from "../bookings.js";
 import * as Settings from "../settings.js";
+import * as Data from "../data.js";
+import { uid } from "../ids.js";
 
 const shop = `waitlist-validation-test-${Date.now()}.myshopify.com`;
 const platform = "shopify";
@@ -168,6 +174,81 @@ describe("Waitlist.join() validation (Task 1) and dedupe (Task 3)", () => {
     expect(rows).toHaveLength(1);
 
     await prisma.booking.delete({ where: { id: holder.id } });
+  });
+
+  it("rejects a join with no phone once require_phone is enabled (Task 5a)", async () => {
+    await Settings.setSettings(shop, platform, { require_phone: true });
+    await expect(
+      Waitlist.join(shop, platform, "UTC", {
+        service_id: serviceId,
+        resource_id: resourceId,
+        window_start: testDate,
+        first_name: "QA",
+        email: await customerEmail(7),
+      })
+    ).rejects.toMatchObject({ code: "getbooqin_missing_phone" });
+    await Settings.setSettings(shop, platform, { require_phone: false });
+  });
+
+  it("getByUid/leaveByUid round-trip: leaving flips status to cancelled (Task 4)", async () => {
+    const holder = await Bookings.create(shop, platform, "UTC", {
+      service_id: serviceId,
+      resource_id: resourceId,
+      date: testDate,
+      time: "11:00",
+      first_name: "Holder",
+      email: await customerEmail(8),
+    });
+
+    const entry = await Waitlist.join(shop, platform, "UTC", {
+      service_id: serviceId,
+      resource_id: resourceId,
+      window_start: testDate,
+      time: "11:00",
+      first_name: "QA",
+      email: await customerEmail(9),
+    });
+    expect(entry.status).toBe("waiting");
+
+    const found = await Waitlist.getByUid(shop, entry.uid);
+    expect(found?.id).toBe(entry.id);
+
+    await Waitlist.leaveByUid(shop, entry.uid);
+    const after = await Waitlist.getByUid(shop, entry.uid);
+    expect(after?.status).toBe("cancelled");
+
+    // Idempotent -- leaving an already-inactive entry is a silent no-op,
+    // not an error (the customer's intent -- "I don't want this" -- is
+    // already satisfied).
+    await expect(Waitlist.leaveByUid(shop, entry.uid)).resolves.toBeUndefined();
+
+    await prisma.booking.delete({ where: { id: holder.id } });
+  });
+
+  it("expirePastWaiting sweeps a waiting entry whose window has already passed (Task 7.4)", async () => {
+    const customerId = await Data.findOrCreateCustomer(shop, platform, {
+      first_name: "QA",
+      email: await customerEmail(10),
+    });
+    const past = await prisma.waitlist.create({
+      data: {
+        shop,
+        platform,
+        uid: uid(),
+        serviceId,
+        resourceId,
+        customerId,
+        windowStartUtc: DateTime.utc().minus({ days: 10 }).toJSDate(),
+        windowEndUtc: DateTime.utc().minus({ days: 9 }).toJSDate(),
+        status: "waiting",
+      },
+    });
+
+    const swept = await Waitlist.expirePastWaiting();
+    expect(swept).toBeGreaterThanOrEqual(1);
+
+    const after = await prisma.waitlist.findUnique({ where: { id: past.id } });
+    expect(after?.status).toBe("expired");
   });
 });
 

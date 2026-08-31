@@ -71,7 +71,16 @@
 		videoNote: 'This is a video call. Your join link is in your confirmation email.',
 		joinCall: 'Join the video call',
 		bookNow: 'Book now',
-		close: 'Close'
+		close: 'Close',
+		dayClosed: 'Closed',
+		dayOutOfRange: 'Booking opens {days} days ahead',
+		waitlistJoinedService: 'Service',
+		waitlistJoinedWhen: 'When',
+		waitlistJoinedReference: 'Reference',
+		waitlistOnList: "You're on the waitlist",
+		waitlistLeave: 'Leave the waitlist',
+		waitlistLeaveConfirm: 'Are you sure you want to leave the waitlist?',
+		waitlistLeft: "You've left the waitlist."
 	};
 
 	var configPromise = null;
@@ -148,8 +157,13 @@
 			daysPromises[ key ] = api(
 				'days?service_id=' + serviceId + '&resource_id=' + resourceId + '&year=' + year + '&month=' + month + '&addon_ids=' + addonIds.join( ',' )
 			).then( function ( days ) {
+				// Keyed by date -> { count, state }. `state` is missing from
+				// the flat next-14-days shape (nextAvailableDays, used
+				// elsewhere) but always present here since this only ever
+				// calls the days?year=&month= (daysInMonth) branch of the
+				// API — see availability.ts's DayState.
 				var map = {};
-				days.forEach( function ( d ) { map[ d.date ] = d.count; } );
+				days.forEach( function ( d ) { map[ d.date ] = { count: d.count, state: d.state || ( d.count > 0 ? 'open' : 'full' ) }; } );
 				return map;
 			} );
 		}
@@ -186,7 +200,12 @@
 
 	function api( path, options ) {
 		options = options || {};
-		options.headers = Object.assign( { 'Content-Type': 'application/json' }, options.headers || {} );
+		// Accept matters specifically for /waitlist/<id> — the single route
+		// that answers both a browser navigating to the emailed claim link
+		// (bare HTML page) and this widget's own fetch (JSON) — see that
+		// route's header comment. Every other endpoint here only ever
+		// returns JSON regardless, so this is a no-op for them.
+		options.headers = Object.assign( { 'Content-Type': 'application/json', 'Accept': 'application/json' }, options.headers || {} );
 		return fetch( API_BASE + path, options ).then( function ( response ) {
 			return response.json().then( function ( json ) {
 				if ( ! response.ok || false === json.success ) {
@@ -514,28 +533,50 @@
 					var dateStr = viewYear + '-' + pad2( viewMonth ) + '-' + pad2( d );
 					var cellDate = new Date( Date.UTC( viewYear, viewMonth - 1, d ) );
 					var isPast = cellDate < todayUtc;
-					var hasSlots = ( map[ dateStr ] || 0 ) > 0;
+					var dayInfo = map[ dateStr ] || { count: 0, state: 'closed' };
+					// The server tells "closed" (not a working day — Sundays/
+					// Mondays here), "out_of_range" (beyond the booking horizon —
+					// all of a far-future month) and "full" (a real working day,
+					// currently nothing open) apart. Only "full" is ever worth a
+					// click: the other two can never have a cancellation free
+					// something up, since nothing was ever bookable there to
+					// begin with. `isPast` is computed client-side against the
+					// visitor's own clock rather than trusting the server's
+					// day.state === 'past' (server day boundaries are shop-
+					// timezone, this loop's todayUtc is the visitor's) — same
+					// reasoning the pre-existing isPast check already used.
+					var state = isPast ? 'past' : dayInfo.state;
 					// A day with zero slots stays visually "unavailable" either
-					// way, but when the merchant has the waitlist on, it's still
+					// way, but when the merchant has the waitlist on and the day
+					// is genuinely full (not closed/out of range), it's still
 					// worth a click — renderTimesFor already handles the
 					// zero-slots response by showing the "no times" message plus
-					// a join-the-waitlist prompt. Without the waitlist there is
-					// nothing useful behind that click, so it stays disabled.
-					var clickable = ! isPast && ( hasSlots || waitlistEnabled );
+					// a join-the-waitlist prompt.
+					var clickable = state === 'open' || ( state === 'full' && waitlistEnabled );
 
 					var classes = 'getbooqin-calendar__cell getbooqin-calendar__day';
 					// is-unavailable = greyed out AND not-allowed (nothing to do
 					// here). is-full = greyed out but still clickable, since
 					// waitlistEnabled means there is something to do — joining
 					// the waitlist — even with zero open slots.
-					if ( ! hasSlots ) classes += clickable ? ' is-full' : ' is-unavailable';
+					if ( state === 'full' ) classes += clickable ? ' is-full' : ' is-unavailable';
+					else if ( state !== 'open' ) classes += ' is-unavailable';
 					if ( selectedDate === dateStr ) classes += ' is-selected';
 
 					var fullLabel = cellDate.toLocaleDateString( undefined, { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' } );
+					var stateHint = '';
+					if ( state === 'closed' ) {
+						stateHint = t.dayClosed;
+					} else if ( state === 'out_of_range' ) {
+						var daysAhead = Math.max( 1, Math.round( ( cellDate.getTime() - todayUtc.getTime() ) / 86400000 ) );
+						stateHint = t.dayOutOfRange.replace( '{days}', String( daysAhead ) );
+					}
+					if ( stateHint ) fullLabel += ' — ' + stateHint;
 					// aria-pressed, not aria-current: aria-current="date" means
 					// "today", not "the selected day" — using it for selection
 					// would misreport which day is actually today to screen readers.
 					var cellAttrs = { type: 'button', class: classes, text: String( d ), 'aria-label': fullLabel, 'aria-pressed': selectedDate === dateStr ? 'true' : 'false' };
+					if ( stateHint ) cellAttrs.title = stateHint;
 					var cellButton = el( 'button', cellAttrs );
 					if ( ! clickable ) {
 						cellButton.disabled = true;
@@ -574,7 +615,15 @@
 	 * day. Same honeypot convention as stepDetails's booking form: a hidden
 	 * field that must stay empty.
 	 */
-	function renderWaitlistStep( serviceId, resourceId, dateStr, dateLabel, slotTime, onBack ) {
+	function renderWaitlistStep( options ) {
+		var serviceId = options.serviceId;
+		var resourceId = options.resourceId;
+		var dateStr = options.dateStr;
+		var dateLabel = options.dateLabel;
+		var slotTime = options.slotTime;
+		var requirePhone = !! options.requirePhone;
+		var onBack = options.onBack;
+
 		var wrap = el( 'div' );
 
 		wrap.appendChild( el( 'h4', { text: t.joinWaitlist } ) );
@@ -596,7 +645,12 @@
 			field( 'last_name', t.lastName, 'text', false )
 		] ) );
 		wrap.appendChild( field( 'email', t.email, 'email', true ) );
-		wrap.appendChild( field( 'phone', t.phone, 'tel', false ) );
+		// Task 5a (fixpromptwaitlist.md): a waitlist offer is the
+		// time-critical one -- the business needs to reach someone fast once
+		// a spot opens -- so this honours the same require_phone setting the
+		// booking form (stepDetails) already does, instead of always
+		// treating phone as optional here.
+		wrap.appendChild( field( 'phone', t.phone, 'tel', requirePhone ) );
 
 		wrap.appendChild( el( 'input', {
 			type: 'text',
@@ -624,8 +678,20 @@
 		submit.addEventListener( 'click', function () {
 			var firstName = wrap.querySelector( '[name=first_name]' ).value.trim();
 			var email = wrap.querySelector( '[name=email]' ).value.trim();
-			if ( ! firstName || ! email ) {
+			var phone = wrap.querySelector( '[name=phone]' ).value.trim();
+			if ( ! firstName || ! email || ( requirePhone && ! phone ) ) {
 				showError( t.required );
+				// Task 5c (fixpromptwaitlist.md): focus the first invalid
+				// field on a validation error, same as stepDetails's booking
+				// form already does -- not the H4 heading, which tells a
+				// keyboard/screen-reader user nothing about what to fix.
+				var invalidFields = wrap.querySelectorAll( '[required]' );
+				for ( var i = 0; i < invalidFields.length; i++ ) {
+					if ( ! invalidFields[ i ].value.trim() ) {
+						invalidFields[ i ].focus();
+						break;
+					}
+				}
 				return;
 			}
 
@@ -641,17 +707,23 @@
 					first_name: firstName,
 					last_name: wrap.querySelector( '[name=last_name]' ).value.trim(),
 					email: email,
-					phone: wrap.querySelector( '[name=phone]' ).value.trim(),
+					phone: phone,
 					os_hp_a1b2: wrap.querySelector( '[name=os_hp_a1b2]' ).value
 				} )
 			} )
-				.then( function () {
+				.then( function ( entry ) {
 					wrap.innerHTML = '';
+					// Task 5b (fixpromptwaitlist.md): repeat the full summary
+					// and reference, matching confirmationDetails() -- the
+					// join response now carries the same service/date/time/uid
+					// shape a booking's does (see proxy.server.ts's
+					// waitlistPayload), so this reuses it rather than a bare
+					// "you're on the list" with nothing to confirm.
 					wrap.appendChild( el( 'div', { class: 'getbooqin-done' }, [
 						el( 'div', { class: 'getbooqin-done__mark', text: '✓' } ),
 						el( 'h4', { text: t.waitlistJoinedHeading } ),
 						el( 'p', { class: 'getbooqin-muted', text: t.waitlistJoined } )
-					] ) );
+					].concat( confirmationDetails( entry ) ) ) );
 				} )
 				.catch( function ( err ) {
 					submit.disabled = false;
@@ -989,8 +1061,16 @@
 		var self = this;
 		this.setProgress( 2 );
 		this.body.innerHTML = '';
-		var content = renderWaitlistStep( this.state.serviceId, this.state.resourceId, dateStr, dateLabel, slotTime, function () {
-			self.stepDateTime();
+		var content = renderWaitlistStep( {
+			serviceId: this.state.serviceId,
+			resourceId: this.state.resourceId,
+			dateStr: dateStr,
+			dateLabel: dateLabel,
+			slotTime: slotTime,
+			requirePhone: !! ( this.cfg && this.cfg.settings && this.cfg.settings.requirePhone ),
+			onBack: function () {
+				self.stepDateTime();
+			}
 		} );
 		this.body.appendChild( content );
 		focusHeading( content.querySelector( 'h4' ) );
@@ -1575,6 +1655,78 @@
 			} );
 	}
 
+	function wireWaitlistManageCard( card ) {
+		var leaveButton = card.querySelector( '[data-getbooqin-waitlist-leave]' );
+		var msg = card.querySelector( '.getbooqin-manage__msg' );
+		if ( leaveButton ) {
+			leaveButton.addEventListener( 'click', function () {
+				if ( ! window.confirm( t.waitlistLeaveConfirm ) ) {
+					return;
+				}
+				leaveButton.disabled = true;
+				api( 'waitlist/' + card.dataset.uid + '/leave', { method: 'POST' } )
+					.then( function () {
+						leaveButton.remove();
+						msg.textContent = t.waitlistLeft;
+					} )
+					.catch( function ( err ) {
+						leaveButton.disabled = false;
+						msg.textContent = err.message;
+					} );
+			} );
+		}
+	}
+
+	/**
+	 * fixpromptwaitlist.md Task 4 — the "manage a waitlist entry" view, same
+	 * idea and shape as renderManageCard above (booking-widget.liquid reads
+	 * ?getbooqin_waitlist=UID the same way it already reads
+	 * ?getbooqin_booking=UID, and points at this instead of the bookings
+	 * card). Simpler than the booking card: nothing to pay or reschedule
+	 * here, just status and a way to leave.
+	 */
+	function renderWaitlistManageCard( card ) {
+		var uid = card.dataset.uid;
+		card.innerHTML = '';
+		card.appendChild( el( 'p', { class: 'getbooqin-muted', text: t.loading } ) );
+
+		api( 'waitlist/' + encodeURIComponent( uid ) )
+			.then( function ( entry ) {
+				card.innerHTML = '';
+				var manageHeading = el( 'h3', { text: t.waitlistOnList } );
+				card.appendChild( manageHeading );
+				focusHeading( manageHeading );
+				card.appendChild( el( 'p', { class: 'getbooqin-status getbooqin-status--' + entry.status, text: entry.status } ) );
+
+				var dl = el( 'dl', { class: 'getbooqin-details' }, [
+					el( 'dt', { text: t.waitlistJoinedService } ), el( 'dd', { text: entry.service } ),
+					el( 'dt', { text: t.waitlistJoinedWhen } ), el( 'dd', { text: entry.date + ( entry.time ? ' · ' + entry.time : '' ) } )
+				] );
+				card.appendChild( dl );
+
+				var actions = el( 'div', { class: 'getbooqin-actions' } );
+				if ( entry.can_leave ) {
+					actions.appendChild( el( 'button', {
+						type: 'button',
+						class: 'getbooqin-btn getbooqin-btn--danger',
+						text: t.waitlistLeave,
+						'data-getbooqin-waitlist-leave': ''
+					} ) );
+				}
+				if ( actions.children.length ) {
+					card.appendChild( actions );
+				}
+				card.appendChild( el( 'div', { class: 'getbooqin-manage__msg', role: 'status' } ) );
+				card.dataset.uid = entry.uid;
+
+				wireWaitlistManageCard( card );
+			} )
+			.catch( function ( err ) {
+				card.innerHTML = '';
+				card.appendChild( el( 'p', {}, [ document.createTextNode( err.message ) ] ) );
+			} );
+	}
+
 	function initPay( box ) {
 		var msg = box.querySelector( '.getbooqin-pay__msg' );
 		box.querySelectorAll( '[data-getbooqin-pay]' ).forEach( function ( button ) {
@@ -1790,6 +1942,7 @@
 			new Wizard( root );
 		} );
 		document.querySelectorAll( '[data-getbooqin-manage]' ).forEach( renderManageCard );
+		document.querySelectorAll( '[data-getbooqin-waitlist-manage]' ).forEach( renderWaitlistManageCard );
 		document.querySelectorAll( '.getbooqin-product-embed' ).forEach( initProductEmbed );
 
 		// The floating-button app embed renders this element on every page

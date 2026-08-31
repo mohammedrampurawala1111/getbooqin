@@ -663,7 +663,8 @@
 	color: #3730a3;
 }
 
-.getbooqin-status--cancelled {
+.getbooqin-status--cancelled,
+.getbooqin-status--expired {
 	background: #fee4e2;
 	color: #b42318;
 }
