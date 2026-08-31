@@ -370,10 +370,6 @@ model Waitlist {
   @@index([platform, shop, serviceId, resourceId, status, createdAt])
   @@index([platform, shop, status, offerExpiresAt])
   @@index([platform, shop, customerId, status])
-  // Also has a partial unique index -- (platform, shop, serviceId, resourceId,
-  // windowStartUtc, customerId) WHERE status IN ('waiting','offered') --
-  // hand-written in migrations/20260831000000_waitlist_dedupe_active_joins
-  // since Prisma's DSL can't express a filtered unique index.
 }
 
 model Payment {
