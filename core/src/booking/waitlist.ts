@@ -19,6 +19,7 @@
  */
 import { DateTime } from "luxon";
 import type { Booking, Waitlist } from "@prisma/client";
+import type { CatalogService } from "./data.js";
 import prisma from "../db.js";
 import * as Data from "./data.js";
 import * as Availability from "./availability.js";
@@ -42,6 +43,83 @@ export interface JoinWaitlistArgs {
   notes?: string;
 }
 
+/**
+ * A waitlist join is only meaningful for a slot/day that the schedule
+ * itself would actually withdraw or leave empty — otherwise the entry can
+ * never fire, because no cancellation ever frees something that was never
+ * bookable. Reuses the exact same slot generation and day-state
+ * classification the booking path and calendar already render from, so
+ * this can never drift into disagreeing with what a customer was shown.
+ */
+async function assertJoinable(
+  shop: string,
+  platform: string,
+  shopTimezone: string,
+  service: CatalogService,
+  resourceIdInput: number,
+  date: string,
+  time: string | undefined
+): Promise<void> {
+  const [year, month] = date.split("-").map(Number);
+  const monthDays = await Availability.daysInMonth(shop, platform, shopTimezone, service.id, resourceIdInput, year, month);
+  const day = monthDays.find((d) => d.date === date);
+
+  if (!day || day.state === "past" || day.state === "out_of_range") {
+    throw new GetBooqinError("getbooqin_date_past", "That date is not open for booking.", 400);
+  }
+  if (day.state === "closed") {
+    throw new GetBooqinError("getbooqin_day_closed", "The business is not open that day.", 400);
+  }
+
+  if (!time) {
+    // Whole-day join: "full" (a real working day, currently nothing open)
+    // is the only state a waitlist makes sense for — "open" means slots
+    // exist and the customer should book one directly instead of queuing.
+    if (day.state === "open") {
+      throw new GetBooqinError(
+        "getbooqin_slot_available",
+        "This day still has open times — please book one directly instead of joining the waitlist.",
+        400
+      );
+    }
+    return;
+  }
+
+  // Per-slot join: resolve to one concrete resource the same way
+  // Availability.slots' includeBlocked does — a "this exact slot is
+  // blocked" answer only means one thing when exactly one resource is in
+  // play. With more than one candidate and none specified, there's no
+  // single coherent answer (busy for A, free for B is just available).
+  const candidates = resourceIdInput
+    ? [await Data.resource(shop, resourceIdInput)].filter((r): r is NonNullable<typeof r> => !!r)
+    : await Data.resourcesForService(shop, platform, service.id);
+  const resourceId = candidates.length === 1 ? candidates[0].id : resourceIdInput;
+  if (!resourceId) {
+    throw new GetBooqinError(
+      "getbooqin_slot_not_offered",
+      "Please choose a specific staff member to join the waitlist for one time.",
+      400
+    );
+  }
+
+  const daySlots = await Availability.slots(shop, platform, shopTimezone, service.id, resourceId, date, 0, 0, true);
+  const match = daySlots.find((s) => s.time === time);
+  if (!match) {
+    throw new GetBooqinError("getbooqin_slot_not_offered", "That is not a bookable time for this service.", 400);
+  }
+  if (match.available) {
+    throw new GetBooqinError(
+      "getbooqin_slot_available",
+      "That time is currently available — please book it directly instead of joining the waitlist.",
+      400
+    );
+  }
+}
+
+function isUniqueConstraintViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: unknown }).code === "P2002";
+}
+
 export async function join(shop: string, platform: string, shopTimezone: string, args: JoinWaitlistArgs): Promise<Waitlist> {
   const service = await Data.catalogService(shop, args.service_id);
   if (!service || !service.status) throw new GetBooqinError("getbooqin_invalid_service", "That service is not available.", 400);
@@ -51,17 +129,24 @@ export async function join(shop: string, platform: string, shopTimezone: string,
   const tz = shopTimezone || "UTC";
   let windowStart: DateTime;
   let windowEnd: DateTime | null;
+  const isPerSlot = !!(args.window_start && validDate(args.window_start) && args.time && validTime(args.time));
 
-  if (args.window_start && validDate(args.window_start) && args.time && validTime(args.time)) {
+  if (isPerSlot) {
     const exact = DateTime.fromISO(`${args.window_start}T${args.time}:00`, { zone: tz });
+    if (!exact.isValid) throw new GetBooqinError("getbooqin_invalid_slot", "Please choose a valid date and time.", 400);
     windowStart = exact;
     windowEnd = exact;
   } else {
-    windowStart = args.window_start && validDate(args.window_start)
+    if (args.window_start && !validDate(args.window_start)) {
+      throw new GetBooqinError("getbooqin_invalid_slot", "Please choose a valid date.", 400);
+    }
+    windowStart = args.window_start
       ? DateTime.fromISO(args.window_start, { zone: tz }).startOf("day")
       : DateTime.now().setZone(tz).startOf("day");
     windowEnd = args.window_end && validDate(args.window_end) ? DateTime.fromISO(args.window_end, { zone: tz }).endOf("day") : null;
   }
+
+  await assertJoinable(shop, platform, shopTimezone, service, args.resource_id || 0, windowStart.toFormat("yyyy-MM-dd"), isPerSlot ? args.time : undefined);
 
   const customerId = await Data.findOrCreateCustomer(shop, platform, {
     first_name: args.first_name,
@@ -71,19 +156,50 @@ export async function join(shop: string, platform: string, shopTimezone: string,
     timezone: shopTimezone,
   });
 
-  return prisma.waitlist.create({
-    data: {
-      shop,
-      platform,
-      uid: uid(),
-      serviceId: args.service_id,
-      resourceId: args.resource_id || 0,
-      customerId,
-      windowStartUtc: windowStart.toUTC().toJSDate(),
-      windowEndUtc: windowEnd ? windowEnd.toUTC().toJSDate() : null,
-      notes: args.notes ?? "",
-    },
-  });
+  const dedupeWhere = {
+    shop,
+    platform,
+    serviceId: args.service_id,
+    resourceId: args.resource_id || 0,
+    windowStartUtc: windowStart.toUTC().toJSDate(),
+    customerId,
+    status: { in: ["waiting", "offered"] as string[] },
+  };
+
+  // A repeat join (same person, same service/resource/slot) satisfies the
+  // customer's intent exactly as well as a fresh row would — surfacing it
+  // as a duplicate-key error, or silently creating a second entry that
+  // means the same person gets offered the same slot twice, are both worse
+  // than just handing back what they already have.
+  const existing = await prisma.waitlist.findFirst({ where: dedupeWhere });
+  if (existing) return existing;
+
+  try {
+    return await prisma.waitlist.create({
+      data: {
+        shop,
+        platform,
+        uid: uid(),
+        serviceId: args.service_id,
+        resourceId: args.resource_id || 0,
+        customerId,
+        windowStartUtc: windowStart.toUTC().toJSDate(),
+        windowEndUtc: windowEnd ? windowEnd.toUTC().toJSDate() : null,
+        notes: args.notes ?? "",
+      },
+    });
+  } catch (err) {
+    // Lost a race against another request for the same join between the
+    // check above and this insert — the partial unique index (see the
+    // add_waitlist_dedupe migration) is what actually guarantees no
+    // duplicate, this is just resolving the resulting conflict the same
+    // way the pre-check would have.
+    if (isUniqueConstraintViolation(err)) {
+      const raced = await prisma.waitlist.findFirst({ where: dedupeWhere });
+      if (raced) return raced;
+    }
+    throw err;
+  }
 }
 
 export interface WaitlistQueryArgs {
@@ -135,24 +251,49 @@ export async function matchAndOffer(shop: string, platform: string, freed: Freed
   const service = await Data.catalogService(shop, freed.serviceId);
   if (!service) return null;
 
+  // Deliberately broad at the SQL level — a per-slot entry's own
+  // [windowStart, windowStart+duration) can overlap the freed window
+  // without windowStart itself falling inside it. Freeing an 11:00-11:45
+  // booking (45-minute service) also clears a 10:30 start (runs to 11:15)
+  // and an 11:30 start (runs to 12:15); an entry waiting on either of those
+  // exact times has windowStartUtc outside [11:00, 11:45) and would never
+  // have matched the old windowStartUtc<=freed.start<=windowEndUtc filter.
+  // Precise overlap is computed per-candidate below instead.
   const candidates = await prisma.waitlist.findMany({
     where: {
       shop,
       platform,
       serviceId: freed.serviceId,
       status: "waiting",
-      windowStartUtc: { lte: freed.startUtc },
-      AND: [
-        { OR: [{ resourceId: 0 }, { resourceId: freed.resourceId }] },
-        { OR: [{ windowEndUtc: null }, { windowEndUtc: { gte: freed.startUtc } }] },
-      ],
+      OR: [{ resourceId: 0 }, { resourceId: freed.resourceId }],
     },
     orderBy: { createdAt: "asc" },
   });
 
   for (const candidate of candidates) {
-    const startUtc = DateTime.fromJSDate(freed.startUtc, { zone: "utc" });
-    const endUtc = DateTime.fromJSDate(freed.endUtc, { zone: "utc" });
+    const isPerSlot = !!candidate.windowEndUtc && candidate.windowStartUtc.getTime() === candidate.windowEndUtc.getTime();
+
+    let offerStartJs: Date;
+    let offerEndJs: Date;
+    if (isPerSlot) {
+      // Their own requested slot, not necessarily the freed booking's own
+      // span — offer what they actually asked for.
+      offerStartJs = candidate.windowStartUtc;
+      offerEndJs = new Date(candidate.windowStartUtc.getTime() + service.durationMin * 60_000);
+      const overlaps = offerStartJs.getTime() < freed.endUtc.getTime() && offerEndJs.getTime() > freed.startUtc.getTime();
+      if (!overlaps) continue;
+    } else {
+      // Whole-day/range entry: didn't ask for one specific time, just that
+      // something in range opened up — the freed slot itself is the offer.
+      if (candidate.windowStartUtc.getTime() > freed.startUtc.getTime()) continue;
+      if (candidate.windowEndUtc && candidate.windowEndUtc.getTime() < freed.startUtc.getTime()) continue;
+      offerStartJs = freed.startUtc;
+      offerEndJs = freed.endUtc;
+    }
+
+    const startUtc = DateTime.fromJSDate(offerStartJs, { zone: "utc" });
+    const endUtc = DateTime.fromJSDate(offerEndJs, { zone: "utc" });
+    if (startUtc.toMillis() <= Date.now()) continue;
     if (!(await Availability.isFree(shop, freed.resourceId, startUtc, endUtc, service))) continue;
 
     const offerExpiresAt = DateTime.utc().plus({ hours: Math.max(0.1, settings.waitlist_offer_window_hours) }).toJSDate();
@@ -162,8 +303,8 @@ export async function matchAndOffer(shop: string, platform: string, freed: Freed
         status: "offered",
         offerToken: uid(),
         offeredResourceId: freed.resourceId,
-        offeredStartUtc: freed.startUtc,
-        offeredEndUtc: freed.endUtc,
+        offeredStartUtc: offerStartJs,
+        offeredEndUtc: offerEndJs,
         offerExpiresAt,
         offerCount: { increment: 1 },
         updatedAt: now(),

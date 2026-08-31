@@ -10,7 +10,47 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
 import prisma from "../../db.js";
 import * as Waitlist from "../waitlist.js";
+import * as Bookings from "../bookings.js";
 import * as Settings from "../settings.js";
+import * as Data from "../data.js";
+import { uid } from "../ids.js";
+
+/**
+ * Waitlist.join() now validates the requested slot/day against the real
+ * schedule (fixpromptwaitlist.md Task 1) — a plain "any resource, whole
+ * day" join on a day that's still wide open (this file's default fixture)
+ * correctly gets rejected as "book it directly instead." The tests below
+ * that exercise matchAndOffer/claim/expireStaleOffers care about entries
+ * that already exist, not about join()'s own validation (that's covered
+ * separately), so they construct rows directly at the shape join() would
+ * have produced rather than fighting validation that's orthogonal to what
+ * they're actually testing.
+ */
+async function seedEntry(args: {
+  serviceId: number;
+  resourceId?: number;
+  windowStartUtc: Date;
+  windowEndUtc?: Date | null;
+  email: string;
+  firstName: string;
+}) {
+  const customerId = await Data.findOrCreateCustomer(shop, platform, {
+    first_name: args.firstName,
+    email: args.email,
+  });
+  return prisma.waitlist.create({
+    data: {
+      shop,
+      platform,
+      uid: uid(),
+      serviceId: args.serviceId,
+      resourceId: args.resourceId ?? 0,
+      customerId,
+      windowStartUtc: args.windowStartUtc,
+      windowEndUtc: args.windowEndUtc ?? null,
+    },
+  });
+}
 
 const shop = `waitlist-test-${Date.now()}.myshopify.com`;
 const platform = "shopify";
@@ -77,27 +117,28 @@ describe("Waitlist engine", () => {
   it("matches FIFO, skipping a wrong resource and a non-covering window", async () => {
     const freedStart = DateTime.fromISO(`${testDate}T10:00:00`, { zone: "utc" });
     const freedEnd = freedStart.plus({ minutes: 30 });
+    const dayStart = DateTime.fromISO(testDate, { zone: "utc" }).startOf("day").toJSDate();
 
-    const wrongResource = await Waitlist.join(shop, platform, "UTC", {
-      service_id: serviceId,
-      resource_id: resource2Id, // freed slot is on resource1 — this should never match
-      window_start: testDate,
-      first_name: "Wrong",
+    const wrongResource = await seedEntry({
+      serviceId,
+      resourceId: resource2Id, // freed slot is on resource1 — this should never match
+      windowStartUtc: dayStart,
       email: await customerEmail(1),
+      firstName: "Wrong",
     });
 
-    const wrongWindow = await Waitlist.join(shop, platform, "UTC", {
-      service_id: serviceId,
-      window_start: DateTime.fromISO(testDate).plus({ days: 10 }).toFormat("yyyy-MM-dd"), // starts after the freed date
-      first_name: "TooLate",
+    const wrongWindow = await seedEntry({
+      serviceId,
+      windowStartUtc: DateTime.fromISO(testDate, { zone: "utc" }).plus({ days: 10 }).startOf("day").toJSDate(), // starts after the freed date
       email: await customerEmail(2),
+      firstName: "TooLate",
     });
 
-    const match = await Waitlist.join(shop, platform, "UTC", {
-      service_id: serviceId,
-      window_start: testDate,
-      first_name: "Match",
+    const match = await seedEntry({
+      serviceId,
+      windowStartUtc: dayStart,
       email: await customerEmail(3),
+      firstName: "Match",
     });
 
     const offered = await Waitlist.matchAndOffer(shop, platform, {
@@ -121,11 +162,11 @@ describe("Waitlist engine", () => {
   });
 
   it("only offers a slot once when two matchAndOffer calls race for the same entry", async () => {
-    const entry = await Waitlist.join(shop, platform, "UTC", {
-      service_id: serviceId,
-      window_start: testDate,
-      first_name: "Racer",
+    const entry = await seedEntry({
+      serviceId,
+      windowStartUtc: DateTime.fromISO(testDate, { zone: "utc" }).startOf("day").toJSDate(),
       email: await customerEmail(4),
+      firstName: "Racer",
     });
 
     const freedStart = DateTime.fromISO(`${testDate}T11:00:00`, { zone: "utc" });
@@ -149,11 +190,11 @@ describe("Waitlist engine", () => {
   });
 
   it("claim() creates a real booking and rejects a second claim on the same token", async () => {
-    const entry = await Waitlist.join(shop, platform, "UTC", {
-      service_id: serviceId,
-      window_start: testDate,
-      first_name: "Claimer",
+    const entry = await seedEntry({
+      serviceId,
+      windowStartUtc: DateTime.fromISO(testDate, { zone: "utc" }).startOf("day").toJSDate(),
       email: await customerEmail(5),
+      firstName: "Claimer",
     });
 
     const freedStart = DateTime.fromISO(`${testDate}T12:00:00`, { zone: "utc" });
@@ -181,17 +222,18 @@ describe("Waitlist engine", () => {
   });
 
   it("expireStaleOffers() expires a past-due offer and cascades to the next candidate", async () => {
-    const first = await Waitlist.join(shop, platform, "UTC", {
-      service_id: serviceId,
-      window_start: testDate,
-      first_name: "First",
+    const dayStart = DateTime.fromISO(testDate, { zone: "utc" }).startOf("day").toJSDate();
+    const first = await seedEntry({
+      serviceId,
+      windowStartUtc: dayStart,
       email: await customerEmail(6),
+      firstName: "First",
     });
-    const second = await Waitlist.join(shop, platform, "UTC", {
-      service_id: serviceId,
-      window_start: testDate,
-      first_name: "Second",
+    const second = await seedEntry({
+      serviceId,
+      windowStartUtc: dayStart,
       email: await customerEmail(7),
+      firstName: "Second",
     });
 
     const freedStart = DateTime.fromISO(`${testDate}T13:00:00`, { zone: "utc" });
@@ -222,6 +264,19 @@ describe("Waitlist engine", () => {
 
   it("joining with a specific time only matches a freed slot at that exact instant, not other times the same day", async () => {
     const wantedTime = "14:00";
+
+    // A per-slot join must name an already-blocked slot (Task 1) — book it
+    // out first, same as a real customer would only ever see the "join the
+    // waitlist for this time" prompt on a slot that's actually taken.
+    const blocker = await Bookings.create(shop, platform, "UTC", {
+      service_id: serviceId,
+      resource_id: resource1Id,
+      date: testDate,
+      time: wantedTime,
+      first_name: "Blocker",
+      email: await customerEmail(9),
+    });
+
     const entry = await Waitlist.join(shop, platform, "UTC", {
       service_id: serviceId,
       resource_id: resource1Id,
@@ -245,6 +300,11 @@ describe("Waitlist engine", () => {
       endUtc: wantedStart.plus({ hours: 1, minutes: 30 }).toJSDate(),
     });
     expect(missedOffer?.id).not.toBe(entry.id);
+
+    // Actually free the wanted slot before checking it's offered — matchAndOffer
+    // re-verifies availability itself, so it wouldn't match a slot the
+    // blocker booking still occupies.
+    await prisma.booking.delete({ where: { id: blocker.id } });
 
     // The exact requested instant freeing up should match it.
     const exactOffer = await Waitlist.matchAndOffer(shop, platform, {

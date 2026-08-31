@@ -224,8 +224,20 @@ export async function nextAvailableDays(
 }
 
 /**
+ * A day's status is more than its slot count: 0 means one of three
+ * completely different things — the studio doesn't work this day at all
+ * ("closed"), it works but every slot is taken ("full"), or the date is
+ * past the booking horizon and was never open to begin with
+ * ("out_of_range"). A bare count can't tell these apart, which is exactly
+ * what let a fully-booked calendar month and a permanently-closed weekday
+ * render identically to a customer (and, before Task 1's join()
+ * validation, let a waitlist join succeed for either).
+ */
+export type DayState = "open" | "full" | "closed" | "out_of_range" | "past";
+
+/**
  * Every day in one calendar month with its slot count (0 for unavailable —
- * unlike nextAvailableDays, which silently skips those).
+ * unlike nextAvailableDays, which silently skips those) and why.
  */
 export async function daysInMonth(
   shop: string,
@@ -236,13 +248,16 @@ export async function daysInMonth(
   year: number,
   month: number, // 1-12
   extraDurationMin = 0
-): Promise<Array<{ date: string; count: number }>> {
+): Promise<Array<{ date: string; count: number; state: DayState }>> {
   const service = await Data.catalogService(shop, serviceId);
   const monthStart = DateTime.fromObject({ year, month, day: 1 }, { zone: shopTimezone || "UTC" });
   const daysInThisMonth = monthStart.daysInMonth ?? 30;
   const today = DateTime.now().setZone(shopTimezone || "UTC").startOf("day");
-  const emptyMonth = () =>
-    Array.from({ length: daysInThisMonth }, (_, i) => ({ date: monthStart.plus({ days: i }).toFormat("yyyy-MM-dd"), count: 0 }));
+  const emptyMonth = (): Array<{ date: string; count: number; state: DayState }> =>
+    Array.from({ length: daysInThisMonth }, (_, i) => {
+      const day = monthStart.plus({ days: i });
+      return { date: day.toFormat("yyyy-MM-dd"), count: 0, state: day < today ? "past" : "closed" };
+    });
 
   if (!service || !service.status) return emptyMonth();
   assertDuration(service);
@@ -301,26 +316,40 @@ export async function daysInMonth(
     })
   );
 
-  const out: Array<{ date: string; count: number }> = [];
+  const out: Array<{ date: string; count: number; state: DayState }> = [];
   for (let i = 0; i < daysInThisMonth; i++) {
     const day = monthStart.plus({ days: i });
     const date = day.toFormat("yyyy-MM-dd");
     if (day < today) {
-      out.push({ date, count: 0 });
+      out.push({ date, count: 0, state: "past" });
+      continue;
+    }
+    // Past the booking horizon entirely — the studio was never "full" here,
+    // there's simply nothing to book yet at any resource. Checked ahead of
+    // the schedule so a weekday that's normally open but currently beyond
+    // max_advance_days reads as out_of_range, not full.
+    if (day.toUTC() > latest) {
+      out.push({ date, count: 0, state: "out_of_range" });
       continue;
     }
 
     const found = new Map<string, Slot>();
+    let anyWindowToday = false;
     for (const { resource, tz, windowsByDow, timeOffRows, bookingRows } of perResource) {
       const dayStart = DateTime.fromISO(`${date}T00:00:00`, { zone: tz });
       if (!dayStart.isValid) continue;
       const dow = dayStart.weekday % 7;
       const windows = windowsByDow.get(dow) ?? [];
       if (!windows.length) continue;
+      anyWindowToday = true;
 
       generateSlots(date, tz, windows, service, interval, earliest, latest, timeOffRows, bookingRows, extraDurationMin, resource.id, found);
     }
-    out.push({ date, count: found.size });
+    // "closed" only when none of the candidate resources work this weekday
+    // at all — with multiple resources for a service, one being off a given
+    // day shouldn't read as the whole day being shut.
+    const state: DayState = !anyWindowToday ? "closed" : found.size > 0 ? "open" : "full";
+    out.push({ date, count: found.size, state });
   }
 
   return out;
