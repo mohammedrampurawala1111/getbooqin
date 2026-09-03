@@ -160,10 +160,24 @@ function generateSlots(
     let cursor = DateTime.fromISO(`${date}T${window.start}:00`, { zone: tz });
     const stop = DateTime.fromISO(`${date}T${window.end}:00`, { zone: tz });
     if (!cursor.isValid || !stop.isValid) continue;
+    const windowStart = cursor;
 
     while (true) {
       const slotEnd = cursor.plus({ minutes: service.durationMin + extraDurationMin });
-      if (slotEnd > stop) break;
+      // The slot's *occupied* span — including both buffers, exactly like
+      // isFreeLocal's own busyStart/busyEnd below — must fit inside the
+      // working window, not just the appointment itself. Buffer-after was
+      // never checked against closing time and buffer-before never against
+      // opening time, so a 30-min service with a 30-min buffer-after could
+      // still be offered at 17:30 on an 18:00 close, needing the resource
+      // until 18:30 (Defect Dossier's BQ-06 finding).
+      const bufferedEnd = slotEnd.plus({ minutes: service.bufferAfterMin });
+      if (bufferedEnd > stop) break;
+      const bufferedStart = cursor.minus({ minutes: service.bufferBeforeMin });
+      if (bufferedStart < windowStart) {
+        cursor = cursor.plus({ minutes: interval });
+        continue;
+      }
 
       const startUtc = cursor.toUTC();
       const endUtc = slotEnd.toUTC();
@@ -176,7 +190,12 @@ function generateSlots(
         if (!existing) {
           found.set(key, {
             time: key,
-            label: cursor.toFormat("h:mm a"),
+            // 24-hour, matching the rest of the app's convention (Time off,
+            // the dashboard's reschedule/add-booking time inputs) — used to
+            // be "h:mm a" (12-hour), which sat directly under a dd/mm date
+            // field and read as two different locale conventions on one
+            // screen (UX audit's #10 finding).
+            label: cursor.toFormat("HH:mm"),
             start_utc: startUtc.toISO()!,
             end_utc: endUtc.toISO()!,
             resource_id: resourceId,
@@ -192,6 +211,23 @@ function generateSlots(
       cursor = cursor.plus({ minutes: interval });
     }
   }
+}
+
+/**
+ * Zero candidate resources — as opposed to zero *open* slots — means the
+ * public page's "no openings" empty state is lying: nobody will ever be
+ * assigned, no amount of "try again later" will help, and the right
+ * message is "call us," not "check back" (Defect Dossier's R2-04 finding,
+ * item 4). Mirrors the same candidate-resolution slots() itself uses so
+ * the two never disagree.
+ */
+export async function isServiceBookable(shop: string, platform: string, serviceId: number, resourceId: number): Promise<boolean> {
+  if (resourceId) {
+    const resource = await Data.resource(shop, resourceId);
+    return !!resource?.status;
+  }
+  const candidates = await Data.resourcesForService(shop, platform, serviceId);
+  return candidates.length > 0;
 }
 
 export async function nextAvailableDays(
@@ -445,17 +481,13 @@ function isFreeLocal(
   return !overlap;
 }
 
-/**
- * Is the resource free for this range? Applies service buffers, existing
- * bookings, capacity and time-off.
- */
-export async function isFree(
+/** Is this range inside a time-off block for the resource (or the whole business, resourceId 0)? Applies service buffers. */
+export async function isBlockedByTimeOff(
   shop: string,
   resourceId: number,
   startUtc: DateTime,
   endUtc: DateTime,
-  service: CatalogService,
-  excludeBookingId = 0
+  service: CatalogService
 ): Promise<boolean> {
   const busyStart = startUtc.minus({ minutes: service.bufferBeforeMin }).toJSDate();
   const busyEnd = endUtc.plus({ minutes: service.bufferAfterMin }).toJSDate();
@@ -468,7 +500,20 @@ export async function isFree(
       endUtc: { gt: busyStart },
     },
   });
-  if (blocked > 0) return false;
+  return blocked > 0;
+}
+
+/** Does this range collide with another booking on the resource? Applies service buffers and capacity. */
+export async function hasBookingConflict(
+  shop: string,
+  resourceId: number,
+  startUtc: DateTime,
+  endUtc: DateTime,
+  service: CatalogService,
+  excludeBookingId = 0
+): Promise<boolean> {
+  const busyStart = startUtc.minus({ minutes: service.bufferBeforeMin }).toJSDate();
+  const busyEnd = endUtc.plus({ minutes: service.bufferAfterMin }).toJSDate();
 
   const capacity = Math.max(1, service.capacity);
 
@@ -483,7 +528,7 @@ export async function isFree(
         id: { not: excludeBookingId },
       },
     });
-    return taken < capacity;
+    return taken >= capacity;
   }
 
   const overlap = await prisma.booking.count({
@@ -497,5 +542,23 @@ export async function isFree(
     },
   });
 
-  return overlap === 0;
+  return overlap > 0;
+}
+
+/**
+ * Is the resource free for this range? Applies service buffers, existing
+ * bookings, capacity and time-off. Composes isBlockedByTimeOff/
+ * hasBookingConflict — kept as one call for the many existing callers that
+ * only need a plain yes/no, not which of the two reasons it failed for.
+ */
+export async function isFree(
+  shop: string,
+  resourceId: number,
+  startUtc: DateTime,
+  endUtc: DateTime,
+  service: CatalogService,
+  excludeBookingId = 0
+): Promise<boolean> {
+  if (await isBlockedByTimeOff(shop, resourceId, startUtc, endUtc, service)) return false;
+  return !(await hasBookingConflict(shop, resourceId, startUtc, endUtc, service, excludeBookingId));
 }

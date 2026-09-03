@@ -83,13 +83,37 @@ export async function topServices(
 }
 
 /** Booked-minutes ÷ available-minutes per resource, walking each day in range against its weekly schedule. */
+export interface UtilizationHalf {
+  bookedMinutes: number;
+  availableMinutes: number;
+  utilization: number;
+}
+
+function makeHalf(bookedMinutes: number, availableMinutes: number): UtilizationHalf {
+  return { bookedMinutes, availableMinutes, utilization: availableMinutes > 0 ? Math.min(1, bookedMinutes / availableMinutes) : 0 };
+}
+
+/**
+ * Split at `now` rather than reporting one number for the whole range —
+ * a range that's entirely in the future (a business's very next few
+ * consultations, all still ahead of it) made the elapsed-only fix read as
+ * a permanent, confident 0.0% with no way to tell "nothing happened yet"
+ * apart from "nothing was ever booked" (Defect Dossier's R2-07 finding,
+ * the direct follow-on from BQ-35's own elapsed-time fix). `soFar` is
+ * `null` when no part of the range has elapsed yet, so the card can hide
+ * that half instead of showing a 0.0% that means nothing.
+ */
 export async function resourceUtilization(
   shop: string,
   platform: string,
   range: DateRange
-): Promise<Array<{ resourceId: number; resourceName: string; bookedMinutes: number; availableMinutes: number; utilization: number }>> {
+): Promise<Array<{ resourceId: number; resourceName: string; soFar: UtilizationHalf | null; bookedAhead: UtilizationHalf }>> {
   const resources = await prisma.resource.findMany({ where: { shop, platform, status: true } });
   if (resources.length === 0) return [];
+
+  const now = new Date();
+  const hasElapsed = range.from < now;
+  const hasFuture = range.to > now;
 
   const resourceIds = resources.map((r) => r.id);
   const [scheduleRows, bookingRows] = await Promise.all([
@@ -114,35 +138,46 @@ export async function resourceUtilization(
     scheduleByResource.set(row.resourceId, list);
   }
 
-  const bookedMinutesByResource = new Map<number, number>();
+  const bookedByResource = new Map<number, { soFar: number; bookedAhead: number }>();
   for (const b of bookingRows) {
     const minutes = (b.endUtc.getTime() - b.startUtc.getTime()) / 60_000;
-    bookedMinutesByResource.set(b.resourceId, (bookedMinutesByResource.get(b.resourceId) ?? 0) + minutes);
+    const bucket = bookedByResource.get(b.resourceId) ?? { soFar: 0, bookedAhead: 0 };
+    if (b.startUtc < now) bucket.soFar += minutes;
+    else bucket.bookedAhead += minutes;
+    bookedByResource.set(b.resourceId, bucket);
   }
 
-  return resources.map((r) => {
+  const availableByResource = new Map<number, { soFar: number; bookedAhead: number }>();
+  for (const r of resources) {
     const windows = scheduleByResource.get(r.id) ?? [];
-    let availableMinutes = 0;
+    const bucket = { soFar: 0, bookedAhead: 0 };
     let day = DateTime.fromJSDate(range.from, { zone: "utc" }).startOf("day");
     const end = DateTime.fromJSDate(range.to, { zone: "utc" }).startOf("day");
+    const nowDay = DateTime.fromJSDate(now, { zone: "utc" }).startOf("day");
     while (day <= end) {
       const dow = day.weekday % 7;
+      let dayMinutes = 0;
       for (const w of windows) {
         if (w.dayOfWeek !== dow) continue;
         const [sh, sm] = w.startTime.split(":").map(Number);
         const [eh, em] = w.endTime.split(":").map(Number);
-        availableMinutes += eh * 60 + em - (sh * 60 + sm);
+        dayMinutes += eh * 60 + em - (sh * 60 + sm);
       }
+      if (day < nowDay) bucket.soFar += dayMinutes;
+      else bucket.bookedAhead += dayMinutes;
       day = day.plus({ days: 1 });
     }
+    availableByResource.set(r.id, bucket);
+  }
 
-    const bookedMinutes = bookedMinutesByResource.get(r.id) ?? 0;
+  return resources.map((r) => {
+    const booked = bookedByResource.get(r.id) ?? { soFar: 0, bookedAhead: 0 };
+    const available = availableByResource.get(r.id) ?? { soFar: 0, bookedAhead: 0 };
     return {
       resourceId: r.id,
       resourceName: r.name,
-      bookedMinutes,
-      availableMinutes,
-      utilization: availableMinutes > 0 ? Math.min(1, bookedMinutes / availableMinutes) : 0,
+      soFar: hasElapsed ? makeHalf(booked.soFar, available.soFar) : null,
+      bookedAhead: makeHalf(booked.bookedAhead, hasFuture ? available.bookedAhead : 0),
     };
   });
 }
