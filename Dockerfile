@@ -44,4 +44,8 @@ RUN npm run build -w shopify-openslot
 
 ENV NODE_ENV=production
 EXPOSE 3000
-CMD ["sh", "-c", "npx prisma migrate deploy --schema core/prisma/schema.prisma && npm run start -w server"]
+# The resource-assignment backfill (see core/scripts_backfill_resource_assignments.ts)
+# runs here, after migrations and before the server starts, because this
+# session has no other route to production DB access — it's idempotent and
+# cheap, so running it on every boot is harmless.
+CMD ["sh", "-c", "npx prisma migrate deploy --schema core/prisma/schema.prisma && npx tsx core/scripts_backfill_resource_assignments.ts && npm run start -w server"]

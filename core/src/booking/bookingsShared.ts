@@ -18,7 +18,11 @@ export type BookingStatus = (typeof STATUSES)[number];
 
 /** Allowed status transitions. Anything not listed is rejected — fail closed. */
 export const TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
-  pending: ["confirmed", "declined", "cancelled", "no_show"],
+  // no_show describes a confirmed appointment nobody showed up to — a
+  // request nobody has approved yet is Declined or Cancelled instead
+  // (Defect Dossier's BQ-26 finding: this let a pending, future booking be
+  // marked no-show before anyone had even confirmed it would happen).
+  pending: ["confirmed", "declined", "cancelled"],
   confirmed: ["completed", "cancelled", "no_show"],
   declined: ["pending"],
   cancelled: ["pending", "confirmed"],

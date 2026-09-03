@@ -12,11 +12,18 @@ export const meta: Route.MetaFunction = ({ matches }) => [
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform, connection } = await requireTenant(request, params.connectionId);
-  const [services, settings] = await Promise.all([
+  const [services, settings, unbookableIds] = await Promise.all([
     Data.catalogServices(shop, platform, false),
     Settings.getSettings(shop, platform),
+    Data.unbookableServiceIds(shop, platform),
   ]);
-  return { services, platform, connectionId: connection.id, currencySymbol: settings.currency_symbol };
+  return {
+    services,
+    platform,
+    connectionId: connection.id,
+    currencySymbol: settings.currency_symbol,
+    unbookableIds: Array.from(unbookableIds),
+  };
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
@@ -36,7 +43,8 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function ServicesList({ loaderData, actionData, params }: Route.ComponentProps) {
-  const { services, platform, currencySymbol } = loaderData;
+  const { services, platform, currencySymbol, unbookableIds } = loaderData;
+  const unbookable = new Set(unbookableIds);
   const base = `/dashboard/${params.connectionId}`;
   const v = useVocabulary();
 
@@ -83,7 +91,19 @@ export default function ServicesList({ loaderData, actionData, params }: Route.C
           <span className="inline-block h-[10px] w-6 rounded-[3px]" style={{ backgroundColor: s.color }} />,
           <span className="num">{s.price > 0 ? `${currencySymbol}${s.price.toFixed(2)}` : "—"}</span>,
           <span className="num">{s.durationMin} min</span>,
-          <Badge status={s.status ? "confirmed" : "cancelled"} label={s.status ? "Active" : "Inactive"} />,
+          <div className="flex flex-wrap items-center gap-[6px]">
+            <Badge status={s.status ? "confirmed" : "cancelled"} label={s.status ? "Active" : "Inactive"} />
+            {/* Two identically-unticked "who can deliver this" boxes used to
+                behave differently with no visible difference between them
+                (Defect Dossier's R2-04 finding) — this is the same signal
+                as the public page's own "not bookable" fallback, surfaced
+                here instead of discovered by a customer. */}
+            {s.status && unbookable.has(s.id) && (
+              <span className="badge-pending" title="No one is assigned to deliver this — it won't show any open times on the public page.">
+                Not bookable — no one assigned
+              </span>
+            )}
+          </div>,
           <span className="text-faint">›</span>,
         ]}
         mobileCard={(s) => (
@@ -92,9 +112,12 @@ export default function ServicesList({ loaderData, actionData, params }: Route.C
               <span className="min-w-0 truncate font-medium">{s.name || `Service #${s.id}`}</span>
               <span className="num shrink-0">{s.price > 0 ? `${currencySymbol}${s.price.toFixed(2)}` : "—"}</span>
             </div>
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="num text-muted">{s.durationMin} min</span>
-              <Badge status={s.status ? "confirmed" : "cancelled"} label={s.status ? "Active" : "Inactive"} />
+              <div className="flex flex-wrap items-center gap-[6px]">
+                <Badge status={s.status ? "confirmed" : "cancelled"} label={s.status ? "Active" : "Inactive"} />
+                {s.status && unbookable.has(s.id) && <span className="badge-pending">Not bookable</span>}
+              </div>
             </div>
           </>
         )}

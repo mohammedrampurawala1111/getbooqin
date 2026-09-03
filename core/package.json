@@ -46,6 +46,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.122.0",
     "@prisma/client": "^6.1.0",
     "luxon": "^3.5.0",
     "nodemailer": "^9.0.5"

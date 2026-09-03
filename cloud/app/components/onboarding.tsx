@@ -73,8 +73,19 @@ export function OnboardingShell({
   step,
   onStep,
   finishLaterHref = "/dashboard",
+  onFinishLater,
   children,
-}: { step: number; onStep?: (n: number) => void; finishLaterHref?: string; children: ReactNode }) {
+}: {
+  step: number;
+  onStep?: (n: number) => void;
+  finishLaterHref?: string;
+  // When set, takes over "Finish later" entirely (steps 1/2's in-progress
+  // fields need a real save before it's safe to leave — see onboarding.tsx's
+  // finishLater()); finishLaterHref stays as the plain-link fallback for
+  // any caller that doesn't have that problem.
+  onFinishLater?: () => void;
+  children: ReactNode;
+}) {
   return (
     <div className="ob-shell">
       <header className="border-b border-line bg-surface">
@@ -82,7 +93,17 @@ export function OnboardingShell({
           <LogoMark size={28} />
           <span className="text-[14px] font-semibold">Set up GetBooqin</span>
           <span className="num ml-auto text-[12px] text-subtle">Step {step} of 4</span>
-          <a href={finishLaterHref} className="text-meta font-medium text-muted no-underline hover:text-ink">Finish later</a>
+          {onFinishLater ? (
+            <button
+              type="button"
+              onClick={onFinishLater}
+              className="bg-transparent p-0 text-meta font-medium text-muted no-underline hover:text-ink"
+            >
+              Finish later
+            </button>
+          ) : (
+            <a href={finishLaterHref} className="text-meta font-medium text-muted no-underline hover:text-ink">Finish later</a>
+          )}
           <LogoutButton className="btn-ghost px-[10px] py-[6px] text-meta" />
         </div>
         <div className="ob-progress"><span style={{ width: `${(step / 4) * 100}%` }} /></div>

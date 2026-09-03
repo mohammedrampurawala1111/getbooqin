@@ -43,6 +43,16 @@
   --color-warn:     #92600b;  --color-warn-bg:    #fdf3e0;
   --color-danger:   #b42318;  --color-danger-bg:  #fdecea;
   --color-danger-line: #f4cfcb;
+  /* Same value as danger in light mode — exists only so dark mode can
+     diverge them, the same "one token can't serve both text and fill"
+     split already made for brand-fill above (Defect Dossier's BQ-36
+     finding: ConfirmDialog's destructive button used --color-danger
+     directly as a white-text fill, which is correct here but drops to
+     ~2:1 contrast once dark mode lightens --color-danger for its *text*
+     uses like .alert-error). White-on-fill call sites (ConfirmDialog's
+     confirm button) use this one instead, held at its light-mode value in
+     the dark block. */
+  --color-danger-fill: #b42318;
   --color-neutral:  #545b68;  --color-neutral-bg: #f0f1f4;
   /* chart-only tints */
   --color-chart-ok: #2f9e6e;  --color-chart-warn: #e0a325;  --color-chart-off: #c9cdd8;
@@ -75,6 +85,15 @@
   html { background: var(--color-canvas); color-scheme: light; }
   body { @apply bg-canvas text-ink font-sans text-body antialiased; }
   a    { @apply text-brand-600 no-underline hover:underline; }
+  /* A link inline in body copy (legal pages, login/signup/forgot-password's
+     "Need an account? Log in" style prose) needs a non-color way to tell
+     it apart from the surrounding text too, not just its color — brand-600
+     on text-muted/-ink-3 measured 1.08:1, well under the 3:1 WCAG 1.4.1
+     needs (axe's link-in-text-block rule, caught by the new a11y smoke
+     suite — UX audit's #9 finding). Scoped to <p>/<li> rather than the
+     base `a` rule above so nav items, buttons and card tiles (never
+     rendered as running text) keep their own no-underline styling. */
+  p a, li a { text-decoration: underline; }
   ::placeholder { color: var(--color-subtle); }
   :where(input, select, textarea):focus-visible {
     outline: 2px solid color-mix(in oklch, var(--color-brand-500) 45%, transparent);
@@ -191,6 +210,16 @@
      for 11px text (UX audit's C2 finding). Same fixed-color-on-a-fixed-
      plate fix as .nav-item just above, reusing its exact color. */
   .side-dark .text-subtle { color: #a49caf; }
+  /* ...except inside the UserMenu dropdown popover, whose own background
+     (bg-surface) is always the *page* theme's light/dark surface, not the
+     sidebar's permanently-dark plate — the blanket ".side-dark .text-subtle"
+     rule above still matched it by DOM ancestry, repainting its email-
+     address text to #a49caf regardless, which is ~2.6:1 on a light
+     bg-surface (found while fixing the "Owner" contrast above — same class
+     of bug, not yet reported separately). Re-asserting the token here lets
+     the popover track the page theme like every other surface. */
+  .side-dark .user-menu-pop.text-subtle,
+  .side-dark .user-menu-pop .text-subtle { color: var(--color-subtle); }
   .side-dark .nav-item-active {
     /* Mixed from the literal light-mode brand-500 hex, not the token —
        .side-dark is always a dark plate regardless of page theme, so this
@@ -314,6 +343,7 @@
   --color-warn:     #e8b855;  --color-warn-bg:    #332811;
   --color-danger:   #ff9d8f;  --color-danger-bg:  #3a1f1c;
   --color-danger-line: #522a26;
+  --color-danger-fill: #b42318;
   --color-neutral:  #a89fb3;  --color-neutral-bg: #2c2733;
   --color-chart-ok: #52c78d;  --color-chart-warn: #e0a325;  --color-chart-off: #4a4453;
 }

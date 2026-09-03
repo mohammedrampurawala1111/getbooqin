@@ -21,3 +21,30 @@ export function isValidPhone(value: string): boolean {
 // field on every page that renders it (onboarding, signup, settings,
 // account).
 export const PHONE_PATTERN = "^\\+?[0-9][0-9\\s\\(\\)\\-]{6,18}$";
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function isValidEmail(value: string): boolean {
+  return EMAIL_RE.test(value.trim());
+}
+
+/**
+ * Shared client/server validation for the public booking form and the
+ * Add-consultation dialog — both relied entirely on native HTML5 validation,
+ * which shows a transient tooltip and leaves no persistent message for a
+ * screen-reader user or anyone reading slowly (Defect Dossier's BQ-24
+ * finding). Framework-free so it runs identically in a browser onSubmit
+ * handler and in a route action.
+ */
+export function contactFieldErrors(
+  fields: { first_name: string; email: string; phone: string },
+  requirePhone: boolean
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (!fields.first_name.trim()) errors.first_name = "Enter a first name.";
+  if (!fields.email.trim()) errors.email = "Enter an email address.";
+  else if (!isValidEmail(fields.email)) errors.email = "Enter a valid email address.";
+  if (requirePhone && !fields.phone.trim()) errors.phone = "Enter a phone number.";
+  else if (fields.phone.trim() && !isValidPhone(fields.phone)) errors.phone = "Enter a valid phone number.";
+  return errors;
+}

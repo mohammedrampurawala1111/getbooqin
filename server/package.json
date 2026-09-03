@@ -12,6 +12,7 @@
     "@react-router/express": "^7.1.1",
     "compression": "^1.8.1",
     "express": "^4.22.2",
+    "getbooqin-core": "*",
     "morgan": "^1.11.0"
   },
   "engines": {

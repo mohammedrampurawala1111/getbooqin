@@ -7,7 +7,7 @@ import { prisma, Settings, FeatureFlags } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Badge, Field, Input, Toggle } from "~/components/ui";
 import { AuthMethodRow, GoogleGlyph, PasswordField, SessionRow } from "~/components/account";
-import { SettingsShell, SettingsCard, Row, RowInput } from "~/components/settings";
+import { SettingsShell, SettingsCard, Row, RowInput, hiddenSettingsNavKeys } from "~/components/settings";
 import { getPreset, vocabFor } from "~/lib/presets";
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 
@@ -41,6 +41,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     phone: dbUser?.phone ?? "",
     template: { presetId: settings.preset, href: `/dashboard/${connection.id}/settings?page=template` },
     paymentsEnabled: FeatureFlags.PAYMENTS_ENABLED,
+    visitSummariesEnabled: FeatureFlags.VISIT_SUMMARIES_ENABLED,
   };
 }
 
@@ -49,8 +50,14 @@ export default function Account({ loaderData, params }: Route.ComponentProps) {
   const tab = searchParams.get("tab") === "security" ? "security" : "profile";
   const base = `/dashboard/${params.connectionId}`;
 
+  const hide = hiddenSettingsNavKeys({
+    paymentsEnabled: loaderData.paymentsEnabled,
+    visitSummariesEnabled: loaderData.visitSummariesEnabled,
+    preset: loaderData.template.presetId,
+  });
+
   return (
-    <SettingsShell active={tab} base={base} hide={loaderData.paymentsEnabled ? [] : ["payments"]}>
+    <SettingsShell active={tab} base={base} hide={hide}>
       {tab === "profile" ? (
         <ProfileTab phone={loaderData.phone} template={loaderData.template} />
       ) : (

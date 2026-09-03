@@ -1,6 +1,7 @@
-import { Form, redirect } from "react-router";
+import { useEffect } from "react";
+import { Form, redirect, useNavigate, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.timeoff";
-import { Data, Settings } from "getbooqin-core";
+import { Data, Settings, Bookings } from "getbooqin-core";
 // Subpath, not the root barrel — this module's formatInZone runs in the
 // component render below, which executes client-side too; the root
 // barrel pulls in Prisma-backed modules that have no business in a
@@ -8,7 +9,7 @@ import { Data, Settings } from "getbooqin-core";
 // reasoning applied there).
 import { formatInZone, wallClockToUtc } from "getbooqin-core/booking/tz";
 import { requireTenant } from "~/tenant.server";
-import { AlertError, PageHeader, Field, Input, DataTable, EmptyState, ConfirmDialog } from "~/components/ui";
+import { AlertError, PageHeader, Field, Input, DataTable, EmptyState, ConfirmDialog, useToast } from "~/components/ui";
 import { useVocabulary } from "~/lib/presets";
 
 export const meta: Route.MetaFunction = () => [{ title: "Time off · GetBooqin" }];
@@ -51,63 +52,129 @@ export async function action({ request, params }: Route.ActionArgs) {
     return { error: "End must be after start." };
   }
 
-  await Data.addTimeoff(shop, Number(form.get("resource_id") ?? 0), start, end, String(form.get("reason") ?? ""));
-  return redirect(`/dashboard/${params.connectionId}/timeoff`);
+  const resourceId = Number(form.get("resource_id") ?? 0);
+  const reason = String(form.get("reason") ?? "");
+  const proceed = String(form.get("proceed") ?? "");
+
+  // Closing a window over existing bookings used to save silently, leaving
+  // the affected bookings stranded inside a now-closed block with nothing
+  // anywhere mentioning it (Defect Dossier's BQ-08 finding). Checked before
+  // the first save attempt; "keep"/"cancel_and_notify" are the two ways a
+  // merchant can proceed once shown what's affected.
+  if (proceed !== "keep" && proceed !== "cancel_and_notify") {
+    const overlapping = await Bookings.occupyingBetween(shop, platform, resourceId, start, end);
+    if (overlapping.length > 0) {
+      const withNames = await Data.attachServiceNames(shop, overlapping);
+      return {
+        overlapping: withNames.map((b) => ({
+          id: b.id,
+          serviceName: b.serviceName,
+          customerName: `${b.customer?.firstName ?? ""} ${b.customer?.lastName ?? ""}`.trim(),
+          startUtc: b.startUtc.toISOString(),
+        })),
+        pendingBlock: { resource_id: resourceId, start: String(form.get("start")), end: String(form.get("end")), reason },
+      };
+    }
+  }
+
+  if (proceed === "cancel_and_notify") {
+    const overlapping = await Bookings.occupyingBetween(shop, platform, resourceId, start, end);
+    for (const booking of overlapping) {
+      await Bookings.setStatus(shop, booking.id, "cancelled", "time off block created");
+    }
+  }
+
+  await Data.addTimeoff(shop, resourceId, start, end, reason);
+  // Same "?added=1" convention as the Add-consultation dialog's own
+  // success redirect (BQ-02) — a plain redirect to this same URL just
+  // revalidates the already-mounted route, so nothing tells the dialog
+  // (which now owns this form, see BQ-29) it should close.
+  return redirect(`/dashboard/${params.connectionId}/timeoff?added=1`);
 }
 
-export default function TimeOff({ loaderData, actionData }: Route.ComponentProps) {
+export default function TimeOff({ loaderData, actionData, params }: Route.ComponentProps) {
   const { blocks, resources, timezone } = loaderData;
+  const base = `/dashboard/${params.connectionId}`;
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const toast = useToast();
   const v = useVocabulary();
 
-  return (
-    <div className="flex flex-col gap-[18px]">
-      <PageHeader title="Time off" />
-      {actionData?.error && <AlertError>{actionData.error}</AlertError>}
+  // Guards the case where the dialog's own submit failed validation (bad
+  // dates, end before start) — the dialog usually just stays open (a native
+  // <dialog>'s open state survives an in-place re-render), but this covers
+  // the same-key edge case robustly rather than relying on that alone.
+  useEffect(() => {
+    if (actionData && "error" in actionData && actionData.error) {
+      const dialog = document.getElementById("add-timeoff") as HTMLDialogElement | null;
+      if (dialog && !dialog.open) dialog.showModal();
+    }
+  }, [actionData]);
 
-      <div className="card">
-        <div className="card-body">
-          {/* Keyed on the row count: a successful add redirects to this
-              same URL, which React Router treats as a revalidation of the
-              route already mounted here rather than a fresh navigation —
-              the <Form>'s uncontrolled inputs kept their typed values
-              across a "successful" submit with nothing telling the
-              merchant it had gone through except a new row appearing below
-              (UX audit's #14 finding). blocks.length changes the instant
-              that new row lands, which remounts the form fresh. */}
-          <Form method="post" key={blocks.length} className="flex flex-col gap-[14px]">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(180px,1.1fr)_1fr_1fr]">
-              <Field label="Applies to">
-                <select name="resource_id" defaultValue="0" className="input min-w-0">
-                  <option value="0">Whole business</option>
-                  {resources.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Start">
-                <Input type="datetime-local" name="start" required />
-              </Field>
-              <Field label="End">
-                <Input type="datetime-local" name="end" required />
-              </Field>
-            </div>
-            <Field label="Reason" hint="Optional">
-              <Input name="reason" placeholder="Reason (optional)" />
-            </Field>
-            <div>
-              <button type="submit" className="btn-pri">
-                Add block
-              </button>
-            </div>
+  useEffect(() => {
+    if (searchParams.get("added") !== "1") return;
+    (document.getElementById("add-timeoff") as HTMLDialogElement | null)?.close();
+    toast("Time off block added.");
+    navigate(`${base}/timeoff`, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  if (actionData && "overlapping" in actionData && actionData.overlapping) {
+    const { overlapping, pendingBlock } = actionData;
+    return (
+      <div className="flex flex-col gap-[18px]">
+        <PageHeader title="Time off" />
+        <div className="card p-[18px]">
+          <h2 className="card-title mb-2">
+            {overlapping.length} {overlapping.length === 1 ? v.bookingOne : v.bookingMany} fall{overlapping.length === 1 ? "s" : ""} inside this block
+          </h2>
+          <ul className="m-0 mb-4 flex list-none flex-col gap-2 p-0">
+            {overlapping.map((b) => (
+              <li key={b.id} className="rounded-[8px] border border-line px-3 py-2 text-body">
+                <span className="font-medium">{b.serviceName}</span> — {b.customerName} — {formatInZone(b.startUtc, timezone)}
+              </li>
+            ))}
+          </ul>
+          <Form method="post" className="flex flex-wrap gap-2">
+            <input type="hidden" name="resource_id" value={pendingBlock.resource_id} />
+            <input type="hidden" name="start" value={pendingBlock.start} />
+            <input type="hidden" name="end" value={pendingBlock.end} />
+            <input type="hidden" name="reason" value={pendingBlock.reason} />
+            <a href="." className="btn-sec no-underline hover:no-underline">
+              Go back
+            </a>
+            <button type="submit" name="proceed" value="keep" className="btn-sec">
+              Keep the {v.bookingMany}
+            </button>
+            <button type="submit" name="proceed" value="cancel_and_notify" className="btn-del">
+              Cancel and notify the {overlapping.length === 1 ? v.customerOne : v.customers.toLowerCase()}
+            </button>
           </Form>
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-[18px]">
+      <PageHeader
+        title="Time off"
+        actions={
+          <button
+            type="button"
+            className="btn-pri"
+            onClick={() => (document.getElementById("add-timeoff") as HTMLDialogElement | null)?.showModal()}
+          >
+            + Add time off
+          </button>
+        }
+      />
 
       <DataTable
         cols="1.3fr 1.3fr 1.3fr 1fr .8fr"
-        columns={[v.resources, "Start", "End", "Reason", ""]}
+        // Singular — each row holds one resource (or "Whole business"), not
+        // several (Defect Dossier's BQ-16 finding).
+        columns={[v.resourceOneTitle || "Resource", "Start", "End", "Reason", ""]}
         rows={blocks}
         rowKey={(b) => String(b.id)}
         renderRow={(b) => [
@@ -145,10 +212,65 @@ export default function TimeOff({ loaderData, actionData }: Route.ComponentProps
               </svg>
             }
             title="No time off scheduled"
-            body="Add a block above to close bookings for a date range."
+            body="Add a block to close bookings for a date range."
           />
         }
       />
+
+      {/* Add-time-off dialog — used to be an inline form permanently
+          occupying the top of this page, pushing the actual block list
+          below the fold even with nothing to add (Defect Dossier's BQ-29
+          finding: three create flows, three different patterns). Same
+          native-<dialog> idiom as the Add-consultation dialog. Keyed on the
+          row count exactly as the old inline form was — a successful add
+          redirects to this same URL, which revalidates the already-mounted
+          route rather than navigating, so remounting on a new row landing
+          is what both resets the form's stale values *and* closes the
+          dialog (a fresh DOM node defaults to closed). */}
+      <dialog
+        id="add-timeoff"
+        className="m-auto w-full max-w-[480px] rounded-modal p-0 shadow-modal backdrop:bg-[rgba(19,17,24,0.42)]"
+      >
+        <div className="flex flex-col gap-4 p-[22px]">
+          <h2 className="m-0 text-[16px] font-semibold">Add time off</h2>
+          {actionData?.error && <AlertError>{actionData.error}</AlertError>}
+          <Form method="post" key={blocks.length} className="flex flex-col gap-[14px]">
+            <div className="grid grid-cols-1 gap-3">
+              <Field label="Applies to">
+                <select name="resource_id" defaultValue="0" className="input min-w-0">
+                  <option value="0">Whole business</option>
+                  {resources.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Start">
+                <Input type="datetime-local" name="start" required />
+              </Field>
+              <Field label="End">
+                <Input type="datetime-local" name="end" required />
+              </Field>
+            </div>
+            <Field label="Reason" hint="Optional">
+              <Input name="reason" placeholder="Reason (optional)" />
+            </Field>
+            <div className="mt-1 flex justify-end gap-2">
+              <button
+                type="button"
+                className="btn-sec"
+                onClick={(e) => (e.currentTarget.closest("dialog") as HTMLDialogElement | null)?.close()}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="btn-pri">
+                Add block
+              </button>
+            </div>
+          </Form>
+        </div>
+      </dialog>
 
       {/* One dialog per block, rendered flat here rather than inside either
           of DataTable's two per-row renderings — both the desktop row and

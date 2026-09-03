@@ -1,0 +1,107 @@
+name: CI
+
+# UX audit pass 11's #9 finding: "add axe-core to CI" — form-label and
+# contrast regressions had been introduced and re-fixed three times across
+# this audit series without a check that actually fails the build. This is
+# the first CI workflow in the repo; it covers core's test suite, both
+# apps' typechecks, and an axe-core smoke pass over cloud's unauthenticated
+# pages (see cloud/tests/a11y/README.md for exactly what that last part
+# covers, and what it doesn't yet).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: pass
+          POSTGRES_DB: getbooqin_core
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:pass@localhost:5432/getbooqin_core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run prisma:deploy --workspace=core
+      - run: npm run typecheck --workspace=core
+      - run: npm test --workspace=core
+
+  cloud-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck --workspace=cloud
+
+  # Needs real-looking Clerk keys to boot (login/signup render Clerk's own
+  # client SDK) — set CLERK_SECRET_KEY / VITE_CLERK_PUBLISHABLE_KEY as repo
+  # secrets from a Clerk *test* instance before this job can pass. Everything
+  # else here (Postgres, migrations, the seed script, starting the dev
+  # server) is self-contained.
+  a11y:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: pass
+          POSTGRES_DB: getbooqin_core
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:pass@localhost:5432/getbooqin_core
+      APP_URL: http://localhost:3100
+      CONNECTION_ENCRYPTION_KEY: ${{ secrets.CONNECTION_ENCRYPTION_KEY }}
+      SESSION_SIGNING_SECRET: ${{ secrets.SESSION_SIGNING_SECRET }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run prisma:deploy --workspace=core
+      - name: Seed a test connection
+        id: seed
+        working-directory: core
+        run: |
+          out=$(npx tsx scripts_seed_local.ts)
+          echo "$out"
+          echo "connection_id=$(echo "$out" | grep -oE 'connection id: \S+' | cut -d' ' -f3)" >> "$GITHUB_OUTPUT"
+      - run: npx playwright install --with-deps chromium
+        working-directory: cloud
+      - run: npm run build --workspace=cloud
+      - name: Start the app and run the a11y suite
+        working-directory: cloud
+        env:
+          A11Y_BOOKING_ID: ${{ steps.seed.outputs.connection_id }}
+        run: |
+          npm run start &
+          for i in $(seq 1 30); do curl -sf http://localhost:3100/login > /dev/null && break; sleep 2; done
+          A11Y_BASE_URL=http://localhost:3100 npm run test:a11y

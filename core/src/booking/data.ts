@@ -68,7 +68,10 @@ function mergeCatalog(config: ServiceConfig, product: ProductCache | null): Cata
 
 export async function catalogServices(shop: string, platform = "shopify", onlyActive = true): Promise<CatalogService[]> {
   const configs = await prisma.serviceConfig.findMany({
-    where: { shop, platform, ...(onlyActive ? { status: true } : {}) },
+    // deletedAt: null excludes a soft-deleted service even in the
+    // onlyActive:false admin-listing mode — it's gone, not just switched
+    // off (Defect Dossier's BQ-32 finding).
+    where: { shop, platform, deletedAt: null, ...(onlyActive ? { status: true } : {}) },
     orderBy: [{ position: "asc" }, { id: "asc" }],
   });
   if (configs.length === 0) return [];
@@ -151,7 +154,11 @@ export async function saveServiceConfig(shop: string, platform: string, data: Se
       ? data.location_type ?? "onsite"
       : "onsite",
     paymentRequired: !!data.payment_required,
-    depositPercent: Math.max(1, Math.min(100, data.deposit_percent ?? 100)),
+    // A 100% default on an unset (or 0) price is meaningless and becomes a
+    // live billing rule the moment a merchant later sets a price without
+    // ever touching this field (Defect Dossier's BQ-22 finding — Legal's
+    // seeded services all landed with deposit_percent 100 on a €0 price).
+    depositPercent: Math.max(0, Math.min(100, data.deposit_percent ?? 0)),
     // Omitted (not reset to a default) when not supplied — on update this
     // leaves an existing custom swatch alone rather than clobbering it every
     // time a merchant edits duration/buffers without touching colour; on
@@ -216,11 +223,33 @@ export async function createServiceConfigsFromProducts(
   return { created, skipped };
 }
 
-export async function deleteServiceConfig(shop: string, id: number) {
+/** How many bookings (any status, any time) still reference this service —
+ * the number a delete confirmation needs to phrase honestly. */
+export async function bookingCountForService(shop: string, id: number): Promise<number> {
+  return prisma.booking.count({ where: { shop, serviceId: id } });
+}
+
+/**
+ * A service could only ever be switched inactive, never actually removed
+ * (Defect Dossier's BQ-32 finding) — one created by mistake, or seeded by
+ * the wrong template, stayed in the list forever. Historical bookings hold
+ * a required, non-cascading foreign key to ServiceConfig, so hard-deleting
+ * a referenced row would just throw a raw FK-violation error; soft-delete
+ * instead, keeping the row (and its name) resolvable for past bookings
+ * while hiding it from every active list (catalogServices' deletedAt
+ * filter, above).
+ */
+export async function deleteServiceConfig(shop: string, id: number): Promise<{ hardDeleted: boolean; referencedBookings: number }> {
+  const referencedBookings = await bookingCountForService(shop, id);
+  if (referencedBookings > 0) {
+    await prisma.serviceConfig.updateMany({ where: { shop, id }, data: { deletedAt: new Date(), status: false } });
+    return { hardDeleted: false, referencedBookings };
+  }
   await prisma.serviceResource.deleteMany({ where: { shop, serviceId: id } });
   await prisma.serviceAddon.deleteMany({ where: { shop, serviceId: id } });
-  const result = await prisma.serviceConfig.deleteMany({ where: { shop, id } });
-  return result.count > 0;
+  await prisma.waitlist.deleteMany({ where: { shop, serviceId: id } });
+  await prisma.serviceConfig.deleteMany({ where: { shop, id } });
+  return { hardDeleted: true, referencedBookings: 0 };
 }
 
 export function serviceConfigByProductId(shop: string, platform: string, productId: string) {
@@ -386,9 +415,21 @@ export async function setServiceResources(shop: string, serviceId: number, resou
       data: unique.map((resourceId) => ({ shop, serviceId, resourceId })),
     });
   }
+  // Marks this service as having a real, merchant-made assignment decision
+  // — including an explicit "assigned to nobody" (empty array) — so
+  // resourcesForService() below can tell that apart from "never touched"
+  // (Defect Dossier's BQ-05 finding).
+  await prisma.serviceConfig.updateMany({ where: { shop, id: serviceId }, data: { resourceAssignmentCustomized: true } });
 }
 
 export async function setResourceServices(shop: string, resourceId: number, serviceIds: number[]) {
+  // Every service this resource was linked to before the edit, plus every
+  // one it's linked to after, had its assignment set genuinely touched by
+  // this save (a service losing its only resource here is exactly the
+  // "assigned to nobody on purpose" case the fallback below must respect).
+  const before = await prisma.serviceResource.findMany({ where: { shop, resourceId }, select: { serviceId: true } });
+  const touchedServiceIds = Array.from(new Set([...before.map((r) => r.serviceId), ...serviceIds]));
+
   await prisma.serviceResource.deleteMany({ where: { shop, resourceId } });
   const unique = Array.from(new Set(serviceIds)).filter((id) => id > 0);
   if (unique.length) {
@@ -396,11 +437,26 @@ export async function setResourceServices(shop: string, resourceId: number, serv
       data: unique.map((serviceId) => ({ shop, serviceId, resourceId })),
     });
   }
+  if (touchedServiceIds.length) {
+    await prisma.serviceConfig.updateMany({ where: { shop, id: { in: touchedServiceIds } }, data: { resourceAssignmentCustomized: true } });
+  }
 }
 
-/** Resources able to deliver a service. Falls back to all active resources when nothing is assigned. */
+/**
+ * Resources able to deliver a service. No fallback: zero rows means zero
+ * resources, full stop. There used to be a fallback to "every active
+ * resource" for a service nobody had ever explicitly assigned, meant to
+ * keep a fresh business usable before its first deliberate assignment —
+ * but it made two identically-empty "Who can deliver this" boxes behave
+ * oppositely depending on unrelated history nobody could see (Defect
+ * Dossier's R2-04 finding, still open after two rounds specifically
+ * because of this fallback). Every place a service or resource gets
+ * created now assigns real rows up front instead (preset seeding, template
+ * switching, onboarding, a new resource's own create form), so the
+ * fallback's job is done by explicit assignment, not by guessing.
+ */
 export async function resourcesForService(shop: string, platform: string, serviceId: number): Promise<Resource[]> {
-  const rows = await prisma.resource.findMany({
+  return prisma.resource.findMany({
     where: {
       shop,
       platform,
@@ -409,14 +465,28 @@ export async function resourcesForService(shop: string, platform: string, servic
     },
     orderBy: [{ position: "asc" }, { name: "asc" }],
   });
+}
 
-  if (rows.length === 0) {
-    const assigned = await prisma.serviceResource.count({ where: { shop, serviceId } });
-    if (assigned === 0) {
-      return resources(shop, platform, true);
-    }
+/**
+ * Active services that resolve to zero deliverable resources right now —
+ * batched version of resourcesForService()'s own "empty means empty" check,
+ * for the consultation-types list and Overview's warning count.
+ */
+export async function unbookableServiceIds(shop: string, platform: string): Promise<Set<number>> {
+  const [services, links] = await Promise.all([
+    prisma.serviceConfig.findMany({ where: { shop, platform, status: true }, select: { id: true } }),
+    prisma.serviceResource.findMany({
+      where: { shop, resource: { platform, status: true } },
+      select: { serviceId: true },
+    }),
+  ]);
+  const assigned = new Set(links.map((l) => l.serviceId));
+
+  const unbookable = new Set<number>();
+  for (const s of services) {
+    if (!assigned.has(s.id)) unbookable.add(s.id);
   }
-  return rows;
+  return unbookable;
 }
 
 export async function serviceIdsForResource(shop: string, resourceId: number) {
@@ -539,6 +609,42 @@ export function schedule(shop: string, resourceId: number) {
   });
 }
 
+/**
+ * Whole-business opening hours for the public page's header (Defect
+ * Dossier's BQ-33 finding) — hours live per resource, not per shop, and
+ * different resources can keep different hours. A day counts as "open" if
+ * any active resource is, widened to the earliest start and latest end
+ * across all of them for that day, since that's the actual window a
+ * prospective client could get an appointment in. Index 0 = Sunday,
+ * matching Schedule.dayOfWeek's own convention.
+ */
+export async function businessHours(
+  shop: string,
+  platform: string
+): Promise<Array<{ dayOfWeek: number; open: boolean; start: string; end: string }>> {
+  const resources = await prisma.resource.findMany({ where: { shop, platform, status: true }, select: { id: true } });
+  const resourceIds = resources.map((r) => r.id);
+  const rows = resourceIds.length
+    ? await prisma.schedule.findMany({ where: { shop, resourceId: { in: resourceIds } } })
+    : [];
+
+  const byDay = new Map<number, { start: string; end: string }>();
+  for (const row of rows) {
+    const existing = byDay.get(row.dayOfWeek);
+    if (!existing) {
+      byDay.set(row.dayOfWeek, { start: row.startTime, end: row.endTime });
+    } else {
+      if (row.startTime < existing.start) existing.start = row.startTime;
+      if (row.endTime > existing.end) existing.end = row.endTime;
+    }
+  }
+
+  return Array.from({ length: 7 }, (_, dayOfWeek) => {
+    const hours = byDay.get(dayOfWeek);
+    return hours ? { dayOfWeek, open: true, ...hours } : { dayOfWeek, open: false, start: "", end: "" };
+  });
+}
+
 export async function setSchedule(
   shop: string,
   resourceId: number,
@@ -655,6 +761,36 @@ export function customers(shop: string, platform: string, search = "", limit = 1
     orderBy: { id: "desc" },
     take: limit,
     skip: offset,
+  });
+}
+
+/**
+ * Creates (or reuses) a client record with no booking attached, so staff
+ * can enter someone from a phone call before they've booked anything — the
+ * Clients page was previously read-only with no way to do this (Defect
+ * Dossier's BQ-31 finding). Just findOrCreateCustomer under a name staff
+ * actually recognize as "add a client": the same email-based de-dupe
+ * (lowercased, unique per shop) applies either way.
+ */
+export const createCustomer = findOrCreateCustomer;
+
+export function updateCustomerNotes(shop: string, id: number, notes: string) {
+  return prisma.customer.updateMany({ where: { shop, id }, data: { notes } });
+}
+
+/**
+ * The GDPR-relevant piece of BQ-31: a client can ask to have their data
+ * erased. Booking.customerId is a required, non-cascading foreign key, and
+ * a business has a legitimate reason to keep its own booking/revenue
+ * history — so this anonymizes the Customer row in place rather than
+ * hard-deleting it, leaving historical bookings resolvable ("Deleted
+ * client") instead of orphaned or blocked by a FK violation. The erased
+ * email still has to be unique per the platform_shop_email constraint.
+ */
+export async function eraseCustomerData(shop: string, id: number) {
+  await prisma.customer.updateMany({
+    where: { shop, id },
+    data: { firstName: "Deleted", lastName: "client", email: `erased-${id}@getbooqin.invalid`, phone: "", notes: "" },
   });
 }
 

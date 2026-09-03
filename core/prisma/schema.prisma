@@ -81,6 +81,12 @@ model Connection {
   connectedAt DateTime @default(now())
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  // Human-readable alias for the public /book/:connectionId link (UX
+  // audit's #13 finding — a raw cuid is unfriendly in a social bio). Null
+  // until Connections.ensureSlug() generates one lazily; the cuid `id`
+  // keeps resolving permanently either way, so an already-shared link never
+  // breaks.
+  slug        String?  @unique
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([platform, shop])
@@ -127,6 +133,20 @@ model ServiceConfig {
   color             String            @default("#2563eb")
   position          Int               @default(0)
   status            Boolean           @default(true)
+  // True once a merchant has ever explicitly saved this service's resource
+  // assignment (even to zero resources) — resourcesForService() needs this
+  // to tell "never configured, fall back to everyone" apart from "assigned
+  // to nobody on purpose", which used to be indistinguishable and silently
+  // reversed an intentional "nobody" choice (Defect Dossier's BQ-05
+  // finding).
+  resourceAssignmentCustomized Boolean @default(false)
+  // Set instead of a hard delete when a booking still references this
+  // service — the row (and its productId, so historical bookings can still
+  // resolve a name) has to survive, but it must disappear from every active
+  // list: the services page, the public page, the Add-consultation dialog
+  // (Defect Dossier's BQ-32 finding). Distinct from `status`, which a
+  // merchant can flip back on; this can't be undone from the UI.
+  deletedAt         DateTime?
   // Last product `updated_at` this row was synced from — lets a future
   // webhook/sync cheaply skip an out-of-order/duplicate delivery.
   platformUpdatedAt DateTime?
@@ -302,11 +322,12 @@ model Booking {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  service  ServiceConfig  @relation(fields: [serviceId], references: [id])
-  resource Resource       @relation(fields: [resourceId], references: [id])
-  customer Customer       @relation(fields: [customerId], references: [id])
-  payments Payment[]
-  addons   BookingAddon[]
+  service               ServiceConfig         @relation(fields: [serviceId], references: [id])
+  resource              Resource              @relation(fields: [resourceId], references: [id])
+  customer              Customer              @relation(fields: [customerId], references: [id])
+  payments              Payment[]
+  addons                BookingAddon[]
+  consultationSummaries ConsultationSummary[]
 
   @@index([platform, shop, resourceId, startUtc, status])
   @@index([platform, shop, customerId, startUtc])
@@ -328,6 +349,75 @@ model BookingAddon {
   addon       Addon   @relation(fields: [addonId], references: [id])
 
   @@index([platform, shop, bookingId])
+}
+
+// Visit Summary feature (Clinic preset only — see
+// docs/patient-summary-cloud-integration-plan.md). One row per generated
+// summary draft/revision for a completed Booking. `draftJson` is the raw,
+// immutable LLM output (core/src/ai/patientSummary.ts); `editedJson` starts
+// as a copy of it and diverges as the reviewing clinician edits fields —
+// kept separate so "AI-drafted" vs "Edited by Dr. X" and "Revert to AI
+// draft" don't require re-calling the model. See
+// core/src/booking/consultationSummary.ts for the state machine this backs
+// (draft -> under_review -> approved -> sent, discard from any pre-sent
+// state, createRevision() for post-send corrections).
+model ConsultationSummary {
+  id       Int    @id @default(autoincrement())
+  shop     String
+  platform String @default("shopify")
+
+  bookingId Int
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  status String @default("draft") // draft|under_review|approved|sent|discarded
+
+  transcriptText   String
+  transcriptSource String @default("paste") // paste|upload|record
+
+  outputLanguage   String
+  detectedLanguage String?
+
+  // Raw LLM output, immutable once written (a regenerate() replaces both
+  // this and editedJson wholesale, it never patches in place). JSON-encoded
+  // PatientSummaryDraft (core/src/ai/patientSummary.ts).
+  draftJson  String
+  // Clinician-edited version actually rendered/sent — starts equal to
+  // draftJson, diverges field by field as edits happen. This is what the
+  // patient-facing page/email renders once sent.
+  editedJson String
+
+  // JSON array of acknowledged review_flags (indices or the flag strings
+  // themselves) — approve() requires this to cover every entry in the
+  // draft's review_flags before the status can move to "approved".
+  reviewFlagsAcknowledged String @default("[]")
+
+  // Attestation captured by approve() — see Part 3 §4 of the integration
+  // plan on why this can't be inferred from session identity yet (no
+  // per-staff login). Plain FK-by-convention, no Prisma relation, same
+  // convention as Waitlist.resultingBookingId / ChatConversation.bookingId.
+  approvedByResourceId Int?
+  approvedAt           DateTime?
+
+  sentAt DateTime?
+
+  // Self-relation for post-send corrections: createRevision() creates a new
+  // row seeded from the sent row's editedJson (not a fresh LLM call) with
+  // revisionOfId pointing back at it. The sent row itself stays immutable.
+  revisionOfId Int?
+  revisionOf   ConsultationSummary?  @relation("ConsultationSummaryRevision", fields: [revisionOfId], references: [id])
+  revisions    ConsultationSummary[] @relation("ConsultationSummaryRevision")
+
+  // Bounded retention for the raw transcript (see the integration plan's
+  // Retention section) — a future cron sweep purges transcriptText once
+  // past this. Concrete window is a legal/product decision, not set here.
+  retentionExpiresAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([platform, shop, bookingId])
+  @@index([platform, shop, status])
+  @@index([platform, shop, revisionOfId])
 }
 
 // Waitlist entries are matched by service (+ optional specific resource) and

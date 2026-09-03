@@ -38,7 +38,7 @@ export const PRESETS: Record<string, Preset> = {
   generic: {
     label: "Generic / Other",
     terms: {
-      resource_single: "Staff Member",
+      resource_single: "Staff",
       resource_plural: "Staff",
       service_single: "Service",
       service_plural: "Services",
@@ -52,8 +52,8 @@ export const PRESETS: Record<string, Preset> = {
   clinic: {
     label: "Clinic / Healthcare",
     terms: {
-      resource_single: "Doctor",
-      resource_plural: "Doctors",
+      resource_single: "Practitioner",
+      resource_plural: "Practitioners",
       service_single: "Treatment",
       service_plural: "Treatments",
       booking_single: "Appointment",
@@ -124,12 +124,12 @@ export const PRESETS: Record<string, Preset> = {
   automotive: {
     label: "Automotive / Repair Shop",
     terms: {
-      resource_single: "Service Bay",
-      resource_plural: "Service Bays",
+      resource_single: "Bay",
+      resource_plural: "Bays",
       service_single: "Job",
       service_plural: "Jobs",
-      booking_single: "Job Booking",
-      booking_plural: "Job Bookings",
+      booking_single: "Booking",
+      booking_plural: "Bookings",
       customer_single: "Customer",
       customer_plural: "Customers",
     },
@@ -198,10 +198,10 @@ export const PRESETS: Record<string, Preset> = {
     terms: {
       resource_single: "Tutor",
       resource_plural: "Tutors",
-      service_single: "Class",
-      service_plural: "Classes",
-      booking_single: "Session",
-      booking_plural: "Sessions",
+      service_single: "Course",
+      service_plural: "Courses",
+      booking_single: "Lesson",
+      booking_plural: "Lessons",
       customer_single: "Student",
       customer_plural: "Students",
     },
@@ -340,8 +340,8 @@ export const PRESETS: Record<string, Preset> = {
   homeservice: {
     label: "Home Services / Trades",
     terms: {
-      resource_single: "Technician",
-      resource_plural: "Technicians",
+      resource_single: "Engineer",
+      resource_plural: "Engineers",
       service_single: "Service",
       service_plural: "Services",
       booking_single: "Job",

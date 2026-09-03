@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
-import { PRESETS, getPreset, rulesFor, ruleChips, type PresetId } from "../lib/presets";
-import { LogoutButton } from "./ui";
+import { PRESETS, getPreset, rulesFor, ruleChips, featureNotesFor, startingRulesDiff, type PresetId, type PresetRules } from "../lib/presets";
+import { LogoutButton, ConfirmDialog } from "./ui";
 
 /* ==================================================================
    1. User menu — sidebar footer popover
@@ -27,7 +27,7 @@ export function UserMenu({
         <span className="text-[11px] text-subtle transition-transform group-open:rotate-180">⌄</span>
       </summary>
 
-      <div className="absolute inset-x-[6px] bottom-[calc(100%+6px)] z-20 flex flex-col gap-px rounded-[11px] border border-line bg-surface p-[5px] shadow-[0_12px_34px_rgba(16,24,40,.18)]">
+      <div className="user-menu-pop absolute inset-x-[6px] bottom-[calc(100%+6px)] z-20 flex flex-col gap-px rounded-[11px] border border-line bg-surface p-[5px] shadow-[0_12px_34px_rgba(16,24,40,.18)]">
         <div className="flex flex-col gap-px px-[10px] pt-[9px] pb-[7px]">
           <span className="text-meta font-semibold text-ink">{name}</span>
           <span className="text-[11.5px] text-subtle">{email}</span>
@@ -239,15 +239,26 @@ export function SessionRow({
 export type OverviewCardKey =
   | "stats" | "chart" | "revenue" | "topServices" | "utilisation" | "noShow";
 
-export function overviewCards(presetId: PresetId | string | null | undefined) {
+// `paymentsAvailable` defaults to true so the settings action's own
+// call (checking which keys exist, not rendering anything) never disables
+// a card it isn't showing. Overview itself already hides the Revenue card
+// outright when no payment provider is connected (R2-09); this list used
+// to still offer it as a live toggle regardless, so switching it "on" did
+// nothing visible with no explanation why (Defect Dossier's R3-05 finding).
+export function overviewCards(presetId: PresetId | string | null | undefined, paymentsAvailable = true) {
   const p = getPreset(presetId as string);
   return [
-    { key: "stats" as OverviewCardKey, name: "Headline metrics", hint: "Bookings, pending and active-service counts" },
-    { key: "chart" as OverviewCardKey, name: `${p.vocab.booking}s over time`, hint: "Daily bar chart for the selected range" },
-    { key: "revenue" as OverviewCardKey, name: "Revenue & payment status", hint: "Split by currency and payment state" },
-    { key: "topServices" as OverviewCardKey, name: `Top ${p.vocab.services.toLowerCase()}`, hint: "Ranked by volume in range" },
-    { key: "utilisation" as OverviewCardKey, name: `${p.vocab.resource} utilisation`, hint: `Booked vs available hours per ${p.vocab.resource.toLowerCase()}` },
-    { key: "noShow" as OverviewCardKey, name: "No-show tracking", hint: "Rate for the range" },
+    { key: "stats" as OverviewCardKey, name: "Headline metrics", hint: `${p.vocab.booking}s, pending and active ${p.vocab.service.toLowerCase()} counts`, disabled: false },
+    { key: "chart" as OverviewCardKey, name: `${p.vocab.booking}s over time`, hint: "Daily bar chart for the selected range", disabled: false },
+    {
+      key: "revenue" as OverviewCardKey,
+      name: "Revenue & payment status",
+      hint: paymentsAvailable ? "Split by currency and payment state" : "Available once you connect a payment provider.",
+      disabled: !paymentsAvailable,
+    },
+    { key: "topServices" as OverviewCardKey, name: `Top ${p.vocab.services.toLowerCase()}`, hint: "Ranked by volume in range", disabled: false },
+    { key: "utilisation" as OverviewCardKey, name: `${p.vocab.resource} utilisation`, hint: `Booked vs available hours per ${p.vocab.resource.toLowerCase()}`, disabled: false },
+    { key: "noShow" as OverviewCardKey, name: "No-show tracking", hint: "Rate for the range", disabled: false },
   ];
 }
 
@@ -264,19 +275,34 @@ export function vocabDiff(presetId: PresetId | string | null | undefined) {
     { from: "Staff & Resources", to: p.vocab.resources },
     { from: "Services", to: p.vocab.services },
     { from: "Resource utilisation", to: `${p.vocab.resource} utilisation` },
-  ].filter((row) => row.from !== row.to);
+  // Case-insensitive: the generic preset's own "Staff & Resources" already
+  // differs from "Staff & resources" (its own `to` value) only by a
+  // capital R, which isn't a rename a merchant would recognize as one (UX
+  // audit's #12 finding) — the exact-match filter below left it in.
+  ].filter((row) => row.from.toLowerCase() !== row.to.toLowerCase());
 }
 
 export function TemplateConfig({
-  presetId, hidden, onPick, onToggle, saved = false,
+  presetId, hidden, onPick, onToggle, saved = false, currentRules, customizedFields = [], pending = false, currentPresetId, paymentsAvailable = true,
 }: {
   presetId: PresetId | string;
   hidden: Record<string, boolean>;
   onPick?: (id: PresetId) => void;
   onToggle?: (key: OverviewCardKey) => void;
   saved?: boolean;
+  /** The shop's real, currently-persisted rule values — omitted only by callers (e.g. onboarding's preview) with no shop to compare against yet. */
+  currentRules?: PresetRules;
+  customizedFields?: string[];
+  /** Confirm dialog's save is in flight — see ConfirmDialog's own `pending` prop. */
+  pending?: boolean;
+  /** The shop's real, currently-persisted preset id — distinct from `presetId` (the tile the merchant has picked, which may not be saved yet). Needed so featureNotesFor() can report what a switch *removes*, not just what it adds. Omitted by the same preview-only callers that omit currentRules. */
+  currentPresetId?: string;
+  /** Whether a payment provider is connected — gates the Revenue card the same way Overview itself does (see overviewCards()). */
+  paymentsAvailable?: boolean;
 }) {
   const preset = getPreset(presetId as string);
+  const changes = currentRules ? startingRulesDiff(currentRules, customizedFields, presetId) : [];
+  const featureNotes = featureNotesFor(currentPresetId, presetId);
   return (
     <>
       <div className="card">
@@ -337,13 +363,51 @@ export function TemplateConfig({
           Switching templates only changes rules you haven't customized yet — anything you've hand-edited on the
           Booking rules page stays as you set it.
         </p>
-        <div className="flex flex-wrap gap-[8px]">
-          {ruleChips(rulesFor(presetId)).map((chip) => (
-            <span key={chip} className="rounded-full border border-line bg-surface px-[10px] py-[4px] text-meta text-ink-2">
-              {chip}
-            </span>
-          ))}
-        </div>
+        {currentRules ? (
+          // The real before/after against this shop's own current values —
+          // this used to describe only 4 of the 11 rules a preset can
+          // actually set, so switching Legal -> Clinic also silently
+          // changed slot interval, max advance days and the waitlist
+          // toggle with nothing here mentioning it (Defect Dossier's BQ-19
+          // finding).
+          <>
+            {changes.length === 0 && featureNotes.length === 0 ? (
+              <p className="m-0 text-meta text-subtle">Nothing changes — this matches what you already have.</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {changes.map((c) => (
+                  <div key={c.label} className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-row py-[9px] text-[13px]">
+                    <span className="text-subtle">{c.label}</span>
+                    {c.kept ? (
+                      <>
+                        <span className="num text-[11px] text-faint">kept</span>
+                        <span className="text-right text-muted">{c.fromText} (you customized this)</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="num text-[11px] text-faint">{c.fromText} →</span>
+                        <span className="text-right font-medium">{c.toText}</span>
+                      </>
+                    )}
+                  </div>
+                ))}
+                {featureNotes.map((note) => (
+                  <div key={note.text} className={`text-[13px] ${note.removed ? "text-danger" : "text-ink-2"}`}>
+                    {note.removed ? "−" : "+"} {note.text}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="flex flex-wrap gap-[8px]">
+            {ruleChips(rulesFor(presetId)).map((chip) => (
+              <span key={chip} className="rounded-full border border-line bg-surface px-[10px] py-[4px] text-meta text-ink-2">
+                {chip}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="card">
@@ -355,12 +419,12 @@ export function TemplateConfig({
           </div>
         </div>
         <div className="flex flex-col gap-2 px-[18px] py-[14px]">
-          {overviewCards(presetId).map((c, i) => {
-            const on = !hidden[c.key];
+          {overviewCards(presetId, paymentsAvailable).map((c, i) => {
+            const on = !hidden[c.key] && !c.disabled;
             return (
-              <label key={c.key} onClick={() => onToggle?.(c.key)}
-                className={`group flex cursor-pointer items-center gap-3 rounded-[9px] border px-[13px] py-[11px] ${on ? "border-brand-200 bg-surface" : "border-line bg-canvas-alt"}`}>
-                <input type="checkbox" name="cards" value={c.key} defaultChecked={on} className="peer sr-only" />
+              <label key={c.key} onClick={() => !c.disabled && onToggle?.(c.key)}
+                className={`group flex items-center gap-3 rounded-[9px] border px-[13px] py-[11px] ${c.disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${on ? "border-brand-200 bg-surface" : "border-line bg-canvas-alt"}`}>
+                <input type="checkbox" name="cards" value={c.key} defaultChecked={on} disabled={c.disabled} className="peer sr-only" />
                 <span className="num w-[14px] text-[11px] text-subtle">{i + 1}</span>
                 <span className="flex flex-1 flex-col gap-px">
                   <span className="text-body font-medium">{c.name}</span>
@@ -383,9 +447,49 @@ export function TemplateConfig({
             footer of the card it belongs to (UX audit's U6/T3 finding). */}
         <div className="card-footer">
           {saved && <span className="alert-success">Saved.</span>}
-          <button type="submit" className="btn-pri ml-auto">Save template</button>
+          {/* A rule change (slot interval, the waitlist toggle, ...) used to
+              apply the moment "Save template" was clicked, with only the
+              incomplete chip list above as warning. Real, consequential
+              changes (anything the diff above actually lists) now go
+              through one more explicit confirmation before they take
+              effect (Defect Dossier's BQ-19 finding) — a preset switch
+              that changes nothing skips the extra click. */}
+          {currentRules && (changes.length > 0 || featureNotes.length > 0) ? (
+            <button
+              type="button"
+              className="btn-pri ml-auto"
+              onClick={() => (document.getElementById("template") as HTMLDialogElement | null)?.showModal()}
+            >
+              Save template
+            </button>
+          ) : (
+            <button type="submit" className="btn-pri ml-auto">Save template</button>
+          )}
         </div>
       </div>
+
+      <ConfirmDialog
+        id="template"
+        title={`Switch to ${preset.label}?`}
+        body="This changes the rules and vocabulary listed above for every booking going forward."
+        confirmLabel="Save template"
+        cancelLabel="Keep reviewing"
+        pending={pending}
+      >
+        <div className="flex flex-col gap-2 text-[13px]">
+          {changes.map((c) => (
+            <div key={c.label} className="flex items-center justify-between gap-3">
+              <span className="text-subtle">{c.label}</span>
+              <span className="font-medium">{c.kept ? `${c.fromText} (kept)` : `${c.fromText} → ${c.toText}`}</span>
+            </div>
+          ))}
+          {featureNotes.map((note) => (
+            <div key={note.text} className={note.removed ? "text-danger" : "text-ink-2"}>
+              {note.removed ? "−" : "+"} {note.text}
+            </div>
+          ))}
+        </div>
+      </ConfirmDialog>
     </>
   );
 }

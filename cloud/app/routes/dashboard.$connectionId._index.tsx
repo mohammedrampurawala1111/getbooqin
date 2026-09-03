@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Route } from "./+types/dashboard.$connectionId._index";
-import { Metrics, Bookings, Data, Settings } from "getbooqin-core";
+import { Metrics, Bookings, Data, Settings, FeatureFlags, ensureSlug } from "getbooqin-core";
 // Direct subpath import, not the root barrel — see bookingsShared.ts's
 // header comment for why the barrel isn't safe to import from client code.
 import { paymentStatusLabels } from "getbooqin-core/booking/bookingsShared";
@@ -23,15 +23,23 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     to: new Date(Date.now() + RANGE_DAYS_FORWARD * 86_400_000),
   };
 
-  const [overview, pendingCount, allServices, allResources, allTimeBookingCount, settings] = await Promise.all([
+  const [overview, pendingCount, allServices, allResources, allTimeBookingCount, settings, occupyingInRange] = await Promise.all([
     Metrics.overview(shop, platform, range),
     Bookings.count(shop, platform, { status: "pending" }),
     Data.catalogServices(shop, platform, false),
     Data.resources(shop, platform, false),
     Bookings.count(shop, platform, {}),
     Settings.getSettings(shop, platform),
+    // "Needs attention" — a booking that violates its own business's rules
+    // used to have no signal anywhere in the app (Defect Dossier's BQ-07
+    // finding). Bounded to the same ±30-day window the rest of this page
+    // already uses, and checked in parallel below, so this stays cheap
+    // regardless of how many bookings the shop has overall.
+    Bookings.query(shop, platform, { statusIn: ["pending", "confirmed"], from: range.from, to: range.to, limit: 500 }),
   ]);
   const bookableResourceCount = await Data.bookableResourceCount(shop, allResources.map((r) => r.id));
+  const conflictCount = (await Promise.all(occupyingInRange.map((b) => Bookings.scheduleConflict(shop, b)))).filter((c) => !c.ok).length;
+  const unbookableCount = (await Data.unbookableServiceIds(shop, platform)).size;
 
   const activeServiceCount = allServices.filter((s) => s.status).length;
 
@@ -55,16 +63,53 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     isManual: platform === "manual",
   };
 
+  // A human-readable link reads better in a social bio than a raw cuid (UX
+  // audit's #13 finding) — but only worth generating once there's a real
+  // business name to slugify; a manual account that hasn't named itself
+  // yet would otherwise get permanently stuck with a slug derived from its
+  // opaque manual-<uuid> shop id (ensureSlug never regenerates once set).
+  // The cuid link keeps working either way — getPublicConnection resolves
+  // both.
+  const hasRealName = !!settings.business_name && !(platform === "manual" && settings.business_name === shop);
+  const bookingSlug = hasRealName ? await ensureSlug(params.connectionId!, settings.business_name) : params.connectionId;
+
   return {
     overview,
     pendingCount,
     activeServiceCount,
     range,
+    timezone: settings.timezone,
     allTimeBookingCount,
     setupFacts,
     hiddenCards: settings.hidden_overview_cards,
-    bookingUrl: `${getAppUrl()}/book/${params.connectionId}`,
+    bookingUrl: `${getAppUrl()}/book/${bookingSlug}`,
+    conflictCount,
+    unbookableCount,
+    // Checked at render time rather than only at the persisted-settings
+    // level, since hidden_overview_cards' own default ("hide Revenue until
+    // payments exist") only applies going forward — an existing shop whose
+    // settings predate that default still had it visible with nothing to
+    // show but "No settled payments in range" (Defect Dossier's R2-09
+    // finding, second half).
+    paymentsAvailable: FeatureFlags.PAYMENTS_ENABLED && settings.enabled_gateways.length > 0,
   };
+}
+
+function dateRangeLabel(iso: string | Date, timezone: string): string {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: timezone }).format(new Date(iso));
+}
+
+// bookingsSeries buckets (metrics.ts's bookingsOverTime) are plain
+// "yyyy-MM-dd" keys with no time-of-day meaning, not real instants —
+// formatting one against the shop's real timezone (like dateRangeLabel
+// above does for actual instants) could shift the displayed day by one.
+// timeZone: "UTC" renders the Y-M-D digits as-is, the same trick the public
+// booking page's SummaryBar used before it moved to formatInZone.
+// Previously the chart just printed the raw key ("2026-09-02") as its
+// x-axis labels (Defect Dossier's BQ-10 finding).
+function chartDayLabel(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(Date.UTC(y, m - 1, d)));
 }
 
 const PAYMENT_TINT: Record<string, string> = {
@@ -86,12 +131,11 @@ const PAYMENT_TINT: Record<string, string> = {
 const STAT_GRID: Record<number, string> = { 3: "grid-cols-2 md:grid-cols-3", 4: "grid-cols-2 md:grid-cols-4" };
 
 export default function Overview({ loaderData, params }: Route.ComponentProps) {
-  const { overview, pendingCount, activeServiceCount, range, allTimeBookingCount, setupFacts, hiddenCards, bookingUrl } = loaderData;
+  const { overview, pendingCount, activeServiceCount, range, timezone, allTimeBookingCount, setupFacts, hiddenCards, bookingUrl, conflictCount, unbookableCount, paymentsAvailable } = loaderData;
   const totalBookings = overview.bookingsSeries.reduce((sum, d) => sum + d.count, 0);
   const paymentLabels = paymentStatusLabels();
   const paymentTotal = overview.paymentBreakdown.reduce((sum, p) => sum + p.count, 0);
   const v = useVocabulary();
-  const resourceOneCap = v.resourceOne.charAt(0).toUpperCase() + v.resourceOne.slice(1);
 
   if (allTimeBookingCount === 0) {
     return <EmptyOverview connectionId={params.connectionId} setupFacts={setupFacts} bookingUrl={bookingUrl} />;
@@ -101,7 +145,7 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
   const showStats = !hidden.has("stats");
   const showNoShow = !hidden.has("noShow");
   const showChart = !hidden.has("chart");
-  const showRevenue = !hidden.has("revenue");
+  const showRevenue = !hidden.has("revenue") && paymentsAvailable;
   const showTopServices = !hidden.has("topServices");
   const showUtilisation = !hidden.has("utilisation");
   const statCount = (showStats ? 3 : 0) + (showNoShow ? 1 : 0);
@@ -110,17 +154,43 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
     <div className="flex flex-col gap-[18px]">
       <PageHeader
         title="Overview"
-        // Pinned locale: toLocaleDateString() with no argument uses the
-        // runtime's default locale, which differs between the Node server
-        // and the browser — that mismatch made SSR and hydration render
-        // different text ("7/28/2026" vs "28/07/2026") and crashed
-        // hydration entirely, falling back to an unstyled client-only
-        // render. Same fix applied to every other toLocaleString() call in
-        // this app (bookings, bookings.$bookingId, timeoff).
-        subtitle={`${new Date(range.from).toLocaleDateString("en-US")} – ${new Date(range.to).toLocaleDateString("en-US")}`}
+        // Pinned locale AND the business's own timezone, not the runtime's
+        // default (which differs between the Node server and the browser,
+        // and crashed hydration entirely when they disagreed) or "en-US"
+        // regardless of where the business actually is (UX audit's #3
+        // finding — same formatting sweep as bookings/bookings.$bookingId/
+        // timeoff). A date range, not a specific instant, so no zone
+        // abbreviation is appended the way formatInZone would.
+        subtitle={`${dateRangeLabel(range.from, timezone)} – ${dateRangeLabel(range.to, timezone)}`}
       />
 
       <ShareLinkCard bookingUrl={bookingUrl} vocab={v} />
+
+      {/* A booking that violates its own business's rules used to have no
+          signal anywhere in the app (Defect Dossier's BQ-07 finding). The
+          noun used to stay plural regardless of count ("1 consultations
+          needs attention") even though the verb already agreed correctly —
+          Defect Dossier's R2-05 finding. */}
+      {conflictCount > 0 && (
+        <a href={`/dashboard/${params.connectionId}/bookings`} className="card flex items-center justify-between gap-3 border-l-[3px] border-l-warn p-[14px] no-underline hover:no-underline">
+          <span className="text-body font-medium text-ink">
+            {conflictCount} {conflictCount === 1 ? v.bookingOne : v.bookingMany} need{conflictCount === 1 ? "s" : ""} attention — outside your own business hours, a time-off block, or overlapping another
+          </span>
+          <span className="text-faint">›</span>
+        </a>
+      )}
+
+      {/* An active service with nobody assigned to deliver it used to look
+          identical to a normal one everywhere in the dashboard (Defect
+          Dossier's R2-04 finding). */}
+      {unbookableCount > 0 && (
+        <a href={`/dashboard/${params.connectionId}/services`} className="card flex items-center justify-between gap-3 border-l-[3px] border-l-warn p-[14px] no-underline hover:no-underline">
+          <span className="text-body font-medium text-ink">
+            {unbookableCount} {unbookableCount === 1 ? v.serviceOne : v.services.toLowerCase()} {unbookableCount === 1 ? "has" : "have"} no one assigned — not bookable online right now
+          </span>
+          <span className="text-faint">›</span>
+        </a>
+      )}
 
       {statCount > 0 && (
         <div className={`grid gap-[14px] ${STAT_GRID[statCount]}`}>
@@ -131,11 +201,16 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
               <StatCard label={`Active ${v.services.toLowerCase()}`} value={String(activeServiceCount)} />
             </>
           )}
+          {/* A confident "0%" when nothing has actually been completed yet
+              reads as "no-shows are fine here" rather than "no data yet" —
+              the same zero-denominator problem as utilisation below
+              (Defect Dossier's BQ-35 finding, item 2). */}
           {showNoShow && (
             <StatCard
               label="No-show rate"
-              value={`${Math.round(overview.noShow.rate * 100)}%`}
-              tone={overview.noShow.rate > 0.1 ? "danger" : "muted"}
+              value={overview.noShow.total > 0 ? `${(overview.noShow.rate * 100).toFixed(1)}%` : "—"}
+              note={overview.noShow.total > 0 ? undefined : `No completed ${v.bookingMany} in this range`}
+              tone={overview.noShow.total > 0 && overview.noShow.rate > 0.1 ? "danger" : "muted"}
             />
           )}
         </div>
@@ -147,7 +222,7 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
             <h2 className="card-title">{v.bookingTitle}</h2>
           </div>
           <div className="card-body">
-            <BarChart data={overview.bookingsSeries} />
+            <BarChart data={overview.bookingsSeries} formatLabel={chartDayLabel} />
           </div>
         </div>
       )}
@@ -211,7 +286,7 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
                       <div key={s.serviceId} className="flex items-center justify-between gap-3 text-[13px]">
                         <span className="min-w-0 truncate font-medium">{s.name || `Service #${s.serviceId}`}</span>
                         <span className="num shrink-0 text-subtle">
-                          {s.bookings} booking{s.bookings === 1 ? "" : "s"}
+                          {s.bookings} {s.bookings === 1 ? v.bookingOne : v.bookingMany}
                         </span>
                       </div>
                     ))}
@@ -226,20 +301,58 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
       {showUtilisation && (
         <div className="card">
           <div className="card-header">
-            <h2 className="card-title">{resourceOneCap} utilization</h2>
+            {/* British spelling + real title case, matching account.tsx's
+                Business-template preview and ui.tsx's MeterRow comment —
+                this heading used to lowercase the whole (possibly
+                multi-word) term first and re-capitalize only the first
+                character, so automotive's "Service Bay" read as "Service
+                bay utilization" here while Settings showed "Service Bay
+                utilisation" for the same preset (UX audit's #12 finding). */}
+            <h2 className="card-title">{v.resourceOneTitle} utilisation</h2>
           </div>
           <div className="card-body flex flex-col gap-4">
             {overview.resourceUtilization.length === 0 ? (
               <p className="m-0 text-body text-muted">No active {v.resources.toLowerCase()}.</p>
             ) : (
-              overview.resourceUtilization.map((r) => (
-                <MeterRow
-                  key={r.resourceId}
-                  name={r.resourceName}
-                  meta={`${Math.round(r.bookedMinutes)} of ${Math.round(r.availableMinutes)} min`}
-                  ratio={r.utilization}
-                />
-              ))
+              overview.resourceUtilization.map((r) => {
+                // One elapsed-only figure read as a permanent, confident
+                // 0.0% for any range that hasn't started yet — no way to
+                // tell "nothing happened so far" apart from "nothing was
+                // ever booked" (Defect Dossier's R2-07 finding, the direct
+                // follow-on from BQ-35's own hours/one-decimal fix). Now
+                // two figures: "So far" (elapsed part of the range, hidden
+                // entirely when nothing has elapsed yet) and "Booked
+                // ahead" (the remaining, future part).
+                return (
+                  <div key={r.resourceId} className="flex flex-col gap-1.5">
+                    <span className="truncate text-[13px] font-semibold text-ink">{r.resourceName}</span>
+                    <div className="flex flex-col gap-1.5 pl-1">
+                      {r.soFar && (
+                        <MeterRow
+                          name="So far"
+                          meta={
+                            r.soFar.availableMinutes === 0
+                              ? "No scheduled hours so far in this range"
+                              : `${(r.soFar.bookedMinutes / 60).toFixed(1)}h booked of ${(r.soFar.availableMinutes / 60).toFixed(1)}h available`
+                          }
+                          ratio={r.soFar.utilization}
+                          right={r.soFar.availableMinutes === 0 ? "—" : `${(r.soFar.utilization * 100).toFixed(1)}%`}
+                        />
+                      )}
+                      <MeterRow
+                        name="Booked ahead"
+                        meta={
+                          r.bookedAhead.availableMinutes === 0
+                            ? "No scheduled hours ahead in this range"
+                            : `${(r.bookedAhead.bookedMinutes / 60).toFixed(1)}h booked of ${(r.bookedAhead.availableMinutes / 60).toFixed(1)}h available`
+                        }
+                        ratio={r.bookedAhead.utilization}
+                        right={r.bookedAhead.availableMinutes === 0 ? "—" : `${(r.bookedAhead.utilization * 100).toFixed(1)}%`}
+                      />
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         </div>

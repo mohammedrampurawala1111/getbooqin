@@ -63,6 +63,41 @@ export async function listUserConnections(userId: string) {
   return prisma.connection.findMany({ where: { userId }, orderBy: { connectedAt: "asc" } });
 }
 
+function slugify(input: string): string {
+  return input.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+}
+
+/**
+ * Lazily generates and persists a human-readable slug for the public
+ * /book/:connectionId link, from the shop's own business name — a raw cuid
+ * reads badly in something a merchant is invited to put in a social bio
+ * (UX audit's #13 finding). Idempotent per connection: once set, a slug is
+ * never regenerated even if the business name changes later, so a link a
+ * merchant already shared keeps working. The cuid `id` itself is left
+ * fully functional too (getPublicConnection resolves either) — this is a
+ * friendlier alias, not a replacement.
+ */
+export async function ensureSlug(connectionId: string, businessName: string): Promise<string> {
+  const existing = await prisma.connection.findUnique({ where: { id: connectionId }, select: { slug: true } });
+  if (existing?.slug) return existing.slug;
+
+  const base = slugify(businessName) || connectionId.slice(0, 8);
+  let candidate = base;
+  let suffix = 1;
+  // Two merchants picking the same business name is rare but not
+  // impossible — append a short numeric suffix rather than failing the
+  // page render over a unique-constraint collision.
+  while (true) {
+    const clash = await prisma.connection.findUnique({ where: { slug: candidate } });
+    if (!clash || clash.id === connectionId) break;
+    candidate = `${base}-${suffix}`;
+    suffix += 1;
+  }
+
+  await prisma.connection.update({ where: { id: connectionId }, data: { slug: candidate } });
+  return candidate;
+}
+
 export async function getUserConnection(userId: string, connectionId: string) {
   const connection = await prisma.connection.findUnique({ where: { id: connectionId } });
   if (!connection || connection.userId !== userId) return null;
@@ -74,8 +109,8 @@ export async function getUserConnection(userId: string, connectionId: string) {
 // still refuses a disconnected/revoked store the same way that dashboard
 // routes already do, so a stale or shared /book/:connectionId link can't
 // keep working after the merchant disconnects.
-export async function getPublicConnection(connectionId: string) {
-  const connection = await prisma.connection.findUnique({ where: { id: connectionId } });
+export async function getPublicConnection(idOrSlug: string) {
+  const connection = await prisma.connection.findFirst({ where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] } });
   if (!connection || connection.status !== "active") return null;
   return connection;
 }

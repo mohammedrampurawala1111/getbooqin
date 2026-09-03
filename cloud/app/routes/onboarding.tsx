@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { redirect, useFetcher, useSearchParams } from "react-router";
+import { redirect, useFetcher, useNavigate, useSearchParams } from "react-router";
 import type { Route } from "./+types/onboarding";
 import { getClerkClient, requireUserSession, ensureUserRow } from "~/session.server";
 import { AlertError, Field, Input, Toggle, TimezoneSelect } from "~/components/ui";
 import { OnboardingShell, PresetTiles, PresetScaffold, IntegrationRow } from "~/components/onboarding";
-import { INTEGRATIONS, getPreset, vocabFor, type PresetId } from "~/lib/presets";
+import { INTEGRATIONS, getPreset, vocabFor, SERVICE_SWATCHES, type PresetId } from "~/lib/presets";
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 import { CURRENCIES, guessCurrency } from "~/lib/currency";
 import { getAppUrl } from "~/lib/env.server";
@@ -135,7 +135,9 @@ async function handleStep1(userId: string, form: FormData): Promise<ActionResult
     // after going Back) shouldn't duplicate services that already exist.
     const existingServices = await Data.catalogServices(shop, platform, false);
     if (existingServices.length === 0) {
-      for (const svc of getPreset(presetId).services) {
+      const services = getPreset(presetId).services;
+      for (let i = 0; i < services.length; i++) {
+        const svc = services[i];
         const productId = randomUUID();
         const productHandle = `${slugify(svc.name)}-${productId.slice(0, 8)}`;
         await Data.upsertProductCache(shop, platform, {
@@ -144,12 +146,14 @@ async function handleStep1(userId: string, form: FormData): Promise<ActionResult
           title: svc.name,
           description: "",
           category: "",
-          price: 0,
+          price: svc.price,
         });
         await Data.saveServiceConfig(shop, platform, {
           product_id: productId,
           product_handle: productHandle,
           duration_min: svc.minutes,
+          location_type: svc.location ?? "onsite",
+          color: SERVICE_SWATCHES[i % SERVICE_SWATCHES.length],
         });
       }
     }
@@ -188,6 +192,18 @@ async function handleStep2(userId: string, form: FormData): Promise<ActionResult
       if (preset.open[presetDay]) schedule.push({ day, start, end });
     }
 
+    // Every preset-seeded service from step 1 has no resource assigned yet
+    // — nothing existed to assign it to at that point — and this is the
+    // first resource the business has, so there's no real choice to make
+    // yet either. Assigning it to everything by default (rather than
+    // service_ids: []) is what actually makes the preset bookable; a merchant
+    // who deliberately wants a narrower assignment can still change it from
+    // the resource's own page afterwards (Defect Dossier's BQ-05 finding —
+    // the other half of the fix, resourcesForService()'s fallback in
+    // core/src/booking/data.ts, means this is now a real default rather
+    // than a fallback masking an unset one).
+    const existingServices = await Data.catalogServices(connection.shop, connection.platform, false);
+
     await Data.saveResource(connection.shop, connection.platform, {
       name: resourceName,
       title: "",
@@ -198,7 +214,7 @@ async function handleStep2(userId: string, form: FormData): Promise<ActionResult
       timezone: "",
       status: true,
       schedule,
-      service_ids: [],
+      service_ids: existingServices.map((s) => s.id),
     });
   }
 
@@ -296,23 +312,40 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const navigate = useNavigate();
   const fetcher = useFetcher<ActionResult>();
   const [error, setError] = useState<string | null>(null);
-  const pendingStepRef = useRef<number | null>(null);
+  // What to do once the in-flight step submission comes back: move on to
+  // the next step, or ("finish") leave the wizard for /dashboard. Either
+  // way the outcome only fires *after* a real save completes — "Finish
+  // later" used to be a plain link straight to /dashboard, so anything
+  // picked on step 1/2 (business name, preset, timezone, currency,
+  // practitioner name) that hadn't already gone through a "Continue" click
+  // was silently dropped: nothing had submitStep1/submitStep2's form yet,
+  // so Settings.applyPreset() never ran, and the connection was left on
+  // whatever defaultSettings() gave it — "generic" — no matter what the
+  // wizard visually showed selected. Reported as "business template
+  // doesn't persist... resets to generic," reproducible specifically via
+  // Finish later, not via Continue.
+  const pendingOutcomeRef = useRef<{ kind: "advance"; step: number } | { kind: "finish" } | null>(null);
 
   useEffect(() => {
-    if (fetcher.state !== "idle" || !fetcher.data || pendingStepRef.current === null) return;
+    if (fetcher.state !== "idle" || !fetcher.data || pendingOutcomeRef.current === null) return;
     const result = fetcher.data;
-    const toStep = pendingStepRef.current;
-    pendingStepRef.current = null;
+    const outcome = pendingOutcomeRef.current;
+    pendingOutcomeRef.current = null;
     if (result.error) {
       setError(result.error);
       return;
     }
     setError(null);
+    if (outcome.kind === "finish") {
+      navigate("/dashboard");
+      return;
+    }
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
-      next.set("step", String(toStep));
+      next.set("step", String(outcome.step));
       if (result.connectionId) next.set("cid", result.connectionId);
       return next;
     });
@@ -329,7 +362,7 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
     });
   }
 
-  function submitStep1(toStep: number) {
+  function submitStep1(outcome: { kind: "advance"; step: number } | { kind: "finish" }) {
     const fd = new FormData();
     fd.set("_intent", "step1");
     if (cid) fd.set("cid", cid);
@@ -340,31 +373,41 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
     fd.set("timezone", state.timezone);
     fd.set("currency", state.currency);
     fd.set("currency_symbol", state.currencySymbol);
-    pendingStepRef.current = toStep;
+    pendingOutcomeRef.current = outcome;
     fetcher.submit(fd, { method: "post" });
   }
 
-  function submitStep2(toStep: number) {
+  function submitStep2(outcome: { kind: "advance"; step: number } | { kind: "finish" }) {
     const fd = new FormData();
     fd.set("_intent", "step2");
     fd.set("cid", cid);
     fd.set("resource_name", state.resourceName);
-    pendingStepRef.current = toStep;
+    pendingOutcomeRef.current = outcome;
     fetcher.submit(fd, { method: "post" });
   }
 
+  // Steps 3/4 hold nothing that isn't already persisted the moment it's
+  // set (integration connects submit their own forms immediately; Go
+  // Live's own submit *is* finishing) — only 1 and 2 have local-only state
+  // that needs a real save before it's safe to leave.
+  function finishLater() {
+    if (step === 1) submitStep1({ kind: "finish" });
+    else if (step === 2) submitStep2({ kind: "finish" });
+    else navigate("/dashboard");
+  }
+
   return (
-    <OnboardingShell step={step} onStep={goToStep} finishLaterHref="/dashboard">
+    <OnboardingShell step={step} onStep={goToStep} onFinishLater={finishLater}>
       {error && <AlertError className="mb-1">{error}</AlertError>}
       {step === 1 && (
-        <StepBusiness state={state} update={update} saving={saving} onNext={() => submitStep1(2)} />
+        <StepBusiness state={state} update={update} saving={saving} onNext={() => submitStep1({ kind: "advance", step: 2 })} />
       )}
       {step === 2 && (
         <StepSetup
           state={state}
           update={update}
           saving={saving}
-          onNext={() => submitStep2(3)}
+          onNext={() => submitStep2({ kind: "advance", step: 3 })}
           onBack={() => goToStep(1)}
         />
       )}

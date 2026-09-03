@@ -30,7 +30,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
     if (!date) {
       const days = await Availability.nextAvailableDays(connection.shop, connection.platform, settings.timezone, serviceId, resourceId, 7);
-      return { mode: "days" as const, days };
+      const unbookable = days.length === 0 ? !(await Availability.isServiceBookable(connection.shop, connection.platform, serviceId, resourceId)) : false;
+      return { mode: "days" as const, days, unbookable };
     }
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new GetBooqinError("getbooqin_invalid_date", "Please choose a valid date.", 400);

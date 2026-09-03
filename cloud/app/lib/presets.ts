@@ -20,20 +20,28 @@ export type PresetId = Extract<keyof typeof CORE_PRESETS, string>;
 export type Preset = {
   id: PresetId;
   label: string;
-  unit: string;               // what the industry counts, for marketing copy
+  unit: string;               // picker-card tagline — derived from the preset's own booking noun (terms.booking_plural), so it always names vocabulary the preset actually uses
   tint: string;               // swatch on the preset tile
   vocab: {
     booking: string;          // "Booking" | "Appointment" | "Job" | "Reservation" — sourced from core's terms
     customer: string;         // "Customer" | "Patient" | "Client" | "Guest" — sourced from core's terms
-    resource: string;         // "Staff Member" | "Doctor" | "Stylist" — sourced from core's terms
+    resource: string;         // "Staff" | "Practitioner" | "Stylist" — sourced from core's terms
     service: string;          // "Service" | "Treatment" | "Job" | "Sitting" (singular) — sourced from core's terms
     services: string;         // section heading for bookable things — cosmetic, local
     resources: string;        // section heading for who/what takes them — cosmetic, local
   };
-  services: { name: string; minutes: number }[];
+  services: { name: string; minutes: number; price: number; location?: "onsite" | "video" | "phone" }[];
   open: boolean[];            // Mon..Sun
   range: string;              // default open range for open days
 };
+
+/** Swatch palette a service's colour picker cycles through — shared so
+ * preset seeding (onboarding, template switch) assigns each default service
+ * a distinct colour the same way the manual picker on a service's own page
+ * offers them, instead of every seeded row defaulting to the same DB column
+ * default (Defect Dossier's BQ-22 finding: every Legal service shared one
+ * blue swatch). */
+export const SERVICE_SWATCHES = ["#b05fc9", "#2563eb", "#0f7a4f", "#92600b", "#b42318", "#545b68"];
 
 // Marketing/preview-only data core has no reason to carry: label copy, tile
 // tint, "what this industry counts" unit, sample services, and a preview
@@ -41,114 +49,114 @@ export type Preset = {
 // — they're richer nav copy ("Practitioners & rooms") than core's plain
 // plural noun, and onboarding-preview-only, so drift here has no real
 // consequence the way booking/customer/resource wording did.
-const PREVIEW: Record<PresetId, Omit<Preset, "id" | "vocab"> & { vocabExtra: Pick<Preset["vocab"], "services" | "resources"> }> = {
+const PREVIEW: Record<PresetId, Omit<Preset, "id" | "vocab" | "unit"> & { vocabExtra: Pick<Preset["vocab"], "services" | "resources"> }> = {
   generic: {
-    label: "Generic / Other", unit: "Appointments", tint: "#c9c2d4",
+    label: "Generic / Other", tint: "#c9c2d4",
     vocabExtra: { services: "Services", resources: "Staff & resources" },
     services: [
-      { name: "Standard appointment", minutes: 60 },
-      { name: "Short appointment", minutes: 30 },
-      { name: "Consultation", minutes: 30 },
-      { name: "Follow-up", minutes: 45 },
+      { name: "Standard appointment", minutes: 60, price: 50 },
+      { name: "Short appointment", minutes: 30, price: 25 },
+      { name: "Consultation", minutes: 30, price: 30 },
+      { name: "Follow-up", minutes: 45, price: 35 },
     ],
     open: [true, true, true, true, true, false, false], range: "09:00–17:00",
   },
   clinic: {
-    label: "Clinic / Healthcare", unit: "Patient visits", tint: "#8fbfd6",
+    label: "Clinic / Healthcare", tint: "#8fbfd6",
     vocabExtra: { services: "Treatments", resources: "Practitioners & rooms" },
     services: [
-      { name: "Initial assessment", minutes: 45 },
-      { name: "Follow-up consultation", minutes: 20 },
-      { name: "Physiotherapy session", minutes: 40 },
-      { name: "Vaccination", minutes: 15 },
+      { name: "Initial assessment", minutes: 45, price: 90, location: "onsite" },
+      { name: "Follow-up consultation", minutes: 20, price: 45, location: "onsite" },
+      { name: "Physiotherapy session", minutes: 40, price: 65, location: "onsite" },
+      { name: "Vaccination", minutes: 15, price: 25, location: "onsite" },
     ],
     open: [true, true, true, true, true, true, false], range: "08:00–18:00",
   },
   salon: {
-    label: "Salon / Spa / Barber", unit: "Chair time", tint: "#e0a8c8",
+    label: "Salon / Spa / Barber", tint: "#e0a8c8",
     vocabExtra: { services: "Services", resources: "Stylists & chairs" },
     services: [
-      { name: "Cut & finish", minutes: 60 },
-      { name: "Balayage & toner", minutes: 150 },
-      { name: "Gel manicure", minutes: 45 },
-      { name: "Beard trim", minutes: 20 },
+      { name: "Cut & finish", minutes: 60, price: 45 },
+      { name: "Balayage & toner", minutes: 150, price: 120 },
+      { name: "Gel manicure", minutes: 45, price: 35 },
+      { name: "Beard trim", minutes: 20, price: 20 },
     ],
     open: [false, true, true, true, true, true, false], range: "09:00–18:00",
   },
   automotive: {
-    label: "Automotive / Repair Shop", unit: "Bay slots", tint: "#9aa4b2",
+    label: "Automotive / Repair Shop", tint: "#9aa4b2",
     vocabExtra: { services: "Jobs", resources: "Service bays" },
     services: [
-      { name: "MOT test", minutes: 60 },
-      { name: "Full service", minutes: 180 },
-      { name: "Tyre change", minutes: 45 },
-      { name: "Diagnostics", minutes: 90 },
+      { name: "MOT test", minutes: 60, price: 55 },
+      { name: "Full service", minutes: 180, price: 250 },
+      { name: "Tyre change", minutes: 45, price: 80 },
+      { name: "Diagnostics", minutes: 90, price: 60 },
     ],
     open: [true, true, true, true, true, false, false], range: "08:00–17:30",
   },
   legal: {
-    label: "Legal / Consulting", unit: "Billable meetings", tint: "#a9a0c9",
+    label: "Legal / Consulting", tint: "#a9a0c9",
     vocabExtra: { services: "Consultation types", resources: "Consultants & rooms" },
     services: [
-      { name: "Discovery call", minutes: 30 },
-      { name: "Strategy session", minutes: 60 },
-      { name: "Document review", minutes: 90 },
-      { name: "Quarterly review", minutes: 60 },
+      { name: "Discovery call", minutes: 30, price: 50, location: "video" },
+      { name: "Strategy session", minutes: 60, price: 150, location: "video" },
+      { name: "Document review", minutes: 90, price: 200 },
+      { name: "Quarterly review", minutes: 60, price: 150 },
     ],
     open: [true, true, true, true, true, false, false], range: "09:00–18:00",
   },
   education: {
-    label: "Education / Tutoring", unit: "Lessons", tint: "#e0c48f",
-    vocabExtra: { services: "Classes", resources: "Tutors & rooms" },
+    label: "Education / Tutoring", tint: "#e0c48f",
+    vocabExtra: { services: "Courses", resources: "Tutors & rooms" },
     services: [
-      { name: "1:1 tuition", minutes: 60 },
-      { name: "Group class", minutes: 90 },
-      { name: "Trial lesson", minutes: 30 },
-      { name: "Exam prep block", minutes: 120 },
+      { name: "1:1 tuition", minutes: 60, price: 40 },
+      { name: "Group class", minutes: 90, price: 25 },
+      { name: "Trial lesson", minutes: 30, price: 15 },
+      { name: "Exam prep block", minutes: 120, price: 60 },
     ],
     open: [true, true, true, true, true, true, false], range: "15:00–20:00",
   },
   fitness: {
-    label: "Fitness / Wellness", unit: "Classes", tint: "#8fd6b4",
+    label: "Fitness / Wellness", tint: "#8fd6b4",
     vocabExtra: { services: "Classes", resources: "Trainers & studios" },
     services: [
-      { name: "Personal training", minutes: 60 },
-      { name: "Group class", minutes: 45 },
-      { name: "Assessment", minutes: 30 },
-      { name: "Recovery session", minutes: 30 },
+      { name: "Personal training", minutes: 60, price: 50 },
+      { name: "Group class", minutes: 45, price: 20 },
+      { name: "Assessment", minutes: 30, price: 30 },
+      { name: "Recovery session", minutes: 30, price: 35 },
     ],
     open: [true, true, true, true, true, true, true], range: "06:00–21:00",
   },
   realestate: {
-    label: "Real Estate / Property Viewings", unit: "Viewings", tint: "#c9b48f",
+    label: "Real Estate / Property Viewings", tint: "#c9b48f",
     vocabExtra: { services: "Viewing types", resources: "Agents" },
     services: [
-      { name: "Property viewing", minutes: 30 },
-      { name: "Second viewing", minutes: 45 },
-      { name: "Valuation visit", minutes: 60 },
-      { name: "Open house slot", minutes: 120 },
+      { name: "Property viewing", minutes: 30, price: 0 },
+      { name: "Second viewing", minutes: 45, price: 0 },
+      { name: "Valuation visit", minutes: 60, price: 0 },
+      { name: "Open house slot", minutes: 120, price: 0 },
     ],
     open: [true, true, true, true, true, true, false], range: "09:00–19:00",
   },
   restaurant: {
-    label: "Restaurant / Table Reservations", unit: "Covers", tint: "#e09a8f",
+    label: "Restaurant / Table Reservations", tint: "#e09a8f",
     vocabExtra: { services: "Sittings", resources: "Tables & sections" },
     services: [
-      { name: "Lunch sitting", minutes: 90 },
-      { name: "Dinner sitting", minutes: 120 },
-      { name: "Private dining", minutes: 180 },
-      { name: "Bar seating", minutes: 60 },
+      { name: "Lunch sitting", minutes: 90, price: 0 },
+      { name: "Dinner sitting", minutes: 120, price: 0 },
+      { name: "Private dining", minutes: 180, price: 0 },
+      { name: "Bar seating", minutes: 60, price: 0 },
     ],
     open: [false, true, true, true, true, true, true], range: "12:00–23:00",
   },
   homeservice: {
-    label: "Home Services / Trades", unit: "Site visits", tint: "#8fc3d6",
+    label: "Home Services / Trades", tint: "#8fc3d6",
     vocabExtra: { services: "Job types", resources: "Engineers & vans" },
     services: [
-      { name: "Quotation visit", minutes: 30 },
-      { name: "Standard callout", minutes: 120 },
-      { name: "Annual service", minutes: 60 },
-      { name: "Emergency callout", minutes: 90 },
+      { name: "Quotation visit", minutes: 30, price: 0, location: "onsite" },
+      { name: "Standard callout", minutes: 120, price: 90, location: "onsite" },
+      { name: "Annual service", minutes: 60, price: 70, location: "onsite" },
+      { name: "Emergency callout", minutes: 90, price: 120, location: "onsite" },
     ],
     open: [true, true, true, true, true, true, false], range: "07:30–17:00",
   },
@@ -164,6 +172,7 @@ export const PRESETS: Preset[] = (Object.keys(CORE_PRESETS) as PresetId[]).map((
   return {
     id,
     ...preview,
+    unit: terms.booking_plural,
     vocab: {
       booking: terms.booking_single,
       customer: terms.customer_single,
@@ -182,15 +191,27 @@ export const PRESETS: Preset[] = (Object.keys(CORE_PRESETS) as PresetId[]).map((
 // here once rather than imported from that DB-touching module (unsafe for
 // a client bundle; see this file's header comment on why presets.ts is the
 // only core subpath safe to pull business facts from client-side).
-const GENERIC_RULE_FALLBACK = {
+const GENERIC_RULE_FALLBACK: PresetRules = {
+  slot_interval: 30,
   min_notice_hours: 2,
   max_advance_days: 60,
   cancel_cutoff_hours: 24,
   auto_confirm: true,
   require_phone: false,
-} as const;
+  waitlist_enabled: false,
+  waitlist_offer_window_hours: 4,
+};
 
-export type PresetRules = typeof GENERIC_RULE_FALLBACK;
+export interface PresetRules {
+  slot_interval: number;
+  min_notice_hours: number;
+  max_advance_days: number;
+  cancel_cutoff_hours: number;
+  auto_confirm: boolean;
+  require_phone: boolean;
+  waitlist_enabled: boolean;
+  waitlist_offer_window_hours: number;
+}
 
 export function rulesFor(id: string | null | undefined): PresetRules {
   const preset = CORE_PRESETS[id as PresetId] ?? CORE_PRESETS.generic;
@@ -199,14 +220,109 @@ export function rulesFor(id: string | null | undefined): PresetRules {
 
 /* Plain-language summary of rulesFor()'s output, for onboarding's "Starting
    rules" preview and the Business template page's before/after diff — one
-   place to phrase these so both stay consistent. */
+   place to phrase these so both stay consistent. Covers every simple
+   (non-text) key core/src/booking/presets.ts's PRESET_CONTROLLED_KEYS lets
+   a preset set — this used to cover only 4 of the 11, so switching Legal ->
+   Clinic silently also changed slot_interval/max_advance_days/
+   waitlist_enabled with nothing in this list mentioning it (Defect
+   Dossier's BQ-19 finding). consent_text/widget_text/templates are prose,
+   not one-line rules, so they're called out qualitatively instead — see
+   featureNotesFor() below. */
 export function ruleChips(rules: PresetRules): string[] {
   return [
     rules.auto_confirm ? "Confirms bookings automatically" : "New bookings need approval first",
     `At least ${rules.min_notice_hours}h notice required to book`,
+    `Bookable up to ${rules.max_advance_days} days ahead`,
     `Customers can cancel up to ${rules.cancel_cutoff_hours}h before`,
+    `${rules.slot_interval}-minute slot spacing`,
     rules.require_phone ? "Phone number required at booking" : "Phone number optional",
+    rules.waitlist_enabled
+      ? `Offers freed slots to the waitlist (within ${rules.waitlist_offer_window_hours}h)`
+      : "Waitlist offers are off",
   ];
+}
+
+/**
+ * Feature surfaces a preset switch adds or removes, beyond the rule chips
+ * above. Used to only ever announce what's gained, never what's lost —
+ * switching Clinic -> Legal silently dropped the Visit summaries page (and
+ * everything configured on it) with no mention in the confirmation dialog
+ * (Defect Dossier's R3-04 finding). applyPreset() only ever touches fields
+ * listed in a preset's own `defaults` (core/src/booking/settings.ts) —
+ * visit-summary settings aren't one of them, so nothing is actually
+ * deleted here, only hidden; the note below says so.
+ */
+export function featureNotesFor(fromId: string | null | undefined, toId: string | null | undefined): { text: string; removed: boolean }[] {
+  const notes: { text: string; removed: boolean }[] = [];
+  if (toId === "clinic" && fromId !== "clinic") {
+    notes.push({ text: "Adds a Visit summaries page for AI-drafted patient summaries", removed: false });
+  }
+  if (fromId === "clinic" && toId !== "clinic") {
+    notes.push({
+      text: "Removes the Visit summaries page (your consent notice and settings are kept, and come back if you switch to Clinic again)",
+      removed: true,
+    });
+  }
+  return notes;
+}
+
+/**
+ * The actual before/after for switching to `targetPresetId`, computed
+ * against the shop's real current values — not a static description of
+ * the target preset alone, which is what let three real changes (slot
+ * interval, max advance days, waitlist toggle) go unmentioned even once
+ * ruleChips() above covered them, because the old panel only ever showed
+ * the *target*, never compared it to what the shop already had (Defect
+ * Dossier's BQ-19 finding). A field the merchant has already hand-edited
+ * (in `customizedFields`) is protected by applyPreset()'s own merge logic
+ * (core/src/booking/settings.ts) and reported as kept, not changed.
+ */
+export interface RuleChange {
+  label: string;
+  kept: boolean;
+  fromText: string;
+  toText: string;
+}
+
+const RULE_LABELS: Record<keyof PresetRules, string> = {
+  slot_interval: "Slot interval",
+  min_notice_hours: "Minimum notice",
+  max_advance_days: "Max advance booking",
+  cancel_cutoff_hours: "Cancellation cutoff",
+  auto_confirm: "Auto-confirm bookings",
+  require_phone: "Require a phone number",
+  waitlist_enabled: "Offer freed slots to the waitlist",
+  waitlist_offer_window_hours: "Waitlist offer window",
+};
+
+function ruleValueText(key: keyof PresetRules, value: PresetRules[keyof PresetRules]): string {
+  if (typeof value === "boolean") return value ? "on" : "off";
+  return String(value);
+}
+
+function displayValue(key: keyof PresetRules, value: PresetRules[keyof PresetRules]): string {
+  if (key === "slot_interval") return `${value} min`;
+  if (key === "waitlist_offer_window_hours") return `${value}h`;
+  return ruleValueText(key, value);
+}
+
+export function startingRulesDiff(
+  current: PresetRules,
+  customizedFields: string[],
+  targetPresetId: string | null | undefined
+): RuleChange[] {
+  const target = rulesFor(targetPresetId);
+  return (Object.keys(RULE_LABELS) as (keyof PresetRules)[])
+    .filter((key) => current[key] !== target[key]) // only fields the switch would actually touch
+    .map((key) => ({
+      label: RULE_LABELS[key],
+      // Protected by applyPreset()'s own non-destructive merge — the
+      // preset's new default would apply, but a hand-edited field never
+      // gets silently overwritten, so it's reported as kept, not changed.
+      kept: customizedFields.includes(key),
+      fromText: displayValue(key, current[key]),
+      toText: displayValue(key, target[key]),
+    }));
 }
 
 export const DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
@@ -247,8 +363,19 @@ export function vocabFor(id: string | null | undefined) {
     customerOne: p.vocab.customer.toLowerCase(),
     customers: `${p.vocab.customer}s`,
     resourceOne: p.vocab.resource.toLowerCase(),
+    // The properly-cased singular, untouched — for headings like "X
+    // utilisation" that need real title case. resourceOne can't be
+    // recovered into this by re-capitalizing just its first character:
+    // lowercasing "Service Bay" first and capitalizing only the "S" back
+    // produces "Service bay", which is exactly the casing bug this field
+    // exists to avoid (UX audit's #12 finding).
+    resourceOneTitle: p.vocab.resource,
     resources: p.vocab.resources,
     serviceOne: p.vocab.service.toLowerCase(),
+    // Same reasoning as resourceOneTitle above — kept for field labels
+    // ("Consultation type") that need real title case, where serviceOne
+    // alone renders lowercase mid-form (Defect Dossier's R2-08 finding).
+    serviceOneTitle: p.vocab.service,
     services: p.vocab.services,
   };
 }

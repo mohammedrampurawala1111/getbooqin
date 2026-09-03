@@ -176,6 +176,24 @@ describe("Waitlist.join() validation (Task 1) and dedupe (Task 3)", () => {
     await prisma.booking.delete({ where: { id: holder.id } });
   });
 
+  // UX audit pass 11's #4 finding: a whole-day join used to be rejected
+  // whenever the day had *any* open slot at all, not just when the
+  // customer's own desired time was free — testDate is a normal open
+  // Wednesday with nothing booked at this point, and the join must still
+  // succeed since a waitlist date is a preference, not an assertion that
+  // the day is full.
+  it("accepts a whole-day join for a date that still has open slots", async () => {
+    const entry = await Waitlist.join(shop, platform, "UTC", {
+      service_id: serviceId,
+      resource_id: resourceId,
+      window_start: testDate,
+      first_name: "QA Open Day",
+      email: await customerEmail(100),
+    });
+    expect(entry.uid).toBeTruthy();
+    expect(entry.status).toBe("waiting");
+  });
+
   it("rejects a join with no phone once require_phone is enabled (Task 5a)", async () => {
     await Settings.setSettings(shop, platform, { require_phone: true });
     await expect(

@@ -19,6 +19,7 @@ import compression from "compression";
 import express from "express";
 import morgan from "morgan";
 import { createRequestHandler } from "@react-router/express";
+import { Mailer } from "getbooqin-core";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
@@ -95,6 +96,28 @@ function mountStatic(app, appDir, build) {
   app.use(build.publicPath, express.static(assetsBuildDirectory));
 }
 
+// Bookings.reminder_enabled has existed in Settings since before this pass,
+// but nothing anywhere ever called Mailer.sendReminders() — a shop could
+// turn "Send reminder emails" on and it would silently never fire (found
+// while wiring up Settings > Notifications' new per-message editor, Defect
+// Dossier's BQ-34 finding). This is what actually makes that toggle real:
+// a periodic sweep, independent of any one booking's own request/response
+// cycle, since a reminder is due on its own clock, not in reaction to an
+// action a customer or merchant just took.
+const REMINDER_INTERVAL_MS = 10 * 60 * 1000;
+
+function startReminderScheduler() {
+  const tick = () => {
+    Mailer.sendReminders()
+      .then(({ sent }) => {
+        if (sent > 0) console.log(`[getbooqin-server] sent ${sent} reminder email(s)`);
+      })
+      .catch((err) => console.error("[getbooqin-server] sendReminders failed:", err));
+  };
+  tick();
+  return setInterval(tick, REMINDER_INTERVAL_MS);
+}
+
 async function main() {
   const [shopifyBuild, cloudBuild] = await Promise.all([
     loadBuild("shopify-openslot"),
@@ -129,9 +152,13 @@ async function main() {
   const port = Number(process.env.PORT) || 3000;
   const onListen = () => console.log(`[getbooqin-server] listening on :${port}`);
   const server = process.env.HOST ? app.listen(port, process.env.HOST, onListen) : app.listen(port, onListen);
+  const reminderTimer = startReminderScheduler();
 
   for (const signal of ["SIGTERM", "SIGINT"]) {
-    process.once(signal, () => server?.close(console.error));
+    process.once(signal, () => {
+      clearInterval(reminderTimer);
+      server?.close(console.error);
+    });
   }
 }
 

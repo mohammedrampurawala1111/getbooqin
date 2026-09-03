@@ -4,8 +4,12 @@ import type { Route } from "./+types/dashboard.$connectionId.services.new";
 import { Data, Settings } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Field, Input } from "~/components/ui";
+import { useVocabulary, vocabFor, getPreset } from "~/lib/presets";
+import { dashboardPreset } from "~/lib/dashboardMeta";
 
-export const meta: Route.MetaFunction = () => [{ title: "New service · GetBooqin" }];
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: `New ${vocabFor(dashboardPreset(matches)).serviceOne} · GetBooqin` },
+];
 
 // Only reachable for a manual (non-Shopify) connection — Shopify's catalogue
 // is the source of truth for that platform (see services.tsx's "Sync
@@ -19,7 +23,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId);
   if (platform !== "manual") throw redirect(`/dashboard/${params.connectionId}/services`);
   const settings = await Settings.getSettings(shop, platform);
-  return { currencySymbol: settings.currency_symbol };
+  return { currencySymbol: settings.currency_symbol, preset: settings.preset };
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
@@ -54,21 +58,30 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function NewService({ loaderData, actionData, params }: Route.ComponentProps) {
-  const { currencySymbol } = loaderData;
+  const { currencySymbol, preset } = loaderData;
+  const v = useVocabulary();
+  // The list page already speaks the active template's vocabulary
+  // ("Consultation types", "+ New consultation type") but this screen
+  // reverted to generic English the moment you went one click deeper — a
+  // law-firm partner creating their fourth consultation type saw "New
+  // service" and a haircut as the example (Defect Dossier's BQ-15
+  // finding). The placeholder now comes from the preset's own first
+  // default service instead of a hardcoded Salon example.
+  const examplePlaceholder = getPreset(preset).services[0]?.name;
   const base = `/dashboard/${params.connectionId}`;
   return (
     <div className="flex flex-col gap-[18px]">
       <div>
-        <a href={`${base}/services`} className="btn-link">&larr; All services</a>
+        <a href={`${base}/services`} className="btn-link">&larr; All {v.services.toLowerCase()}</a>
       </div>
-      <h1 className="page-title">New service</h1>
+      <h1 className="page-title">New {v.serviceOne}</h1>
       {actionData?.error && <AlertError>{actionData.error}</AlertError>}
 
       <Form method="post" className="card">
         <div className="card-body grid grid-cols-2 gap-x-4 gap-y-[14px]">
           <div className="col-span-2">
             <Field label="Name">
-              <Input name="title" placeholder="e.g. Cut & finish" required />
+              <Input name="title" placeholder={examplePlaceholder ? `e.g. ${examplePlaceholder}` : undefined} required />
             </Field>
           </div>
           <Field label="Price">
@@ -82,7 +95,7 @@ export default function NewService({ loaderData, actionData, params }: Route.Com
           <Field label="Duration (minutes)">
             <Input type="number" name="duration_min" min={5} defaultValue={30} />
           </Field>
-          <Field label="Category" hint="Optional — shown alongside the service.">
+          <Field label="Category" hint={`Optional — shown alongside the ${v.serviceOne}.`}>
             <Input name="category" />
           </Field>
           <div className="col-span-2">
@@ -92,7 +105,7 @@ export default function NewService({ loaderData, actionData, params }: Route.Com
           </div>
         </div>
         <div className="card-footer">
-          <button type="submit" className="btn-pri ml-auto">Create service</button>
+          <button type="submit" className="btn-pri ml-auto">Create {v.serviceOne}</button>
         </div>
       </Form>
     </div>

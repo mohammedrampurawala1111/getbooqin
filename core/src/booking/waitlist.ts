@@ -44,12 +44,18 @@ export interface JoinWaitlistArgs {
 }
 
 /**
- * A waitlist join is only meaningful for a slot/day that the schedule
- * itself would actually withdraw or leave empty — otherwise the entry can
- * never fire, because no cancellation ever frees something that was never
- * bookable. Reuses the exact same slot generation and day-state
- * classification the booking path and calendar already render from, so
- * this can never drift into disagreeing with what a customer was shown.
+ * Guards the two cases a waitlist join genuinely can't fire for: a date
+ * outside the booking window (nothing to ever free up), and a day the
+ * business doesn't work at all (same). A whole-day join otherwise succeeds
+ * regardless of how many other slots that day are open — see the `!time`
+ * branch below (UX audit's #4 finding: this used to also reject any day
+ * with so much as one open slot, which made a one-resource business nearly
+ * unreachable). A per-slot join keeps its own stricter check further down:
+ * that one specific time must actually be taken, since the customer named
+ * an exact slot, not just a day. Reuses the exact same slot generation and
+ * day-state classification the booking path and calendar already render
+ * from, so this can never drift into disagreeing with what a customer was
+ * shown.
  */
 async function assertJoinable(
   shop: string,
@@ -72,16 +78,13 @@ async function assertJoinable(
   }
 
   if (!time) {
-    // Whole-day join: "full" (a real working day, currently nothing open)
-    // is the only state a waitlist makes sense for — "open" means slots
-    // exist and the customer should book one directly instead of queuing.
-    if (day.state === "open") {
-      throw new GetBooqinError(
-        "getbooqin_slot_available",
-        "This day still has open times — please book one directly instead of joining the waitlist.",
-        400
-      );
-    }
+    // A whole-day join is a *preference*, not a claim that the day is
+    // already full — refusing it whenever the day has any open slot at all
+    // made the waitlist nearly unreachable for a one-resource business
+    // (open != "the customer's actual desired time is open"), even though
+    // Booking rules ships waitlist offers on by default (UX audit's #4
+    // finding). Only a day that could never work at all (closed) or is
+    // outside the booking window is refused — both already checked above.
     return;
   }
 
