@@ -25,6 +25,11 @@ export interface Settings {
   business_name: string;
   business_email: string;
   business_phone: string;
+  // Surfaced on the public booking page's business header (Defect
+  // Dossier's BQ-33 finding) — the page previously showed only the name
+  // and a bare list of service durations.
+  business_description: string;
+  business_address: string;
   currency: string;
   currency_symbol: string;
   timezone: string;
@@ -119,6 +124,25 @@ export interface Settings {
   // clears an entry. Settings UI in both apps reads this to show a "Preset
   // default" vs "Customized" indicator next to each affected field.
   customized_fields: string[];
+
+  // Visit Summary (Clinic preset only — see
+  // docs/patient-summary-cloud-integration-plan.md). Off by default for
+  // every clinic, opt-in only. Deliberately NOT in presets.ts's
+  // PRESET_CONTROLLED_KEYS — no preset should silently switch on an
+  // AI-drafting-and-emailing-patients feature; gate check is
+  // this flag AND core/src/booking/featureFlags.ts's VISIT_SUMMARIES_ENABLED
+  // env var (see consultationSummary.ts).
+  visit_summaries_enabled: boolean;
+  // Pre-fills the intake screen's language selector; still overridable per
+  // summary. "auto" maps to the prompt's own language-detection behavior.
+  visit_summary_default_language: "auto" | "nl" | "en";
+  // Optional consultation-consent notice. Not wired into any live
+  // recording-consent screen yet (none exists in the product) — MVP
+  // placement is purely as the opt-in {{summary_consent_line}} merge token
+  // insertable into the customer_created/customer_created_pending email
+  // templates (core/src/booking/mailer.ts). Empty means the merge token
+  // renders nothing.
+  visit_summary_consent_line: string;
 }
 
 export function term(settings: Settings, key: keyof Terms): string {

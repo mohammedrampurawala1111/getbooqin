@@ -32,12 +32,34 @@ export const SETTINGS_NAV = [
     { key: "rules", label: "Booking rules", path: "/settings?page=rules", title: "Booking rules", subtitle: "When customers can book, and what happens automatically." },
     { key: "notifications", label: "Notifications", path: "/settings?page=notifications", title: "Notifications", subtitle: "Emails sent to customers and staff." },
     { key: "payments", label: "Payments", path: "/settings?page=payments", title: "Payments", subtitle: "How money is collected for bookings." },
-    { key: "integrations", label: "Integrations", path: "/settings?page=integrations", title: "Integrations", subtitle: "Connected channels and Shopify stores." },
+    { key: "visit_summaries", label: "Visit summaries", path: "/settings?page=visit_summaries", title: "Visit summaries", subtitle: "AI-drafted, clinician-reviewed summaries patients can keep after a visit." },
+    { key: "integrations", label: "Integrations", path: "/settings?page=integrations", title: "Integrations", subtitle: "Optional integrations. GetBooqin works fully without any of them." },
     { key: "team", label: "Team", path: "/settings?page=team", title: "Team", subtitle: "Who can access this dashboard, and what they can do." },
   ]},
 ] as const;
 
 export type SettingsKey = typeof SETTINGS_NAV[number]["items"][number]["key"];
+
+/**
+ * Which settings-nav items to hide, given the two feature gates that
+ * control them. Two routes render this same rail (dashboard.$connectionId.
+ * settings.tsx and dashboard.$connectionId.account.tsx) and each used to
+ * compute its own visibility independently — the account route never
+ * checked visit_summaries/preset at all, so switching the business
+ * template away from Clinic left "Visit summaries" showing there while the
+ * settings route correctly hid it, in the same session (Defect Dossier's
+ * BQ-21 finding). One function both routes call now.
+ */
+export function hiddenSettingsNavKeys(gates: {
+  paymentsEnabled: boolean;
+  visitSummariesEnabled: boolean;
+  preset: string | null;
+}): SettingsKey[] {
+  return [
+    ...(gates.paymentsEnabled ? [] : (["payments"] as const)),
+    ...(gates.visitSummariesEnabled && gates.preset === "clinic" ? [] : (["visit_summaries"] as const)),
+  ];
+}
 
 // The route's own ?page= value used to be cast straight to SettingsKey with
 // `as` — an unrecognized value (a typo, a stale link, a preset id someone
@@ -161,6 +183,20 @@ export function RowSelect({
   );
 }
 
+/* Multi-line sibling of RowInput — same w-full min-w-0/cap/sizing discipline,
+   just a <textarea> instead of an <input>. First real consumer is the
+   visit-summary consent notice (a free-text paragraph, not a short value),
+   which is why the default `cap` is generous rather than RowInput's 280. */
+export function RowTextarea({
+  cap = 9999, rows = 4, ...props
+}: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { cap?: number }) {
+  return (
+    <textarea {...props} rows={rows}
+      style={{ maxWidth: cap, ...props.style }}
+      className="w-full min-w-0 resize-y rounded-field border border-line-strong bg-surface px-[11px] py-2 text-body" />
+  );
+}
+
 /* Read-only value + inline action (email, currency). Wrapping flex, and
    the value gets `overflow-wrap: anywhere` because a long address will
    otherwise push the badge out of the card. */
@@ -203,10 +239,15 @@ export function ToggleRow({
   );
 }
 
-/* Segmented control for 2-3 short options (week start, % vs £). */
+/* Segmented control for 2-3 short options (week start, % vs £). `labels` is
+   optional display text keyed by option — added for the first real consumer
+   (visit-summary default language), whose stored values ("auto"/"nl"/"en")
+   aren't fit to show a merchant directly ("Detect automatically"/
+   "Nederlands"/"English" is). Omitting it keeps every option's raw value as
+   its own label, unchanged from before. */
 export function Segmented({
-  name, options, value,
-}: { name: string; options: string[]; value: string }) {
+  name, options, value, labels,
+}: { name: string; options: string[]; value: string; labels?: Record<string, string> }) {
   return (
     <div className="flex w-fit gap-[2px] rounded-[9px] bg-[#efecf4] p-[2px]">
       {options.map((o) => (
@@ -214,7 +255,7 @@ export function Segmented({
           o === value ? "bg-surface font-semibold shadow-card" : "font-medium text-muted"
         }`}>
           <input type="radio" name={name} value={o} defaultChecked={o === value} className="sr-only" />
-          {o}
+          {labels?.[o] ?? o}
         </label>
       ))}
     </div>

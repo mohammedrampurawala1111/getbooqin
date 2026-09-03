@@ -11,6 +11,7 @@
 import prisma from "../db.js";
 import { getPreset, PRESET_CONTROLLED_KEYS } from "./presets.js";
 import type { Settings } from "./settingsShared.js";
+import { PAYMENTS_ENABLED } from "./featureFlags.js";
 
 export type { Settings, GatewaySettings, VideoSettings } from "./settingsShared.js";
 export { term, money, gatewaySetting, videoSetting, template } from "./settingsShared.js";
@@ -22,6 +23,8 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
     business_name: shopDomain,
     business_email: adminEmail,
     business_phone: "",
+    business_description: "",
+    business_address: "",
     currency: "USD",
     currency_symbol: "$",
     timezone: "UTC",
@@ -77,8 +80,18 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
     onboarding_completed: false,
     channel_setup_skipped: false,
 
-    hidden_overview_cards: [],
+    // Every preset turned the Revenue & payment-status card on by default
+    // even though nothing on the account could ever be configured to
+    // populate it — Stripe wasn't even reachable (Defect Dossier's BQ-30
+    // finding). Only defaulted this way while the feature is genuinely
+    // unavailable; a shop can always re-enable it from the Business
+    // template's dashboard-layout picker once it connects a gateway.
+    hidden_overview_cards: PAYMENTS_ENABLED ? [] : ["revenue"],
     customized_fields: [],
+
+    visit_summaries_enabled: false,
+    visit_summary_default_language: "auto",
+    visit_summary_consent_line: "",
   };
 }
 

@@ -33,3 +33,8 @@ export * as FeatureFlags from "./booking/featureFlags.js";
 export { GetBooqinError, isGetBooqinError } from "./booking/errors.js";
 export { boot } from "./booking/boot.js";
 export * as ShopifyAdmin from "./platforms/shopifyAdmin.js";
+
+// Visit Summary (Clinic preset only) — see
+// docs/patient-summary-cloud-integration-plan.md.
+export * as ConsultationSummary from "./booking/consultationSummary.js";
+export * as PatientSummary from "./ai/patientSummary.js";

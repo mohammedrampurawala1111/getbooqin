@@ -14,6 +14,7 @@ import * as Data from "./data.js";
 import * as Bookings from "./bookings.js";
 import { manageUrl as waitlistManageUrl } from "./waitlist.js";
 import { getSettings, term, money, template as settingTemplate, type Settings } from "./settings.js";
+import { zoneAbbr } from "./tz.js";
 import events from "./events.js";
 import { GetBooqinError } from "./errors.js";
 
@@ -21,14 +22,34 @@ import { GetBooqinError } from "./errors.js";
  * Canonical list of every customizable notification. Drives the "Email
  * templates" section in Settings → Notifications.
  */
-export const TEMPLATE_DEFS: { key: string; group: string; label: string; description: string; subject: string; body: string }[] = [
+export type TemplateCapability = "chat" | "payments" | "visit_summary";
+
+export interface TemplateDef {
+  key: string;
+  group: string;
+  label: string;
+  description: string;
+  subject: string;
+  body: string;
+  // Declares the capability this message depends on — the filter in
+  // visibleTemplateDefs() below reads *only* this field, not the group or
+  // key name, so a future message that needs a capability the product
+  // doesn't have yet can't ship listed by mistake the way this one did:
+  // "Awaiting payment" lived in the "Booking received" group, not
+  // "Payment", so a filter keyed on group name silently missed it even
+  // after the sibling "Payment received" message was correctly gated
+  // (Defect Dossier's R3-02 finding).
+  requires?: TemplateCapability;
+}
+
+export const TEMPLATE_DEFS: TemplateDef[] = [
   {
     key: "customer_created",
     group: "Booking received",
     label: "Confirmed instantly",
     description: "Sent to the customer when their booking is auto-confirmed on request.",
     subject: "Your {{booking_term}} is confirmed — {{date}} at {{time}}",
-    body: "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} is confirmed.\n\nWhen: {{date}} at {{time}} {{timezone}}\nWith: {{resource}}\n\n{{meeting_line}}\n{{payment_line}}\n\nNeed to change it? Use this link:\n{{manage_url}}\n\nThanks,\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} is confirmed.\n\nWhen: {{date}} at {{time}} {{timezone}}\nWith: {{resource}}\n\n{{meeting_line}}\n{{payment_line}}\n{{summary_consent_line}}\n\nNeed to change it? Use this link:\n{{manage_url}}\n\nThanks,\n{{business_name}}",
   },
   {
     key: "customer_created_awaiting_payment",
@@ -37,6 +58,7 @@ export const TEMPLATE_DEFS: { key: string; group: string; label: string; descrip
     description: "Sent instead of the above when the service requires payment before it's confirmed.",
     subject: "Almost there — your {{booking_term}} on {{date}} needs payment",
     body: "Hi {{customer_name}},\n\nWe have reserved {{date}} at {{time}} {{timezone}} for your {{booking_term}} ({{service}} with {{resource}}).\n\nIt is not confirmed yet — we are waiting for payment.\n\n{{payment_line}}\n\nManage your {{booking_term}}:\n{{manage_url}}\n\nThanks,\n{{business_name}}",
+    requires: "payments",
   },
   {
     key: "customer_created_pending",
@@ -44,7 +66,7 @@ export const TEMPLATE_DEFS: { key: string; group: string; label: string; descrip
     label: "Awaiting manual confirmation",
     description: "Sent instead of the above when new bookings require the business to approve them first.",
     subject: "We received your {{booking_term}} request — {{date}} at {{time}}",
-    body: "Hi {{customer_name}},\n\nThanks — we have your request for {{service}} with {{resource}} on {{date}} at {{time}} {{timezone}}.\n\nIt is not confirmed yet. We will email you again as soon as it is approved.\n\n{{manage_url}}\n\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nThanks — we have your request for {{service}} with {{resource}} on {{date}} at {{time}} {{timezone}}.\n\nIt is not confirmed yet. We will email you again as soon as it is approved.\n\n{{summary_consent_line}}\n\n{{manage_url}}\n\n{{business_name}}",
   },
   {
     key: "admin_created",
@@ -52,7 +74,7 @@ export const TEMPLATE_DEFS: { key: string; group: string; label: string; descrip
     label: "Notify the business",
     description: "Sent to the business every time a new booking (of any status) comes in.",
     subject: "New {{booking_term}}: {{customer_name}} — {{date}} {{time}}",
-    body: "A new {{booking_term}} was made.\n\nService: {{service}}\nWith: {{resource}}\nWhen: {{date}} at {{time}}\n\nName: {{customer_name}}\nEmail: {{customer_email}}\nPhone: {{customer_phone}}\nNotes: {{notes}}\nSource: {{source}}",
+    body: "A new {{booking_term}} was made.\n\nService: {{service}}\nWith: {{resource}}\nWhen: {{date}} at {{time}} {{timezone}}\n\nName: {{customer_name}}\nEmail: {{customer_email}}\nPhone: {{customer_phone}}\nNotes: {{notes}}\nSource: {{source}}",
   },
   {
     key: "customer_confirmed",
@@ -68,7 +90,7 @@ export const TEMPLATE_DEFS: { key: string; group: string; label: string; descrip
     label: "Request declined",
     description: "Sent to the customer when the business declines their pending request.",
     subject: "We can't confirm your {{booking_term}} request for {{date}}",
-    body: "Hi {{customer_name}},\n\nUnfortunately we are not able to confirm your {{booking_term}} request for {{service}} on {{date}} at {{time}}.\n\n{{decline_reason_line}}\n\nFeel free to request another time on our website.\n\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nUnfortunately we are not able to confirm your {{booking_term}} request for {{service}} on {{date}} at {{time}} {{timezone}}.\n\n{{decline_reason_line}}\n\nFeel free to request another time on our website.\n\n{{business_name}}",
   },
   {
     key: "customer_cancelled",
@@ -76,7 +98,7 @@ export const TEMPLATE_DEFS: { key: string; group: string; label: string; descrip
     label: "Notify the customer",
     description: "Sent to the customer when their booking is cancelled.",
     subject: "Your {{booking_term}} on {{date}} was cancelled",
-    body: "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} on {{date}} at {{time}} has been cancelled.\n\nYou can book a new time any time on our website.\n\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} on {{date}} at {{time}} {{timezone}} has been cancelled.\n\nYou can book a new time any time on our website.\n\n{{business_name}}",
   },
   {
     key: "admin_cancelled",
@@ -84,7 +106,7 @@ export const TEMPLATE_DEFS: { key: string; group: string; label: string; descrip
     label: "Notify the business",
     description: "Sent to the business when a booking is cancelled.",
     subject: "Cancelled: {{customer_name}} — {{date}} {{time}}",
-    body: "{{customer_name}} cancelled their {{booking_term}} for {{service}} on {{date}} at {{time}}.",
+    body: "{{customer_name}} cancelled their {{booking_term}} for {{service}} on {{date}} at {{time}} {{timezone}}.",
   },
   {
     key: "customer_paid",
@@ -92,7 +114,8 @@ export const TEMPLATE_DEFS: { key: string; group: string; label: string; descrip
     label: "Payment received",
     description: "Sent to the customer once their payment for a booking is confirmed.",
     subject: "Payment received for {{date}} at {{time}}",
-    body: "Hi {{customer_name}},\n\nThanks — we have received {{amount_due}} for your {{booking_term}} on {{date}} at {{time}}.\n\n{{meeting_line}}\n\n{{manage_url}}\n\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nThanks — we have received {{amount_due}} for your {{booking_term}} on {{date}} at {{time}} {{timezone}}.\n\n{{meeting_line}}\n\n{{manage_url}}\n\n{{business_name}}",
+    requires: "payments",
   },
   {
     key: "customer_moved",
@@ -100,7 +123,7 @@ export const TEMPLATE_DEFS: { key: string; group: string; label: string; descrip
     label: "Time changed",
     description: "Sent to the customer when their booking is moved to a new date or time.",
     subject: "Your {{booking_term}} has moved to {{date}} at {{time}}",
-    body: "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} has been rescheduled.\n\nNew time: {{date}} at {{time}}\nWith: {{resource}}\n\n{{manage_url}}\n\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} has been rescheduled.\n\nNew time: {{date}} at {{time}} {{timezone}}\nWith: {{resource}}\n\n{{manage_url}}\n\n{{business_name}}",
   },
   {
     key: "customer_reminder",
@@ -108,7 +131,7 @@ export const TEMPLATE_DEFS: { key: string; group: string; label: string; descrip
     label: "Upcoming booking reminder",
     description: "Sent to customers ahead of their appointment — see the reminder timing setting above.",
     subject: "Reminder: {{service}} on {{date}} at {{time}}",
-    body: "Hi {{customer_name}},\n\nThis is a reminder for your {{booking_term}}:\n\n{{service}} with {{resource}}\n{{date}} at {{time}}\n\n{{meeting_line}}\n\n{{manage_url}}\n\nSee you soon,\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nThis is a reminder for your {{booking_term}}:\n\n{{service}} with {{resource}}\n{{date}} at {{time}} {{timezone}}\n\n{{meeting_line}}\n\n{{manage_url}}\n\nSee you soon,\n{{business_name}}",
   },
   {
     key: "waitlist_joined",
@@ -132,7 +155,7 @@ export const TEMPLATE_DEFS: { key: string; group: string; label: string; descrip
     label: "Waitlist offer expired",
     description: "Sent when a customer doesn't claim their offered slot in time.",
     subject: "Your offer for {{date}} at {{time}} has expired",
-    body: "Hi {{customer_name}},\n\nYour offer for {{service}} on {{date}} at {{time}} wasn't claimed in time, so we've offered it to the next person on our list.\n\nYou're still on the waitlist — we'll let you know if another time opens up.\n\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nYour offer for {{service}} on {{date}} at {{time}} {{timezone}} wasn't claimed in time, so we've offered it to the next person on our list.\n\nYou're still on the waitlist — we'll let you know if another time opens up.\n\n{{business_name}}",
   },
   {
     key: "admin_chat_lead",
@@ -141,8 +164,37 @@ export const TEMPLATE_DEFS: { key: string; group: string; label: string; descrip
     description: "Sent to the business when a visitor leaves a message through the storefront chat widget.",
     subject: "New chat message from {{lead_name}}",
     body: "You received a new message through the website chat.\n\nName: {{lead_name}}\nEmail: {{lead_email}}\n\nMessage:\n{{lead_message}}\n\nPage: {{lead_page}}",
+    requires: "chat",
+  },
+  {
+    key: "customer_visit_summary",
+    group: "Visit summary",
+    label: "Visit summary ready",
+    description: "Sent to the patient once their visit summary has been reviewed, approved, and sent by the clinician. Clinic preset only — the email itself carries no clinical detail, only a link to the summary.",
+    subject: "Your visit summary from {{business_name}} is ready",
+    body: "Hi {{customer_name}},\n\nThe summary from your {{booking_term}} on {{date}} is ready for you to view.\n\n{{summary_url}}\n\nIf you have any questions about it, please contact us directly.\n\n{{business_name}}",
+    requires: "visit_summary",
   },
 ];
+
+/**
+ * The subset of TEMPLATE_DEFS whose required capability (see `requires`
+ * above) is actually available right now. This is the single place that
+ * decides visibility — Settings > Notifications renders exactly this list,
+ * so a message for an unbuilt or unconnected capability (payments not
+ * connected, no chat widget, visit summaries off) can't be listed by
+ * mistake the way "Awaiting payment" and the chat-widget section both were
+ * (Defect Dossier's R3-02 finding — the previous filter checked template
+ * keys and group names by hand and missed one).
+ */
+export function visibleTemplateDefs(caps: { chat: boolean; payments: boolean; visitSummary: boolean }): TemplateDef[] {
+  return TEMPLATE_DEFS.filter((def) => {
+    if (def.requires === "chat") return caps.chat;
+    if (def.requires === "payments") return caps.payments;
+    if (def.requires === "visit_summary") return caps.visitSummary;
+    return true;
+  });
+}
 
 /** Per-template on/off switch, separate from the blanket notify_customer/notify_admin toggles. */
 function templateEnabled(settings: Settings, key: string): boolean {
@@ -207,6 +259,12 @@ export async function tokens(shop: string, booking: Booking, settings: Settings)
     "{{customer_email}}": customer?.email ?? "",
     "{{customer_phone}}": customer?.phone ?? "",
     "{{manage_url}}": Bookings.manageUrl(booking, settings),
+    "{{summary_url}}": Bookings.summaryUrl(booking, settings),
+    // Optional, off by default (Settings > Visit summaries > Consultation
+    // consent notice) — see the integration plan's Part 3 §6. Empty when
+    // unset, same "resolves to ''" convention as payment_line/meeting_line
+    // below, rather than a new conditional-token mechanism.
+    "{{summary_consent_line}}": settings.visit_summary_consent_line || "",
     "{{meeting_url}}": booking.meetingUrl,
     "{{meeting_line}}": booking.meetingUrl ? `Join the video call here: ${booking.meetingUrl}` : "",
     "{{amount_due}}": booking.amountDue > 0 ? money(settings, booking.amountDue) : "",
@@ -218,6 +276,58 @@ export async function tokens(shop: string, booking: Booking, settings: Settings)
     "{{addons_summary}}": addonsSummary,
   };
 }
+
+/**
+ * Sample data for Settings > Notifications' "Preview" (Defect Dossier's
+ * BQ-34 finding, item 2) — no real booking exists to render against there,
+ * so this fabricates a plausible one instead of touching the database.
+ * Covers every token any TEMPLATE_DEFS subject/body uses.
+ */
+export function previewTokens(settings: Settings): Record<string, string> {
+  const sampleDate = DateTime.now().setZone(settings.timezone).plus({ days: 2 }).set({ hour: 10, minute: 0 });
+  const expiresAt = DateTime.now().setZone(settings.timezone).plus({ hours: 2 });
+  const manageUrl = `${settings.booking_page_url}?getbooqin_booking=sample`;
+  return {
+    "{{business_name}}": settings.business_name || "Your business",
+    "{{booking_term}}": term(settings, "booking_single").toLowerCase(),
+    "{{service}}": `Example ${term(settings, "service_single").toLowerCase()}`,
+    "{{resource}}": "Jamie Rivera",
+    "{{date}}": sampleDate.toFormat("d LLL yyyy"),
+    "{{time}}": sampleDate.toFormat("HH:mm"),
+    "{{status}}": "confirmed",
+    "{{timezone}}": zoneAbbr(sampleDate.toJSDate(), settings.timezone),
+    "{{price}}": money(settings, 45),
+    "{{amount_due}}": money(settings, 45),
+    "{{notes}}": "Please arrive 10 minutes early.",
+    "{{source}}": "form",
+    "{{customer_name}}": "Jordan Lee",
+    "{{customer_email}}": "jordan@example.com",
+    "{{customer_phone}}": "+1 555 0100",
+    "{{manage_url}}": manageUrl,
+    "{{summary_url}}": `${settings.booking_page_url}?getbooqin_summary=sample`,
+    "{{summary_consent_line}}": settings.visit_summary_consent_line || "",
+    "{{meeting_url}}": "https://meet.example.com/sample",
+    "{{meeting_line}}": "Join the video call here: https://meet.example.com/sample",
+    "{{payment_status}}": "unpaid",
+    "{{payment_line}}": `Outstanding: ${money(settings, 45)}. You can pay here: ${manageUrl}`,
+    "{{decline_reason_line}}": "Reason: Fully booked that day.",
+    "{{addons_summary}}": `Add-ons: Extra 15 minutes (${money(settings, 10)})`,
+    "{{expires_at}}": expiresAt.toFormat("HH:mm"),
+    "{{claim_url}}": `${settings.booking_page_url}?getbooqin_claim=sample`,
+    "{{leave_url}}": `${settings.booking_page_url}?getbooqin_leave=sample`,
+    "{{lead_name}}": "Jordan Lee",
+    "{{lead_email}}": "jordan@example.com",
+    "{{lead_message}}": "Do you have anything available this Friday afternoon?",
+    "{{lead_page}}": settings.booking_page_url,
+  };
+}
+
+/** Public wrapper for the settings UI's preview — same substitution the real send path uses. */
+export function renderTemplate(text: string, sampleTokens: Record<string, string>): string {
+  return replace(text, sampleTokens);
+}
+
+export { templateEnabled };
 
 function parseCustomFields(raw: string | null): Record<string, string> {
   if (!raw) return {};
@@ -266,7 +376,7 @@ function createdCopy(booking: Booking) {
     return {
       key: "customer_created",
       subject: "Your {{booking_term}} is confirmed — {{date}} at {{time}}",
-      body: "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} is confirmed.\n\nWhen: {{date}} at {{time}} {{timezone}}\nWith: {{resource}}\n\n{{meeting_line}}\n{{payment_line}}\n\nNeed to change it? Use this link:\n{{manage_url}}\n\nThanks,\n{{business_name}}",
+      body: "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} is confirmed.\n\nWhen: {{date}} at {{time}} {{timezone}}\nWith: {{resource}}\n\n{{meeting_line}}\n{{payment_line}}\n{{summary_consent_line}}\n\nNeed to change it? Use this link:\n{{manage_url}}\n\nThanks,\n{{business_name}}",
     };
   }
   if (Bookings.needsPayment(booking)) {
@@ -279,7 +389,7 @@ function createdCopy(booking: Booking) {
   return {
     key: "customer_created_pending",
     subject: "We received your {{booking_term}} request — {{date}} at {{time}}",
-    body: "Hi {{customer_name}},\n\nThanks — we have your request for {{service}} with {{resource}} on {{date}} at {{time}} {{timezone}}.\n\nIt is not confirmed yet. We will email you again as soon as it is approved.\n\n{{manage_url}}\n\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nThanks — we have your request for {{service}} with {{resource}} on {{date}} at {{time}} {{timezone}}.\n\nIt is not confirmed yet. We will email you again as soon as it is approved.\n\n{{summary_consent_line}}\n\n{{manage_url}}\n\n{{business_name}}",
   };
 }
 
@@ -296,6 +406,42 @@ export async function resendConfirmation(shop: string, platform: string, booking
     settings,
     settingTemplate(settings, `${copy.key}_subject`, copy.subject),
     settingTemplate(settings, `${copy.key}_body`, copy.body)
+  );
+}
+
+/**
+ * Sends the "your visit summary is ready" notification (Clinic preset only
+ * — see the integration plan's Part 3 §5). The email itself is a
+ * notification, not the content — it links to the tokened patient-facing
+ * page (`{{summary_url}}`, built from the booking's uid, same trust model
+ * as `{{manage_url}}`) rather than rendering any summary field here.
+ *
+ * Called explicitly from ConsultationSummary.send(), not wired through the
+ * booking event bus — this is a one-off clinician action ("Send to
+ * patient"), not an automatic booking-lifecycle notification, so — like
+ * resendConfirmation above — it ignores the blanket notify_customer
+ * toggle and only respects the per-template on/off switch.
+ */
+export async function sendVisitSummary(shop: string, platform: string, bookingId: number): Promise<void> {
+  const booking = await Bookings.get(shop, bookingId);
+  if (!booking) throw new GetBooqinError("getbooqin_not_found", "Booking not found.", 404);
+
+  const settings = await getSettings(shop, platform);
+  if (!templateEnabled(settings, "customer_visit_summary")) {
+    console.log(`[getbooqin mailer] visit summary email skipped for booking ${booking.uid} — template "customer_visit_summary" disabled`);
+    return;
+  }
+
+  await sendToCustomer(
+    shop,
+    booking,
+    settings,
+    settingTemplate(settings, "customer_visit_summary_subject", "Your visit summary from {{business_name}} is ready"),
+    settingTemplate(
+      settings,
+      "customer_visit_summary_body",
+      "Hi {{customer_name}},\n\nThe summary from your {{booking_term}} on {{date}} is ready for you to view.\n\n{{summary_url}}\n\nIf you have any questions about it, please contact us directly.\n\n{{business_name}}"
+    )
   );
 }
 
@@ -330,7 +476,7 @@ async function onCreated(booking: Booking) {
       settingTemplate(
         settings,
         "admin_created_body",
-        "A new {{booking_term}} was made.\n\nService: {{service}}\nWith: {{resource}}\nWhen: {{date}} at {{time}}\n\nName: {{customer_name}}\nEmail: {{customer_email}}\nPhone: {{customer_phone}}\nNotes: {{notes}}\nSource: {{source}}"
+        "A new {{booking_term}} was made.\n\nService: {{service}}\nWith: {{resource}}\nWhen: {{date}} at {{time}} {{timezone}}\n\nName: {{customer_name}}\nEmail: {{customer_email}}\nPhone: {{customer_phone}}\nNotes: {{notes}}\nSource: {{source}}"
       )
     );
   }
@@ -365,7 +511,7 @@ async function onStatusChanged(booking: Booking, oldStatus: string, newStatus: s
       settingTemplate(
         settings,
         "customer_declined_body",
-        "Hi {{customer_name}},\n\nUnfortunately we are not able to confirm your {{booking_term}} request for {{service}} on {{date}} at {{time}}.\n\n{{decline_reason_line}}\n\nFeel free to request another time on our website.\n\n{{business_name}}"
+        "Hi {{customer_name}},\n\nUnfortunately we are not able to confirm your {{booking_term}} request for {{service}} on {{date}} at {{time}} {{timezone}}.\n\n{{decline_reason_line}}\n\nFeel free to request another time on our website.\n\n{{business_name}}"
       )
     );
   }
@@ -382,7 +528,7 @@ async function onCancelled(booking: Booking, _reason: string) {
       settingTemplate(
         settings,
         "customer_cancelled_body",
-        "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} on {{date}} at {{time}} has been cancelled.\n\nYou can book a new time any time on our website.\n\n{{business_name}}"
+        "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} on {{date}} at {{time}} {{timezone}} has been cancelled.\n\nYou can book a new time any time on our website.\n\n{{business_name}}"
       )
     );
   }
@@ -392,7 +538,7 @@ async function onCancelled(booking: Booking, _reason: string) {
       booking,
       settings,
       settingTemplate(settings, "admin_cancelled_subject", "Cancelled: {{customer_name}} — {{date}} {{time}}"),
-      settingTemplate(settings, "admin_cancelled_body", "{{customer_name}} cancelled their {{booking_term}} for {{service}} on {{date}} at {{time}}.")
+      settingTemplate(settings, "admin_cancelled_body", "{{customer_name}} cancelled their {{booking_term}} for {{service}} on {{date}} at {{time}} {{timezone}}.")
     );
   }
 }
@@ -408,7 +554,7 @@ async function onPaymentCompleted(booking: Booking) {
     settingTemplate(
       settings,
       "customer_paid_body",
-      "Hi {{customer_name}},\n\nThanks — we have received {{amount_due}} for your {{booking_term}} on {{date}} at {{time}}.\n\n{{meeting_line}}\n\n{{manage_url}}\n\n{{business_name}}"
+      "Hi {{customer_name}},\n\nThanks — we have received {{amount_due}} for your {{booking_term}} on {{date}} at {{time}} {{timezone}}.\n\n{{meeting_line}}\n\n{{manage_url}}\n\n{{business_name}}"
     )
   );
 }
@@ -424,7 +570,7 @@ async function onRescheduled(booking: Booking) {
     settingTemplate(
       settings,
       "customer_moved_body",
-      "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} has been rescheduled.\n\nNew time: {{date}} at {{time}}\nWith: {{resource}}\n\n{{manage_url}}\n\n{{business_name}}"
+      "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} has been rescheduled.\n\nNew time: {{date}} at {{time}} {{timezone}}\nWith: {{resource}}\n\n{{manage_url}}\n\n{{business_name}}"
     )
   );
 }
@@ -458,7 +604,7 @@ export async function sendReminders(): Promise<{ sent: number }> {
         settingTemplate(
           settings,
           "customer_reminder_body",
-          "Hi {{customer_name}},\n\nThis is a reminder for your {{booking_term}}:\n\n{{service}} with {{resource}}\n{{date}} at {{time}}\n\n{{meeting_line}}\n\n{{manage_url}}\n\nSee you soon,\n{{business_name}}"
+          "Hi {{customer_name}},\n\nThis is a reminder for your {{booking_term}}:\n\n{{service}} with {{resource}}\n{{date}} at {{time}} {{timezone}}\n\n{{meeting_line}}\n\n{{manage_url}}\n\nSee you soon,\n{{business_name}}"
         )
       );
 
@@ -613,7 +759,7 @@ async function onWaitlistExpired(entry: Waitlist) {
     settingTemplate(
       settings,
       "waitlist_expired_body",
-      "Hi {{customer_name}},\n\nYour offer for {{service}} on {{date}} at {{time}} wasn't claimed in time, so we've offered it to the next person on our list.\n\nYou're still on the waitlist — we'll let you know if another time opens up.\n\n{{business_name}}"
+      "Hi {{customer_name}},\n\nYour offer for {{service}} on {{date}} at {{time}} {{timezone}} wasn't claimed in time, so we've offered it to the next person on our list.\n\nYou're still on the waitlist — we'll let you know if another time opens up.\n\n{{business_name}}"
     )
   );
 }

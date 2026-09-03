@@ -7,10 +7,12 @@ import { DateTime } from "luxon";
 import type { Booking } from "@prisma/client";
 import prisma from "../db.js";
 import * as Data from "./data.js";
+import type { CatalogService } from "./data.js";
 import * as Availability from "./availability.js";
 import * as PaymentManager from "./paymentManager.js";
 import { getSettings, type Settings } from "./settings.js";
 import { term, money } from "./settingsShared.js";
+import { zoneAbbr } from "./tz.js";
 import { uid, now } from "./ids.js";
 import { GetBooqinError } from "./errors.js";
 import events from "./events.js";
@@ -69,6 +71,18 @@ export interface CreateBookingArgs {
   custom_fields?: Record<string, unknown>;
   addon_ids?: number[];
   source?: "form" | "chat" | "waitlist";
+  /** Merchant's explicit "book outside business hours anyway" — see assertSlotBookable's own doc. Never set from the public form. */
+  override?: boolean;
+  /**
+   * A staff member typing in their own walk-in/phone booking is entering
+   * data they already trust, not a stranger's request — auto_confirm's
+   * approval gate exists to triage *public* requests, so a manually-created
+   * booking defaults to confirmed regardless of that rule, with Pending
+   * still available for a genuinely provisional hold (Defect Dossier's
+   * BQ-27 finding). Never set from the public form, which must keep going
+   * through the normal needsPayment/auto_confirm decision below.
+   */
+  force_status?: "pending" | "confirmed";
 }
 
 export async function create(shop: string, platform: string, shopTimezone: string, args: CreateBookingArgs): Promise<Booking> {
@@ -109,6 +123,13 @@ export async function create(shop: string, platform: string, shopTimezone: strin
   let endUtc: DateTime | null = null;
   let tzName = shopTimezone;
   let offGrid = false;
+  // The specific reason the last candidate was rejected for — surfaced
+  // instead of a generic "just taken" when nothing else works out, so
+  // "closed that day"/"outside hours"/"inside your notice window" reach the
+  // caller the same way reschedule()'s single-candidate path already does
+  // (Defect Dossier's BQ-03 finding: Add-consultation and the public form
+  // both used to report every non-off-grid rejection as "just taken").
+  let lastReason: GetBooqinError | null = null;
 
   for (const resource of candidates) {
     const tz = Availability.businessTz(shopTimezone, resource);
@@ -116,23 +137,29 @@ export async function create(shop: string, platform: string, shopTimezone: strin
     if (!start) continue;
     const end = start.plus({ minutes: service.durationMin + addonDurationMin });
 
-    const sUtc = start.toUTC();
-    const eUtc = end.toUTC();
+    try {
+      await assertSlotBookable(shop, settings, { resourceId: resource.id, service, start, end, override: args.override });
+    } catch (err) {
+      if (err instanceof GetBooqinError) lastReason = err;
+      continue;
+    }
 
-    if (!withinBookingWindow(sUtc, settings)) continue;
-    if (!(await matchesSchedule(shop, resource.id, start, end))) continue;
-    if (!(await slotIsPublished(shop, platform, shopTimezone, args.service_id, resource.id, args.date, args.time, 0, addonDurationMin))) {
+    // The published slot grid is itself generated from business hours, so
+    // an out-of-hours override booking can never be "on the grid" by
+    // definition — override means skip this check too, not just the
+    // business-hours one, or every overridden booking would dead-end here
+    // as "not one of the available slots" instead of actually going through.
+    if (!args.override && !(await slotIsPublished(shop, platform, shopTimezone, args.service_id, resource.id, args.date, args.time, 0, addonDurationMin))) {
       offGrid = true;
       continue;
     }
-    if (await Availability.isFree(shop, resource.id, sUtc, eUtc, service)) {
-      chosen = resource;
-      startUtc = sUtc;
-      endUtc = eUtc;
-      tzName = tz;
-      offGrid = false;
-      break;
-    }
+
+    chosen = resource;
+    startUtc = start.toUTC();
+    endUtc = end.toUTC();
+    tzName = tz;
+    offGrid = false;
+    break;
   }
 
   if (!chosen || !startUtc || !endUtc) {
@@ -143,6 +170,7 @@ export async function create(shop: string, platform: string, shopTimezone: strin
         400
       );
     }
+    if (lastReason) throw lastReason;
     throw new GetBooqinError("getbooqin_slot_taken", "Sorry, that time was just taken. Please pick another slot.", 409);
   }
 
@@ -162,7 +190,9 @@ export async function create(shop: string, platform: string, shopTimezone: strin
       ? "unpaid"
       : "not_required";
 
-  const status: BookingStatus = needsPayment ? "pending" : settings.auto_confirm ? "confirmed" : "pending";
+  const status: BookingStatus = needsPayment
+    ? "pending"
+    : args.force_status ?? (settings.auto_confirm ? "confirmed" : "pending");
 
   const created = await prisma.booking.create({
     data: {
@@ -214,7 +244,7 @@ function withinBookingWindow(startUtc: DateTime, settings: Settings): boolean {
   return startUtc >= earliest && startUtc <= latest;
 }
 
-async function matchesSchedule(shop: string, resourceId: number, start: DateTime, end: DateTime): Promise<boolean> {
+export async function matchesSchedule(shop: string, resourceId: number, start: DateTime, end: DateTime): Promise<boolean> {
   const dow = start.weekday % 7;
   const count = await prisma.schedule.count({
     where: {
@@ -226,6 +256,73 @@ async function matchesSchedule(shop: string, resourceId: number, start: DateTime
     },
   });
   return count > 0;
+}
+
+export interface SlotCheckArgs {
+  resourceId: number;
+  service: CatalogService;
+  /** Business-tz-local (not UTC) — matchesSchedule needs the resource's own weekday/HH:mm. */
+  start: DateTime;
+  end: DateTime;
+  excludeBookingId?: number;
+  /**
+   * Skips the business-hours/notice/advance-window checks (only) — a
+   * merchant's own explicit "book outside business hours anyway" call.
+   * Time-off and double-booking are never overridable: those aren't policy,
+   * they're "this literally can't happen" — either the resource is already
+   * marked unavailable, or another booking already occupies the slot.
+   */
+  override?: boolean;
+}
+
+/**
+ * The one place every write path checks whether a slot can actually be
+ * booked: business hours, the notice/advance-booking window, time off, and
+ * double-booking. `create()`'s per-resource-candidate loop already chained
+ * these inline; reschedule() used to skip straight to the double-booking
+ * check alone, which is how a reschedule to a closed Sunday night used to
+ * succeed silently (UX audit's #1 finding — the whole reason this function
+ * exists as one place instead of four).
+ */
+export async function assertSlotBookable(shop: string, settings: Settings, args: SlotCheckArgs): Promise<void> {
+  const { resourceId, service, start, end, excludeBookingId = 0, override = false } = args;
+  const startUtc = start.toUTC();
+  const endUtc = end.toUTC();
+
+  if (!override) {
+    if (!withinBookingWindow(startUtc, settings)) {
+      const nowUtc = DateTime.utc();
+      const earliest = nowUtc.plus({ hours: Math.max(0, settings.min_notice_hours) });
+      if (startUtc < earliest) {
+        throw new GetBooqinError(
+          "getbooqin_too_soon",
+          `That time is inside the ${settings.min_notice_hours}-hour minimum-notice window.`,
+          400
+        );
+      }
+      throw new GetBooqinError(
+        "getbooqin_too_far",
+        `That date is more than ${settings.max_advance_days} days away — beyond the advance-booking window.`,
+        400
+      );
+    }
+
+    if (!(await matchesSchedule(shop, resourceId, start, end))) {
+      const dow = start.weekday % 7;
+      const dayRows = await prisma.schedule.count({ where: { shop, resourceId, dayOfWeek: dow } });
+      if (dayRows === 0) {
+        throw new GetBooqinError("getbooqin_closed_day", "The business is closed that day.", 400);
+      }
+      throw new GetBooqinError("getbooqin_outside_hours", "That time is outside business hours.", 400);
+    }
+  }
+
+  if (await Availability.isBlockedByTimeOff(shop, resourceId, startUtc, endUtc, service)) {
+    throw new GetBooqinError("getbooqin_time_off", "That time is blocked off (time off).", 409);
+  }
+  if (await Availability.hasBookingConflict(shop, resourceId, startUtc, endUtc, service, excludeBookingId)) {
+    throw new GetBooqinError("getbooqin_slot_taken", "That slot is already booked.", 409);
+  }
 }
 
 export function get(shop: string, id: number) {
@@ -250,6 +347,23 @@ export async function setStatus(shop: string, id: number, newStatus: string, rea
     throw new GetBooqinError(
       "getbooqin_bad_transition",
       `Cannot move a booking from ${current} to ${newStatus}.`,
+      400
+    );
+  }
+
+  // Completed/no-show describe how the appointment actually went, so
+  // neither means anything before it has even started — a five-day-out
+  // booking could be declared "completed" as the visually recommended
+  // action (Defect Dossier's BQ-26 finding). Enforced here, not only in the
+  // dashboard's button state, since this is a business rule, not a UI nicety.
+  if (
+    current !== newStatus &&
+    (newStatus === "completed" || newStatus === "no_show") &&
+    booking.startUtc > now()
+  ) {
+    throw new GetBooqinError(
+      "getbooqin_not_started",
+      `This booking can't be marked ${newStatus === "no_show" ? "no-show" : newStatus} before it starts.`,
       400
     );
   }
@@ -328,6 +442,54 @@ export async function assertNoSlotConflict(shop: string, booking: Booking): Prom
   }
 }
 
+export interface ScheduleConflict {
+  ok: boolean;
+  reasons: string[];
+}
+
+/**
+ * Read-only report of whether an *existing* booking currently violates its
+ * own business's rules — closed day, outside hours, a time-off block, an
+ * overlap with another booking, or a service/resource that's since gone
+ * inactive. Nothing composed these checks against a stored booking before;
+ * the closest thing (assertNoSlotConflict above) only checks time-off/
+ * overlap, only runs on one specific status transition, and throws instead
+ * of reporting — a booking could sit outside opening hours (from a seed
+ * script, an import, or opening hours changing after the fact) with
+ * nothing anywhere flagging it (Defect Dossier's BQ-07 finding). Only
+ * meaningful for a booking that's actually occupying a slot; anything else
+ * (cancelled, declined, completed, no_show) always reports ok.
+ */
+export async function scheduleConflict(shop: string, booking: Booking): Promise<ScheduleConflict> {
+  if (!OCCUPYING.includes(booking.status as BookingStatus)) return { ok: true, reasons: [] };
+
+  const reasons: string[] = [];
+  const [service, resource] = await Promise.all([Data.catalogService(shop, booking.serviceId), Data.resource(shop, booking.resourceId)]);
+  if (!service || !service.status) reasons.push("The service for this booking no longer exists or is inactive.");
+  if (!resource || !resource.status) reasons.push("The resource for this booking no longer exists or is inactive.");
+  if (!service || !resource) return { ok: false, reasons };
+
+  const tz = booking.timezone || "UTC";
+  const localStart = DateTime.fromJSDate(booking.startUtc, { zone: "utc" }).setZone(tz);
+  const localEnd = DateTime.fromJSDate(booking.endUtc, { zone: "utc" }).setZone(tz);
+  if (!(await matchesSchedule(shop, booking.resourceId, localStart, localEnd))) {
+    const dow = localStart.weekday % 7;
+    const dayRows = await prisma.schedule.count({ where: { shop, resourceId: booking.resourceId, dayOfWeek: dow } });
+    reasons.push(dayRows === 0 ? "The business is closed that day." : "This time is outside business hours.");
+  }
+
+  const startUtc = DateTime.fromJSDate(booking.startUtc, { zone: "utc" });
+  const endUtc = DateTime.fromJSDate(booking.endUtc, { zone: "utc" });
+  if (await Availability.isBlockedByTimeOff(shop, booking.resourceId, startUtc, endUtc, service)) {
+    reasons.push("This time falls inside a time-off block.");
+  }
+  if (await Availability.hasBookingConflict(shop, booking.resourceId, startUtc, endUtc, service, booking.id)) {
+    reasons.push("This overlaps another booking for the same resource.");
+  }
+
+  return { ok: reasons.length === 0, reasons };
+}
+
 /** Can the customer still cancel this themselves? */
 export function customerCanCancel(booking: Booking, settings: Settings): boolean {
   if (!settings.allow_cancel) return false;
@@ -352,7 +514,8 @@ export async function reschedule(
   id: number,
   date: string,
   time: string,
-  resourceIdInput = 0
+  resourceIdInput = 0,
+  opts: { override?: boolean } = {}
 ): Promise<Booking> {
   const booking = await get(shop, id);
   if (!booking) throw new GetBooqinError("getbooqin_not_found", "Booking not found.", 404);
@@ -373,9 +536,15 @@ export async function reschedule(
   const sUtc = start.toUTC();
   const eUtc = end.toUTC();
 
-  if (!(await Availability.isFree(shop, resourceId, sUtc, eUtc, service, id))) {
-    throw new GetBooqinError("getbooqin_slot_taken", "That slot is not available.", 409);
-  }
+  const settings = await getSettings(shop, platform);
+  await assertSlotBookable(shop, settings, {
+    resourceId,
+    service,
+    start,
+    end,
+    excludeBookingId: id,
+    override: opts.override,
+  });
 
   const previous = booking;
   const updated = await prisma.booking.update({
@@ -465,6 +634,30 @@ export async function query(shop: string, platform: string, args: QueryArgs = {}
   });
 }
 
+/**
+ * Real interval-overlap query (startUtc < end AND endUtc > start), unlike
+ * query()'s from/to which only filter on startUtc falling inside the range
+ * — a booking already in progress when a block starts wouldn't match that.
+ * resourceId 0 means "any resource" (a whole-business time-off block
+ * affects every resource, the same OR convention isBlockedByTimeOff uses).
+ * Used to warn before a time-off save silently strands existing bookings
+ * inside it (Defect Dossier's BQ-08 finding).
+ */
+export async function occupyingBetween(shop: string, platform: string, resourceId: number, start: Date, end: Date) {
+  return prisma.booking.findMany({
+    where: {
+      shop,
+      platform,
+      ...(resourceId ? { resourceId } : {}),
+      status: { in: OCCUPYING },
+      startUtc: { lt: end },
+      endUtc: { gt: start },
+    },
+    include: { service: true, resource: true, customer: true },
+    orderBy: { startUtc: "asc" },
+  });
+}
+
 export async function queryCount(shop: string, platform: string, args: QueryArgs = {}) {
   return prisma.booking.count({
     where: {
@@ -522,11 +715,18 @@ export function localTime(booking: Booking, shopTimezone: string): string {
     .toFormat("h:mm a");
 }
 
-/** Short timezone label (IST, GMT+5:30) — empty when it matches the shop timezone. */
+/**
+ * Short timezone abbreviation (CEST, PST, IST, ...) for this booking's own
+ * display zone. Used to always return "" whenever that zone matched the
+ * shop's default — several email templates then simply never included the
+ * {{timezone}} token at all, so a customer reading "10:00" had no way to
+ * know which zone that was in even the common case (UX audit's #3
+ * finding). Always resolving one, the same way formatInZone does for the
+ * dashboard, means a template that includes the token is never silently
+ * blank.
+ */
 export function localTzLabel(booking: Booking, shopTimezone: string): string {
-  const tz = displayTz(booking, shopTimezone);
-  if (tz === shopTimezone) return "";
-  return DateTime.fromJSDate(booking.startUtc, { zone: "utc" }).setZone(tz).toFormat("z");
+  return zoneAbbr(booking.startUtc, displayTz(booking, shopTimezone));
 }
 
 export function needsPayment(booking: Booking): boolean {
@@ -539,6 +739,19 @@ export function manageUrl(booking: Booking, settings: Settings): string {
   const base = settings.booking_page_url || "/";
   const separator = base.includes("?") ? "&" : "?";
   return `${base}${separator}getbooqin_booking=${booking.uid}`;
+}
+
+/**
+ * Same convention as manageUrl, for the Visit Summary patient-facing page
+ * (Clinic preset only — see docs/patient-summary-cloud-integration-plan.md
+ * Part 3 §5). Same no-login trust model, keyed off the booking's uid rather
+ * than a ConsultationSummary id, since the tokened page always renders
+ * whatever the latest sent revision for this booking is.
+ */
+export function summaryUrl(booking: Booking, settings: Settings): string {
+  const base = settings.booking_page_url || "/";
+  const separator = base.includes("?") ? "&" : "?";
+  return `${base}${separator}getbooqin_summary=${booking.uid}`;
 }
 
 export function bookingTerm(settings: Settings): string {
