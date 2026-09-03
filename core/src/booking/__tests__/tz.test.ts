@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
-import { wallClockToUtc, formatInZone } from "../tz.js";
+import { wallClockToUtc, formatInZone, zoneAbbr } from "../tz.js";
 
 function roundTrips(localValue: string, zone: string) {
   const utc = wallClockToUtc(localValue, zone);
@@ -55,11 +55,22 @@ describe("wall-clock time round-trips through the business timezone, not UTC or 
     const utc = wallClockToUtc("2026-09-10T09:00", "Europe/Amsterdam");
     const shown = formatInZone(utc, "Europe/Amsterdam");
     expect(shown).toContain("09:00");
-    expect(shown).toMatch(/CEST|GMT\+2/);
+    // Pinned to a deterministic locale (BQ-10 finding) — this used to be
+    // "GMT+2" or "CEST" depending on the runtime's default locale, so the
+    // test hedged with an either/or. A zone with real CLDR short-name
+    // coverage should now always resolve the named abbreviation.
+    expect(shown).toContain("CEST");
     // Same instant, formatted for a merchant on the other side of the
     // world, must show *their* clock face, not Amsterdam's — this is what
     // .toLocaleString() with no explicit zone silently fails to do.
     const elsewhere = formatInZone(utc, "America/Los_Angeles");
     expect(elsewhere).not.toContain("09:00");
+  });
+
+  it("falls back to a plain GMT offset for a zone with no CLDR short-name data, regardless of locale", () => {
+    // Not a bug — an honest fallback for zones the CLDR data set simply
+    // doesn't assign a named abbreviation to.
+    const utc = wallClockToUtc("2026-09-10T09:00", "Asia/Kolkata");
+    expect(zoneAbbr(utc, "Asia/Kolkata")).toMatch(/^GMT\+/);
   });
 });
