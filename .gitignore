@@ -6,6 +6,7 @@
 **/.env.*
 !**/.env.example
 **/smtp-key
+**/deepgram-key
 **/*.key
 
 # Build output
@@ -32,4 +33,5 @@ shopify-openslot/prisma/*.sqlite-journal
 # of the getbooqin-workspace npm workspaces, doesn't belong in the repo.
 desgin/
 my-tanstack-app/
+scratch-recordings/
 Repo connection needed.zip
