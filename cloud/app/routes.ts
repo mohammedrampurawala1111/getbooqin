@@ -8,6 +8,11 @@ export default [
   route("forgot-password", "routes/forgot-password.tsx"),
   route("logout", "routes/logout.tsx"),
   route("sso-callback", "routes/sso-callback.tsx"),
+  // Team invite accept screen — no dashboard nav chrome, mirrors signup.tsx/
+  // login.tsx's own two-column shell. See core/src/team.ts (inviteMember/
+  // acceptInvite) and docs/team-ui-spec.md §2 for the screen states this
+  // renders.
+  route("invite/:token", "routes/invite.$token.tsx"),
   route("dashboard", "routes/dashboard.tsx"),
   route("dashboard/account", "routes/dashboard.account.tsx"),
   route("dashboard/profile-phone", "routes/dashboard.profile-phone.tsx"),

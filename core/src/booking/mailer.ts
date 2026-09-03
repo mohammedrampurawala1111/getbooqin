@@ -8,7 +8,7 @@
  */
 import nodemailer from "nodemailer";
 import { DateTime } from "luxon";
-import type { Booking, ChatConversation, Waitlist } from "@prisma/client";
+import type { Booking, ChatConversation, Connection, ConnectionInvite, Waitlist } from "@prisma/client";
 import prisma from "../db.js";
 import * as Data from "./data.js";
 import * as Bookings from "./bookings.js";
@@ -636,6 +636,43 @@ export async function sendDataRequestExport(shop: string, platform: string, cust
     `Below is everything GetBooqin holds for them. Forward this (or the relevant parts) to the customer to fulfil the request.\n\n` +
     JSON.stringify(exportData, null, 2);
   await mail(to, `Customer data request: ${customerEmail}`, body, settings);
+}
+
+// Same base URL convention cloud's own getAppUrl() (cloud/app/lib/env.server.ts)
+// uses — core can't import that (cloud depends on core, not the reverse),
+// and this module already reads its own env vars directly elsewhere
+// (SMTP_HOST, MAIL_FROM_EMAIL above), so this just does the same for
+// APP_URL. Core and cloud share one Node process (cloud imports core as a
+// workspace package), so this reads the same value cloud's own copy does.
+function appUrl(): string {
+  const url = process.env.APP_URL;
+  if (!url) throw new Error("APP_URL is not set");
+  return url;
+}
+
+/**
+ * Team invite email (Team settings page — see core/src/team.ts's
+ * inviteMember/resendInvite, which both call this after persisting/
+ * refreshing the ConnectionInvite row). Not a customizable TemplateDef —
+ * invite copy isn't merchant-editable content, same reasoning as
+ * sendDataRequestExport just above. `invite.token` is the DB row's *current*
+ * token — team.ts's rotateAndSend() always calls this only after writing
+ * the fresh token, so a resend's email always carries the link that's
+ * actually still valid.
+ */
+export async function sendTeamInvite(connection: Connection, invite: ConnectionInvite, inviterEmail: string): Promise<void> {
+  const settings = await getSettings(connection.shop, connection.platform);
+  const businessName = settings.business_name || connection.shop;
+  const acceptUrl = `${appUrl()}/invite/${invite.token}`;
+  const roleLabel = invite.role.charAt(0).toUpperCase() + invite.role.slice(1);
+  const inviterLine = inviterEmail ? ` by ${inviterEmail}` : "";
+  const body =
+    `Hi,\n\n` +
+    `You've been invited${inviterLine} to join ${businessName} on GetBooqin with ${roleLabel} access.\n\n` +
+    `Accept your invite:\n${acceptUrl}\n\n` +
+    `This link expires in 7 days.\n\n` +
+    `${businessName}`;
+  await mail(invite.email, `You're invited to join ${businessName} on GetBooqin`, body, settings);
 }
 
 export async function sendChatLead(

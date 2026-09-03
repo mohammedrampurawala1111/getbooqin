@@ -32,7 +32,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
-  const { shop, platform, connection } = await requireTenant(request, params.connectionId);
+  const { shop, platform, connection } = await requireTenant(request, params.connectionId, "write");
   const id = Number(params.serviceId);
   const form = await request.formData();
 

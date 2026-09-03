@@ -12,6 +12,27 @@ export class ShopAlreadyConnectedError extends Error {
   }
 }
 
+// Every Connection-creating path below calls this right after writing the
+// row — the team-management migration's backfill INSERT only covers
+// Connections that already existed at migration time; a Connection created
+// afterward needs its own "owner" ConnectionMember row the same way, or
+// its own creator would immediately 404 out of it the moment
+// requireTenant() starts checking Team.getMembership() instead of
+// Connection.userId directly. Callers already call ensureUserRow(userId)
+// before reaching here (see connect.shopify.callback.tsx / onboarding.tsx),
+// so the FK this depends on is guaranteed to exist. Force-upserts to
+// "owner" on every call (not just create) since Connection.userId is still
+// the sole source of truth for ownership in this pass — ownership transfer
+// is explicitly out of scope (see the plan), so re-linking a store always
+// means its existing owner reconnected, never a change of who owns it.
+async function ensureOwnerMembership(connectionId: string, userId: string): Promise<void> {
+  await prisma.connectionMember.upsert({
+    where: { connectionId_userId: { connectionId, userId } },
+    create: { connectionId, userId, role: "owner" },
+    update: { role: "owner" },
+  });
+}
+
 export async function connectShopifyStore({
   userId,
   shop,
@@ -31,15 +52,19 @@ export async function connectShopifyStore({
   const credentials = encryptCredentials(accessToken);
 
   if (existing) {
-    return prisma.connection.update({
+    const connection = await prisma.connection.update({
       where: { id: existing.id },
       data: { credentials, status: "active" },
     });
+    await ensureOwnerMembership(connection.id, userId);
+    return connection;
   }
 
-  return prisma.connection.create({
+  const connection = await prisma.connection.create({
     data: { userId, platform, shop, credentials, status: "active" },
   });
+  await ensureOwnerMembership(connection.id, userId);
+  return connection;
 }
 
 // A Connection with no real platform behind it yet — lets a user finish
@@ -54,9 +79,11 @@ export async function connectShopifyStore({
 // this one — same multi-store model the app already supports.
 export async function createManualConnection({ userId }: { userId: string }) {
   const shop = `manual-${randomUUID()}`;
-  return prisma.connection.create({
+  const connection = await prisma.connection.create({
     data: { userId, platform: "manual", shop, credentials: "", status: "active" },
   });
+  await ensureOwnerMembership(connection.id, userId);
+  return connection;
 }
 
 export async function listUserConnections(userId: string) {

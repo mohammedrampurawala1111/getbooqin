@@ -40,7 +40,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
-  const { shop } = await requireTenant(request, params.connectionId);
+  const { shop } = await requireTenant(request, params.connectionId, "write");
   const id = Number(params.customerId);
   const form = await request.formData();
   const intent = String(form.get("_action") ?? "");

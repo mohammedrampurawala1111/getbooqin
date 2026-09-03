@@ -30,7 +30,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
-  const { shop, platform } = await requireTenant(request, params.connectionId);
+  const { shop, platform } = await requireTenant(request, params.connectionId, "write");
   const form = await request.formData();
 
   if (form.get("_action") === "leave") {

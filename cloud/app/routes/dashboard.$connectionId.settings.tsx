@@ -2,13 +2,16 @@ import { randomUUID } from "node:crypto";
 import { useEffect, useRef, useState } from "react";
 import { Form, redirect, useFetcher, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.settings";
-import { Settings, Data, Mailer, PaymentManager, FeatureFlags, listUserConnections, disconnectConnection } from "getbooqin-core";
+import { Settings, Data, Mailer, PaymentManager, FeatureFlags, Team, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { getClerkClient } from "~/session.server";
 import { Badge, TimezoneSelect, Toggle, useToast } from "~/components/ui";
 import { IntegrationRow } from "~/components/onboarding";
 import { TemplateConfig, overviewCards, type OverviewCardKey } from "~/components/account";
-import { SettingsShell, Row, RowInput, RowTextarea, ToggleRow, Segmented, ValueRow, SettingsCard, isSettingsPage, PresetFieldBadge, hiddenSettingsNavKeys } from "~/components/settings";
+import {
+  SettingsShell, Row, RowInput, RowTextarea, ToggleRow, Segmented, ValueRow, SettingsCard, isSettingsPage, PresetFieldBadge, hiddenSettingsNavKeys,
+  MemberRow, PendingInviteRow, InviteMemberCard, TeamReadOnlyNotice, TeamEmptyHint,
+} from "~/components/settings";
 import { INTEGRATIONS, getPreset, useVocabulary, SERVICE_SWATCHES, type PresetId, type PresetRules } from "~/lib/presets";
 import { PHONE_PATTERN } from "~/lib/validation";
 
@@ -30,7 +33,15 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     throw redirect(url.pathname + url.search);
   }
 
-  const { userId, connection, shop, platform } = await requireTenant(request, params.connectionId);
+  // Every page under Settings — General, Business template, Booking rules,
+  // Notifications, Payments, Visit summaries, Integrations, Team — is
+  // business configuration or sensitive data (billing/integration
+  // credentials, the full team roster with emails), so this gates the
+  // *loader* at "admin" too, not just the action below. A write/read
+  // teammate shouldn't see any of it, not just be blocked from editing it
+  // — unlike the operational dashboard routes (bookings/services/etc.),
+  // whose loaders intentionally stay at the default "read".
+  const { userId, connection, shop, platform, role: viewerRole } = await requireTenant(request, params.connectionId, "admin");
   const settings = await Settings.getSettings(shop, platform);
   const connections = await listUserConnections(userId);
   const isManual = platform === "manual";
@@ -97,10 +108,53 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     };
   });
 
+  // canManage is the one flag every control on the Team page gates on
+  // (docs/team-ui-spec.md §0/§1.1) — hide, never disable, for a viewer who
+  // can't act on it. In practice this loader's own "admin" minRole already
+  // means viewerRole is always "admin" or "owner" by the time we get here,
+  // but the Team page's own rendering still branches on it explicitly
+  // rather than assuming that, so it stays correct if that routing
+  // decision is ever revisited independently of this page.
+  const canManageTeam = viewerRole === "owner" || viewerRole === "admin";
+  const rawMembers = await Team.listMembers(connection.id);
+  const rawPendingInvites = canManageTeam ? await Team.listPendingInvites(connection.id) : [];
+
+  // core's User model has no name field — Clerk owns that. One bulk lookup
+  // (not one getUser() call per member) for the whole roster.
+  const memberClerkUsers = rawMembers.length
+    ? (await getClerkClient().users.getUserList({ userId: rawMembers.map((m) => m.userId) })).data
+    : [];
+  const clerkByUserId = new Map(memberClerkUsers.map((u) => [u.id, u]));
+  function memberDisplay(userId: string, email: string): { name: string; initials: string } {
+    const cu = clerkByUserId.get(userId);
+    const name = ([cu?.firstName, cu?.lastName].filter(Boolean).join(" ") || email.split("@")[0] || "Member").trim();
+    const initials =
+      name
+        .split(" ")
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]!.toUpperCase())
+        .join("") || "U";
+    return { name, initials };
+  }
+
+  const inviteDateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const members = rawMembers.map((m) => ({ userId: m.userId, ...memberDisplay(m.userId, m.email), email: m.email, role: m.role }));
+  const pendingInvites = rawPendingInvites.map((i) => ({
+    inviteId: i.id,
+    email: i.email,
+    role: i.role,
+    invitedAt: inviteDateFormatter.format(i.createdAt),
+  }));
+
   return {
     settings,
     gatewayFields,
     paymentsEnabled: FeatureFlags.PAYMENTS_ENABLED,
+    viewerRole,
+    canManageTeam,
+    members,
+    pendingInvites,
     // Two-layer gate (docs/patient-summary-cloud-integration-plan.md Part 3
     // §6 / Part 5): this env flag plus the shop's own preset decide whether
     // the "Visit summaries" nav entry and page even render below — the
@@ -117,11 +171,49 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
-  const { userId, shop, platform } = await requireTenant(request, params.connectionId);
+  // "admin" here is redundant with the loader's own bump above (a
+  // write/read viewer never even reaches this far), but kept explicit per
+  // the orchestrator's decision — this is the security-sensitive one, and
+  // every team-management branch below depends on it being enforced right
+  // here regardless of what the loader already checked.
+  const { userId, shop, platform } = await requireTenant(request, params.connectionId, "admin");
   const form = await request.formData();
   const section = String(form.get("_section") ?? "");
 
-  if (section === "general") {
+  if (section === "invite_member") {
+    const email = String(form.get("email") ?? "");
+    const role = String(form.get("role") ?? "write");
+    try {
+      const { invite, emailSent, alreadyPending } = await Team.inviteMember({ connectionId: params.connectionId, email, role, invitedByUserId: userId });
+      return {
+        saved: true,
+        inviteSent: true,
+        invitedEmail: invite.email,
+        emailSent,
+        alreadyPending,
+      };
+    } catch (err) {
+      if (isGetBooqinError(err)) return { inviteError: err.message };
+      throw err;
+    }
+  } else if (section === "update_member_role") {
+    const targetUserId = String(form.get("target_user_id") ?? "");
+    const role = String(form.get("role") ?? "");
+    await Team.updateMemberRole({ connectionId: params.connectionId, targetUserId, role, actingUserId: userId });
+    return { saved: true };
+  } else if (section === "remove_member") {
+    const targetUserId = String(form.get("target_user_id") ?? "");
+    await Team.removeMember({ connectionId: params.connectionId, targetUserId, actingUserId: userId });
+    return { saved: true };
+  } else if (section === "resend_invite") {
+    const inviteId = String(form.get("invite_id") ?? "");
+    const { invite, emailSent } = await Team.resendInvite({ connectionId: params.connectionId, inviteId, actingUserId: userId });
+    return { saved: true, inviteSent: true, invitedEmail: invite.email, emailSent };
+  } else if (section === "revoke_invite") {
+    const inviteId = String(form.get("invite_id") ?? "");
+    await Team.revokeInvite({ connectionId: params.connectionId, inviteId, actingUserId: userId });
+    return { saved: true };
+  } else if (section === "general") {
     await Settings.setSettings(shop, platform, {
       business_name: String(form.get("business_name") ?? ""),
       business_email: String(form.get("business_email") ?? ""),
@@ -274,7 +366,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function SettingsPage({ loaderData, actionData }: Route.ComponentProps) {
-  const { settings, gatewayFields, paymentsEnabled, visitSummariesEnabled, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail } = loaderData;
+  const { settings, gatewayFields, paymentsEnabled, visitSummariesEnabled, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites } = loaderData;
   const v = useVocabulary();
   // defaultSettings() seeds business_name to the connection's own opaque
   // shop id, so a manual connection that never completed onboarding step 1
@@ -647,19 +739,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
       )}
 
       {page === "team" && (
-        <div className="card">
-          <div className="flex flex-col items-center gap-2 px-[18px] py-14 text-center">
-            <span className="text-[13px] font-medium text-ink-2">Team accounts are coming soon</span>
-            {/* Shopify is an optional integration, not how ownership is
-                established — this used to say "whoever connects a store",
-                which reads as "you don't own this account" to a business
-                that will never connect one (Defect Dossier's BQ-11
-                finding). */}
-            <p className="m-0 max-w-[360px] text-meta text-subtle">
-              For now, the person who created this business is the owner. Soon you'll be able to invite staff here, each with their own sign-in and permissions.
-            </p>
-          </div>
-        </div>
+        <TeamSection members={members} pendingInvites={pendingInvites} canManageTeam={canManageTeam} actionData={actionData} />
       )}
     </SettingsShell>
   );
@@ -892,5 +972,83 @@ function TemplateTab({
       pending={navigation.state !== "idle"}
       paymentsAvailable={paymentsAvailable}
     />
+  );
+}
+
+type TeamMember = { userId: string; name: string; initials: string; email: string; role: "owner" | "admin" | "write" | "read" };
+type TeamPendingInvite = { inviteId: string; email: string; role: "admin" | "write" | "read"; invitedAt: string };
+
+// Team settings page (docs/team-management-spec.md, docs/team-ui-spec.md).
+// Card order top to bottom: Team members -> Pending invites -> Invite a
+// teammate, the last two omitted entirely for a write/read viewer (§0 of
+// the UI spec) — in practice this route's own loader already requires
+// "admin" to be reached at all (see the loader's own comment), so
+// canManageTeam is always true here today; this still branches on it
+// explicitly rather than assuming that, the same defensive choice the
+// loader itself makes.
+function TeamSection({
+  members, pendingInvites, canManageTeam, actionData,
+}: {
+  members: TeamMember[];
+  pendingInvites: TeamPendingInvite[];
+  canManageTeam: boolean;
+  actionData: Route.ComponentProps["actionData"];
+}) {
+  const navigation = useNavigation();
+  const toast = useToast();
+  const inviting = navigation.state !== "idle" && navigation.formData?.get("_section") === "invite_member";
+  const inviteError = actionData && "inviteError" in actionData ? actionData.inviteError : undefined;
+
+  // The invite form is a real <Form> (client-side transition, not a full
+  // reload) precisely so this effect can catch its completion the same way
+  // TemplateTab already does for its own <Form> above.
+  const wasSubmitting = useRef(false);
+  useEffect(() => {
+    if (navigation.state !== "idle") {
+      wasSubmitting.current = true;
+      return;
+    }
+    if (!wasSubmitting.current) return;
+    wasSubmitting.current = false;
+    if (actionData && "inviteSent" in actionData && actionData.inviteSent) {
+      const email = actionData.invitedEmail;
+      if (actionData.emailSent === false) {
+        toast(`Invite saved for ${email}, but the email couldn't be sent — use Resend.`);
+      } else if (actionData.alreadyPending) {
+        toast(`Invite re-sent to ${email}.`);
+      } else {
+        toast(`Invite sent to ${email}.`);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigation.state]);
+
+  return (
+    <>
+      {!canManageTeam && <TeamReadOnlyNotice />}
+
+      <div className="card">
+        <div className="card-header">
+          <h2 className="card-title">Team members</h2>
+        </div>
+        {members.map((m) => (
+          <MemberRow key={m.userId} userId={m.userId} name={m.name} email={m.email} initials={m.initials} role={m.role} canManage={canManageTeam} />
+        ))}
+        {members.length === 1 && pendingInvites.length === 0 && <TeamEmptyHint />}
+      </div>
+
+      {canManageTeam && pendingInvites.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="card-title">Pending invites</h2>
+          </div>
+          {pendingInvites.map((i) => (
+            <PendingInviteRow key={i.inviteId} inviteId={i.inviteId} email={i.email} role={i.role} invitedAt={i.invitedAt} />
+          ))}
+        </div>
+      )}
+
+      {canManageTeam && <InviteMemberCard pending={inviting} error={inviteError} />}
+    </>
   );
 }

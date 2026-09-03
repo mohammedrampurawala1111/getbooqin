@@ -54,16 +54,17 @@ model Session {
 // this row just mirrors it for Connection to key off. Kept in sync by
 // cloud/app/routes/webhooks.clerk.tsx on user.created/user.updated.
 model User {
-  id          String       @id
-  email       String       @unique
+  id                String             @id
+  email             String             @unique
   // Collected at signup for our own records only — not sent to Clerk, since
   // Clerk's SMS country allowlist rejects +91 and others regardless of
   // whether phone sign-in/verification is even enabled. Re-evaluate once
   // phone-based sign-in is wired up through Clerk properly.
-  phone       String       @default("")
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  connections Connection[]
+  phone             String             @default("")
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  connections       Connection[]
+  connectionMembers ConnectionMember[]
 }
 
 // One store a User has linked. `credentials` holds whatever the platform's
@@ -72,25 +73,75 @@ model User {
 // belong to one User: reconnecting the same store from a different User
 // must be rejected or made an explicit transfer, never a silent duplicate.
 model Connection {
-  id          String   @id @default(cuid())
+  id          String             @id @default(cuid())
   userId      String
-  platform    String   @default("shopify")
+  platform    String             @default("shopify")
   shop        String
   credentials String
-  status      String   @default("active") // active|revoked|error
-  connectedAt DateTime @default(now())
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  status      String             @default("active") // active|revoked|error
+  connectedAt DateTime           @default(now())
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
   // Human-readable alias for the public /book/:connectionId link (UX
   // audit's #13 finding — a raw cuid is unfriendly in a social bio). Null
   // until Connections.ensureSlug() generates one lazily; the cuid `id`
   // keeps resolving permanently either way, so an already-shared link never
   // breaks.
-  slug        String?  @unique
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug        String?            @unique
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  members     ConnectionMember[]
+  invites     ConnectionInvite[]
 
   @@unique([platform, shop])
   @@index([userId])
+}
+
+// One row per user granted access to a Connection — the multi-user team
+// model. The Connection's own `userId` remains the implicit "owner" (see
+// the Connection model comment); this table is what "list team members"
+// and requireTenant's role check actually query, so the owner also gets an
+// explicit row here (role "owner", backfilled by this model's migration)
+// rather than requiring every membership check to UNION against
+// Connection.userId separately. See core/src/team.ts for the CRUD/role
+// logic this backs.
+model ConnectionMember {
+  id              String     @id @default(cuid())
+  connectionId    String
+  userId          String
+  role            String     @default("read") // owner|admin|write|read
+  invitedByUserId String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  connection      Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, userId])
+  @@index([userId])
+}
+
+// A pending (or resolved) email invitation onto a Connection's team.
+// Deliberately not FK'd to User — the invited person may not have an
+// account yet. `token` is a signPayload()-produced string
+// (core/src/auth/session.ts); acceptInvite() looks the row up by this
+// exact column, not by re-decoding whatever token is presented, so
+// resending (which overwrites `token` in place — see the
+// `[connectionId, email]` unique constraint) naturally invalidates the
+// previously emailed link: it just no longer matches any row.
+model ConnectionInvite {
+  id              String     @id @default(cuid())
+  connectionId    String
+  email           String
+  role            String     @default("write") // admin|write|read — never "owner"
+  token           String     @unique
+  status          String     @default("pending") // pending|accepted|revoked|expired
+  invitedByUserId String
+  createdAt       DateTime   @default(now())
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  connection      Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, email])
+  @@index([connectionId, status])
 }
 
 // --- Per-shop settings ---
@@ -115,47 +166,47 @@ model ShopSettings {
 // supports it (see src/platforms/shopifyAdmin.ts).
 
 model ServiceConfig {
-  id                Int               @id @default(autoincrement())
-  shop              String
-  platform          String            @default("shopify")
-  productId         String
-  productHandle     String
-  durationMin       Int               @default(30)
-  bufferBeforeMin   Int               @default(0)
-  bufferAfterMin    Int               @default(0)
-  capacity          Int               @default(1)
-  locationType      String            @default("onsite") // onsite | video | phone
-  paymentRequired   Boolean           @default(false)
-  depositPercent    Int               @default(100)
+  id                           Int               @id @default(autoincrement())
+  shop                         String
+  platform                     String            @default("shopify")
+  productId                    String
+  productHandle                String
+  durationMin                  Int               @default(30)
+  bufferBeforeMin              Int               @default(0)
+  bufferAfterMin               Int               @default(0)
+  capacity                     Int               @default(1)
+  locationType                 String            @default("onsite") // onsite | video | phone
+  paymentRequired              Boolean           @default(false)
+  depositPercent               Int               @default(100)
   // Storefront services-grid swatch colour — a GetBooqin-only display
   // preference, not a platform product concept, so unlike the rest of
   // ServiceConfig this is plain local state, not synced via metafields.
-  color             String            @default("#2563eb")
-  position          Int               @default(0)
-  status            Boolean           @default(true)
+  color                        String            @default("#2563eb")
+  position                     Int               @default(0)
+  status                       Boolean           @default(true)
   // True once a merchant has ever explicitly saved this service's resource
   // assignment (even to zero resources) — resourcesForService() needs this
   // to tell "never configured, fall back to everyone" apart from "assigned
   // to nobody on purpose", which used to be indistinguishable and silently
   // reversed an intentional "nobody" choice (Defect Dossier's BQ-05
   // finding).
-  resourceAssignmentCustomized Boolean @default(false)
+  resourceAssignmentCustomized Boolean           @default(false)
   // Set instead of a hard delete when a booking still references this
   // service — the row (and its productId, so historical bookings can still
   // resolve a name) has to survive, but it must disappear from every active
   // list: the services page, the public page, the Add-consultation dialog
   // (Defect Dossier's BQ-32 finding). Distinct from `status`, which a
   // merchant can flip back on; this can't be undone from the UI.
-  deletedAt         DateTime?
+  deletedAt                    DateTime?
   // Last product `updated_at` this row was synced from — lets a future
   // webhook/sync cheaply skip an out-of-order/duplicate delivery.
-  platformUpdatedAt DateTime?
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  resourceLinks     ServiceResource[]
-  addonLinks        ServiceAddon[]
-  bookings          Booking[]
-  waitlistEntries   Waitlist[]
+  platformUpdatedAt            DateTime?
+  createdAt                    DateTime          @default(now())
+  updatedAt                    DateTime          @updatedAt
+  resourceLinks                ServiceResource[]
+  addonLinks                   ServiceAddon[]
+  bookings                     Booking[]
+  waitlistEntries              Waitlist[]
 
   @@unique([platform, shop, productId])
   @@index([platform, shop, status, position])
@@ -460,6 +511,10 @@ model Waitlist {
   @@index([platform, shop, serviceId, resourceId, status, createdAt])
   @@index([platform, shop, status, offerExpiresAt])
   @@index([platform, shop, customerId, status])
+  // Also has a partial unique index -- (platform, shop, serviceId, resourceId,
+  // windowStartUtc, customerId) WHERE status IN ('waiting','offered') --
+  // hand-written in migrations/20260903140000_waitlist_dedupe_active_joins
+  // since Prisma's DSL can't express a filtered unique index.
 }
 
 model Payment {

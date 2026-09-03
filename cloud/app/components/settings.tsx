@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+import { Form, useFetcher } from "react-router";
+import { ConfirmDialog, useToast } from "~/components/ui";
 
 /* ==================================================================
    Settings shell — one rail, one page at a time (design handoff v4).
@@ -300,28 +302,302 @@ export function SettingsCard({
   );
 }
 
-/* Member row — the text column must CLIP, not just shrink. `min-w-0`
+/* ==================================================================
+   Team management (Settings › Team, cloud/app/routes/
+   dashboard.$connectionId.settings.tsx, and the /invite/:token accept
+   route) — see docs/team-management-spec.md (role matrix, edge cases) and
+   docs/team-ui-spec.md (these exact screen states/copy). §0 of the UI spec
+   is the load-bearing decision throughout: a control that would 404 on
+   submit is removed from the DOM for a write/read viewer, never disabled.
+   ================================================================== */
+
+export type Role = "owner" | "admin" | "write" | "read";
+
+const ROLE_LABEL: Record<Role, string> = { owner: "Owner", admin: "Admin", write: "Write", read: "Read" };
+
+/** Fires `message(fetcher.data)` once a useFetcher submission this component owns settles back to idle — the shared bit behind every row-level toast below (role changed, member removed, invite resent/revoked). Returns null from `message` to stay silent (e.g. a failed submission with no fetcher.data yet). Takes the fetcher structurally (not via useFetcher's own generic) since useFetcher<T>().data is typed SerializeFrom<T>, not T. */
+function useFetcherToast<Data>(fetcher: { state: string; data: Data | undefined }, message: (data: Data) => string | null) {
+  const toast = useToast();
+  const wasActive = useRef(false);
+  useEffect(() => {
+    if (fetcher.state !== "idle") {
+      wasActive.current = true;
+      return;
+    }
+    if (!wasActive.current) return;
+    wasActive.current = false;
+    if (fetcher.data) {
+      const text = message(fetcher.data);
+      if (text) toast(text);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetcher.state]);
+}
+
+/* Small role indicator — used wherever a role needs to be *shown* but not
+   *changed*: the Owner row (any viewer), every row for a write/read
+   viewer (§0 — hidden select, not disabled), and the invite-accept page's
+   "join with {Role} access" line. Owner gets the same brand-tinted
+   treatment PresetFieldBadge already uses for "Customized" so it reads as
+   "special", not just another neutral badge. */
+export function RoleBadge({ role }: { role: Role }) {
+  return (
+    <span className={role === "owner" ? "badge bg-brand-50 text-brand-600" : "badge-neutral"}>
+      {ROLE_LABEL[role]}
+    </span>
+  );
+}
+
+/* Member row — one per active ConnectionMember. The Owner row never gets a
+   select or a Remove control, for ANY viewer — role is always shown as
+   RoleBadge and no action renders (BA edge case 3.4: this is defense in
+   depth, the server-side reject in Team.updateMemberRole/removeMember is
+   the real guarantee). For a write/read viewer, pass canManage={false}:
+   role renders as RoleBadge instead of a <select>, and Remove doesn't
+   render at all. The text column must CLIP, not just shrink — `min-w-0`
    alone lets glyphs paint over the badge; truncate is what fixes it. */
 export function MemberRow({
-  name, email, initials, role, status, action,
+  userId, name, email, initials, role, canManage,
 }: {
-  name: string; email: string; initials: string; role: string;
-  status: "Active" | "Invited"; action?: { label: string; danger?: boolean };
+  userId: string;
+  name: string;
+  email: string;
+  initials: string;
+  role: Role;
+  /** viewerRole === "owner" || viewerRole === "admin" */
+  canManage: boolean;
 }) {
+  const roleFetcher = useFetcher<{ saved?: boolean; role?: Role }>();
+  const removeFetcher = useFetcher<{ saved?: boolean }>();
+  const isOwner = role === "owner";
+  const dialogId = `remove-member-${userId}`;
+
+  useFetcherToast(roleFetcher, (data) => (data.saved && data.role ? `${name}'s role changed to ${ROLE_LABEL[data.role]}.` : null));
+  useFetcherToast(removeFetcher, (data) => {
+    if (!data.saved) return null;
+    (document.getElementById(dialogId) as HTMLDialogElement | null)?.close();
+    return `${name} removed from the team.`;
+  });
+
+  // Optimistic role: reflect the in-flight submission immediately, same
+  // pattern as this file's own MessageRow/toggleFetcher (route file,
+  // dashboard.$connectionId.settings.tsx's MessageRow).
+  const displayRole = (roleFetcher.formData?.get("role") as Role | null) ?? role;
+
   return (
     <div className="flex items-center gap-3 border-b border-row px-[18px] py-3">
-      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#efecf4] text-[11px] font-semibold text-ink-3">{initials}</span>
+      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#efecf4] text-[11px] font-semibold text-ink-3">
+        {initials}
+      </span>
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <span className="truncate text-[13px] font-medium">{name}</span>
         <span className="truncate text-[12px] text-subtle">{email}</span>
       </div>
-      <span className={`shrink-0 ${status === "Active" ? "badge-ok" : "badge-pending"}`}>{status}</span>
-      <select defaultValue={role} className="shrink-0 rounded-[7px] border border-line-strong bg-surface px-[9px] py-[6px] text-meta">
-        <option>Owner</option><option>Manager</option><option>Staff</option>
-      </select>
-      {action ? (
-        <button className={`btn-link shrink-0 ${action.danger ? "text-danger" : "text-brand-600"}`}>{action.label}</button>
+
+      {!canManage || isOwner ? (
+        <RoleBadge role={displayRole} />
+      ) : (
+        <roleFetcher.Form method="post" onChange={(e) => roleFetcher.submit(e.currentTarget)}>
+          <input type="hidden" name="_section" value="update_member_role" />
+          <input type="hidden" name="target_user_id" value={userId} />
+          <select
+            name="role"
+            defaultValue={role}
+            className="shrink-0 rounded-[7px] border border-line-strong bg-surface px-[9px] py-[6px] text-meta"
+          >
+            <option value="admin">Admin</option>
+            <option value="write">Write</option>
+            <option value="read">Read</option>
+          </select>
+        </roleFetcher.Form>
+      )}
+
+      {canManage && !isOwner ? (
+        <>
+          <button
+            type="button"
+            className="btn-link shrink-0 text-danger"
+            onClick={() => (document.getElementById(dialogId) as HTMLDialogElement | null)?.showModal()}
+          >
+            Remove
+          </button>
+          <ConfirmDialog
+            id={dialogId}
+            title={`Remove ${name} from the team?`}
+            body="They'll immediately lose access to this dashboard. You can invite them again later."
+            confirmLabel="Remove"
+            pending={removeFetcher.state !== "idle"}
+            pendingLabel="Removing…"
+          >
+            <removeFetcher.Form method="post" id={`${dialogId}-form`}>
+              <input type="hidden" name="_section" value="remove_member" />
+              <input type="hidden" name="target_user_id" value={userId} />
+            </removeFetcher.Form>
+          </ConfirmDialog>
+        </>
       ) : null}
+    </div>
+  );
+}
+
+/* Pending-invite row — distinct from MemberRow (not an extension of it): a
+   pending invite has no user account yet (no initials-from-a-real-name, no
+   Owner special-case, no role select to change in place — the fix for
+   "wrong role" is Revoke + re-invite, not an inline edit), and carries two
+   actions MemberRow never has (Resend/Revoke) instead of one (Remove).
+   This whole page only renders it when canManage is true (the Pending
+   Invites card doesn't exist for write/read at all), so there's no
+   read-only variant to keep in sync with MemberRow's. */
+export function PendingInviteRow({
+  inviteId, email, role, invitedAt,
+}: {
+  inviteId: string;
+  email: string;
+  role: Exclude<Role, "owner">;
+  /** Pre-formatted server-side, e.g. "Aug 27, 2026". */
+  invitedAt: string;
+}) {
+  const resendFetcher = useFetcher<{ saved?: boolean; inviteSent?: boolean; invitedEmail?: string; emailSent?: boolean }>();
+  const revokeFetcher = useFetcher<{ saved?: boolean }>();
+  const dialogId = `revoke-invite-${inviteId}`;
+  const resending = resendFetcher.state !== "idle";
+
+  useFetcherToast(resendFetcher, (data) => {
+    if (!data.saved) return null;
+    return data.emailSent === false
+      ? `Invite refreshed for ${email}, but the email couldn't be sent — try Resend again.`
+      : `Invite re-sent to ${email}.`;
+  });
+  useFetcherToast(revokeFetcher, (data) => {
+    if (!data.saved) return null;
+    (document.getElementById(dialogId) as HTMLDialogElement | null)?.close();
+    return `Invite to ${email} revoked.`;
+  });
+
+  return (
+    <div className="flex items-center gap-3 border-b border-row px-[18px] py-3">
+      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#efecf4] text-[11px] font-semibold text-ink-3">
+        {email.slice(0, 1).toUpperCase()}
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <span className="truncate text-[13px] font-medium">{email}</span>
+        <span className="truncate text-[12px] text-subtle">Invited {invitedAt}</span>
+      </div>
+      <RoleBadge role={role} />
+      <span className="badge-pending shrink-0">Pending</span>
+
+      <resendFetcher.Form method="post">
+        <input type="hidden" name="_section" value="resend_invite" />
+        <input type="hidden" name="invite_id" value={inviteId} />
+        <button type="submit" className="btn-link shrink-0" disabled={resending}>
+          {resending ? "Resending…" : "Resend"}
+        </button>
+      </resendFetcher.Form>
+
+      <button
+        type="button"
+        className="btn-link shrink-0 text-danger"
+        onClick={() => (document.getElementById(dialogId) as HTMLDialogElement | null)?.showModal()}
+      >
+        Revoke
+      </button>
+      <ConfirmDialog
+        id={dialogId}
+        title="Revoke this invite?"
+        body={`${email} won't be able to use this invite link anymore.`}
+        confirmLabel="Revoke"
+        pending={revokeFetcher.state !== "idle"}
+        pendingLabel="Revoking…"
+      >
+        <revokeFetcher.Form method="post" id={`${dialogId}-form`}>
+          <input type="hidden" name="_section" value="revoke_invite" />
+          <input type="hidden" name="invite_id" value={inviteId} />
+        </revokeFetcher.Form>
+      </ConfirmDialog>
+    </div>
+  );
+}
+
+/* Invite form. Uses react-router's <Form> (not a bare <form>, and not a
+   fetcher) so useNavigation() in the route component can drive `pending`
+   and know when the round trip settles for the toast — same reason
+   page === "template"'s own section already upgrades to <Form> instead of
+   the plain <form> every other SettingsCard section uses (route file's
+   TemplateTab). `pending`/`error` are computed by the route from
+   useNavigation()/actionData, the same way TemplateTab already derives
+   `pending={navigation.state !== "idle"}` for its own <Form> submit — this
+   component doesn't own its own fetcher. */
+export function InviteMemberCard({ pending, error }: { pending: boolean; error?: string }) {
+  return (
+    <Form method="post" className="card">
+      <div className="card-header">
+        <h2 className="card-title">Invite a teammate</h2>
+      </div>
+      <div className="flex flex-col gap-[14px] px-[18px] py-[16px]">
+        <input type="hidden" name="_section" value="invite_member" />
+        <Row label="Email">
+          <RowInput type="email" name="email" required autoComplete="email" cap={320} />
+        </Row>
+        {error ? (
+          <span className="flex items-center gap-[7px] px-[18px] text-meta font-medium text-danger">
+            <span className="inline-flex h-[15px] w-[15px] items-center justify-center rounded-full bg-danger text-[9px] text-white">!</span>
+            {error}
+          </span>
+        ) : null}
+        <Row label="Role" hint="Admin can manage settings and the team. Write can create and edit bookings, services, and customers. Read can only view.">
+          <RowSelect name="role" defaultValue="write" cap={200}>
+            <option value="admin">Admin</option>
+            <option value="write">Write</option>
+            <option value="read">Read</option>
+          </RowSelect>
+        </Row>
+      </div>
+      <div className="card-footer">
+        <span />
+        <button type="submit" className="btn-pri" disabled={pending}>
+          {pending ? "Sending…" : "Send invite"}
+        </button>
+      </div>
+    </Form>
+  );
+}
+
+/* Read-only banner — Team page, write/read viewer only. */
+export function TeamReadOnlyNotice() {
+  return (
+    <div className="flex items-center gap-3 rounded-[10px] border border-line bg-canvas-alt px-[15px] py-[13px] text-[13px] text-ink-2">
+      You can see who has access, but only admins and the owner can invite, remove, or change someone's role. Ask an admin if you need something changed.
+    </div>
+  );
+}
+
+/* Team page's empty state — rendered inside the Team members card, below
+   the owner's own row, only when there's no one else to show yet. */
+export function TeamEmptyHint() {
+  return (
+    <div className="flex flex-col items-center gap-2 px-[18px] py-10 text-center">
+      <span className="text-[13px] font-medium text-ink-2">It's just you so far</span>
+      <p className="m-0 max-w-[320px] text-meta text-subtle">
+        Invite a teammate below to give them their own sign-in and access to this dashboard.
+      </p>
+    </div>
+  );
+}
+
+/* Shared shape for the invite-accept page's terminal states (expired /
+   revoked / already-accepted / malformed token): a title, one sentence,
+   and an optional single action. Lives in the same left-card slot
+   signup.tsx/login.tsx use (`card w-full max-w-[372px] p-[26px]`), so
+   invite.$token.tsx can drop this straight into that shell instead of
+   rebuilding it four times. */
+export function InviteStatusCard({
+  title, body, action,
+}: { title: string; body: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="card w-full max-w-[372px] p-[26px]">
+      <h1 className="page-title mt-4">{title}</h1>
+      <p className="mt-2 text-body text-muted">{body}</p>
+      {action ? <div className="mt-5">{action}</div> : null}
     </div>
   );
 }

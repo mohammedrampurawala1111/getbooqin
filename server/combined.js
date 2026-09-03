@@ -39,6 +39,9 @@ const CLOUD_PREFIXES = [
   "/connect",
   "/book",
   "/sso-callback",
+  // Team invite accept screen — cloud/app/routes/invite.$token.tsx. Keep in
+  // sync with cloud/app/routes.ts.
+  "/invite",
   "/webhooks/clerk",
   // Cloud's own account-surface legal pages — deliberately not "/privacy"
   // or "/terms", which shopify-openslot already owns (its Shopify App

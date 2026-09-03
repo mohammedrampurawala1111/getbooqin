@@ -3,6 +3,13 @@ export * from "./auth/session.js";
 export * from "./auth/encryption.js";
 export * from "./platforms/shopify.js";
 export * from "./connections.js";
+// Multi-user team management (roles/membership/invites) for a Connection —
+// see core/src/team.ts's header comment and docs/team-management-spec.md.
+export * as Team from "./team.js";
+// Re-exported at the top level (not just Team.Role) so call sites like
+// cloud's tenant.server.ts can write `minRole: Role = "read"` without
+// referencing a type through the `Team` namespace value import.
+export type { Role } from "./team.js";
 
 // Booking-workflow business logic, ported from shopify-openslot/app/lib —
 // see docs/plan/tenant-session-design.md's Prompt 4 section for why this

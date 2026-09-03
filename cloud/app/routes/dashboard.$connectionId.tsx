@@ -14,7 +14,7 @@ import { getAppUrl } from "~/lib/env.server";
 // embedded Shopify admin's authenticate.admin() produces), then renders a
 // nav + <Outlet/> for every booking-workflow screen nested under this route.
 export async function loader({ request, params }: Route.LoaderArgs) {
-  const { connection, shop, platform } = await requireTenant(request, params.connectionId);
+  const { connection, shop, platform, role } = await requireTenant(request, params.connectionId);
   const settings = await Settings.getSettings(shop, platform);
 
   // A manual connection has no external channel behind it (see
@@ -49,8 +49,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || email.split("@")[0] || "Account";
   // Account → Job title (dashboard.$connectionId.account.tsx) saves here
   // but nothing ever read it back — the sidebar hardcoded "Owner"
-  // regardless of what was actually set (UX audit's #13 finding).
-  const role = (clerkUser.unsafeMetadata?.jobTitle as string | undefined)?.trim() || "Owner";
+  // regardless of what was actually set (UX audit's #13 finding). Named
+  // `jobTitle` (not `role`) since this is a free-text cosmetic label, not
+  // the team-membership role `requireTenant` returns above — the two used
+  // to share the name `role` before Team management introduced the real one.
+  const jobTitle = (clerkUser.unsafeMetadata?.jobTitle as string | undefined)?.trim() || "Owner";
   const initials = name
     .split(" ")
     .filter(Boolean)
@@ -83,7 +86,12 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       : connection.shop;
 
   return data(
-    { connection, channelCount, pendingCount, label, preset: settings.preset, bookingHandle, user: { name, email, initials, role } },
+    // canViewSettings mirrors dashboard.$connectionId.settings.tsx's own
+    // "admin" minRole on its loader (a write/read viewer 404s there) — the
+    // nav link is hidden for them here so it doesn't dead-end (orchestrator
+    // decision on Settings access, §2). Named distinctly from `role` inside
+    // `user` below, which is the unrelated Account-page "job title" label.
+    { connection, channelCount, pendingCount, label, preset: settings.preset, bookingHandle, canViewSettings: role === "owner" || role === "admin", user: { name, email, initials, role: jobTitle } },
     { headers: tenantSelectHeaders(tenantSession) }
   );
 }
@@ -162,7 +170,13 @@ const NAV_ICONS = {
 // "Bookings" / "Staff / Resources" regardless of industry (UX audit's U4
 // finding). vocabFor() already existed for exactly this; nothing here
 // used it yet.
-function navItems(preset: string | null, pendingCount: number) {
+// `canViewSettings` mirrors requireTenant's own "admin" minRole on the
+// Settings loader — a write/read viewer's request there 404s regardless
+// (that's the real boundary), but leaving the link in the nav for them
+// would just be an always-broken link to click. Small, targeted hide,
+// not a nav restructure: everything else here is unaffected, since only
+// Settings gained the stricter loader-level gate.
+function navItems(preset: string | null, pendingCount: number, canViewSettings: boolean) {
   const v = vocabFor(preset);
   return [
     { to: "", end: true, label: "Overview", icon: NAV_ICONS.overview },
@@ -172,7 +186,7 @@ function navItems(preset: string | null, pendingCount: number) {
     { to: "/timeoff", label: "Time off", icon: NAV_ICONS.timeoff },
     { to: "/services", label: v.services, icon: NAV_ICONS.services },
     { to: "/customers", label: v.customers, icon: NAV_ICONS.customers },
-    { to: "/settings", label: "Settings", icon: NAV_ICONS.settings },
+    ...(canViewSettings ? [{ to: "/settings", label: "Settings", icon: NAV_ICONS.settings }] : []),
   ];
 }
 
@@ -191,9 +205,9 @@ function navItemClass({ isActive }: { isActive: boolean }): string {
 function DashboardShell({
   loaderData, params, children,
 }: { loaderData: Route.ComponentProps["loaderData"]; params: { connectionId: string }; children: ReactNode }) {
-  const { channelCount, pendingCount, label, preset, bookingHandle, user } = loaderData;
+  const { channelCount, pendingCount, label, preset, bookingHandle, canViewSettings, user } = loaderData;
   const v = vocabFor(preset);
-  const NAV_ITEMS = navItems(preset, pendingCount);
+  const NAV_ITEMS = navItems(preset, pendingCount, canViewSettings);
   const base = `/dashboard/${params.connectionId}`;
 
   // Below md: <aside> is an off-canvas drawer toggled by the topbar button
