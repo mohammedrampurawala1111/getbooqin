@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLocation } from "react-router";
+import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLocation, useRouteError, isRouteErrorResponse } from "react-router";
 import { ClerkProvider } from "@clerk/react-router";
 import { clerkMiddleware, rootAuthLoader } from "@clerk/react-router/server";
 import type { Route } from "./+types/root";
@@ -64,6 +64,46 @@ function ThemeSync() {
     }
   }, [location.key]);
   return null;
+}
+
+// Every route in the app threw straight through to React Router's own
+// bare, unstyled default error page — no title, no chrome, no way back
+// into the app (UX audit's #6 finding). This is the one catch-all boundary
+// that reaches every route below it, so both a 404 (isRouteErrorResponse
+// with status 404) and any other unhandled error land on a branded page
+// with a link home instead.
+export function ErrorBoundary() {
+  const error = useRouteError();
+  const notFound = isRouteErrorResponse(error) && error.status === 404;
+
+  if (import.meta.env.DEV && !notFound) {
+    console.error(error);
+  }
+
+  return (
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>{notFound ? "Page not found" : "Something went wrong"} · GetBooqin</title>
+        <Links />
+      </head>
+      <body>
+        <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-canvas px-4 text-center">
+          <h1 className="page-title">{notFound ? "Page not found" : "Something went wrong"}</h1>
+          <p className="m-0 max-w-[360px] text-body text-muted">
+            {notFound
+              ? "The page you're looking for doesn't exist or may have moved."
+              : "An unexpected error occurred. Try again, or head back to the dashboard."}
+          </p>
+          <a href="/" className="btn-pri mt-2 no-underline hover:no-underline">
+            Back to home
+          </a>
+        </div>
+        <Scripts />
+      </body>
+    </html>
+  );
 }
 
 export default function Root({ loaderData }: Route.ComponentProps) {

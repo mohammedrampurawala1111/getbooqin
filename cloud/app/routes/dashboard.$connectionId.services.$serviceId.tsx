@@ -1,10 +1,10 @@
+import { useEffect } from "react";
 import { Form, data, redirect } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.services.$serviceId";
-import { Data, Settings, ShopifyAdmin, ServiceMetafields, decryptCredentials } from "getbooqin-core";
+import { Data, Settings, ShopifyAdmin, ServiceMetafields, decryptCredentials, FeatureFlags } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
-import { AlertError, Field, Input, Toggle, CheckCard } from "~/components/ui";
-
-const SWATCHES = ["#b05fc9", "#2563eb", "#0f7a4f", "#92600b", "#b42318", "#545b68"];
+import { AlertError, Field, Input, Toggle, CheckCard, ConfirmDialog, useToast } from "~/components/ui";
+import { useVocabulary, SERVICE_SWATCHES as SWATCHES } from "~/lib/presets";
 
 export const meta: Route.MetaFunction = ({ data: loaderData }) => [
   { title: `${loaderData?.product?.title || "Service"} · GetBooqin` },
@@ -26,13 +26,20 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     Settings.getSettings(shop, platform),
   ]);
 
-  return { config, product, resources, addons, resourceIds, addonIds, currencySymbol: settings.currency_symbol };
+  const paymentsAvailable = FeatureFlags.PAYMENTS_ENABLED && settings.enabled_gateways.length > 0;
+  const bookingCount = await Data.bookingCountForService(shop, id);
+  return { config, product, resources, addons, resourceIds, addonIds, currencySymbol: settings.currency_symbol, paymentsAvailable, bookingCount };
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
   const { shop, platform, connection } = await requireTenant(request, params.connectionId);
   const id = Number(params.serviceId);
   const form = await request.formData();
+
+  if (form.get("_action") === "delete") {
+    await Data.deleteServiceConfig(shop, id);
+    return redirect(`/dashboard/${params.connectionId}/services`);
+  }
 
   const before = await Data.serviceConfig(shop, id);
   if (!before) throw data("Service not found", { status: 404 });
@@ -56,7 +63,7 @@ export async function action({ request, params }: Route.ActionArgs) {
       capacity: Number(form.get("capacity") ?? 1),
       location_type: String(form.get("location_type") ?? "onsite") as "onsite" | "video" | "phone",
       payment_required: form.get("payment_required") === "on",
-      deposit_percent: Number(form.get("deposit_percent") ?? 100),
+      deposit_percent: Number(form.get("deposit_percent") ?? 0),
       color: String(form.get("color") ?? before.color),
       status: form.get("status") === "on",
       resource_ids: resourceIds,
@@ -97,20 +104,34 @@ export async function action({ request, params }: Route.ActionArgs) {
     }
   }
 
-  return redirect(`/dashboard/${params.connectionId}/services/${id}`);
+  // Used to redirect to this same URL on every save — a re-render with the
+  // same values and no confirmation, so a save looked identical to nothing
+  // happening (Defect Dossier's BQ-25 finding). Returning saved:true instead
+  // renders a real confirmation without a pointless navigation, matching
+  // the consultant detail page's own already-fixed pattern.
+  return { saved: true };
 }
 
 export default function ServiceDetail({ loaderData, actionData, params }: Route.ComponentProps) {
-  const { config, product, resources, addons, resourceIds, addonIds, currencySymbol } = loaderData;
+  const { config, product, resources, addons, resourceIds, addonIds, currencySymbol, paymentsAvailable, bookingCount } = loaderData;
   const base = `/dashboard/${params.connectionId}`;
   const swatches = SWATCHES.includes(config.color) ? SWATCHES : [config.color, ...SWATCHES];
   const editable = config.platform === "manual";
+  const v = useVocabulary();
+  const toast = useToast();
+
+  useEffect(() => {
+    if (actionData && "saved" in actionData && actionData.saved) {
+      toast(`${product?.title || v.serviceOne} updated`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionData]);
 
   return (
     <div className="flex flex-col gap-[18px]">
       <div>
         <a href={`${base}/services`} className="btn-link">
-          &larr; All services
+          &larr; All {v.services.toLowerCase()}
         </a>
       </div>
       <h1 className="page-title">{product?.title || `Service #${config.id}`}</h1>
@@ -166,10 +187,10 @@ export default function ServiceDetail({ loaderData, actionData, params }: Route.
 
         <div className="card">
           <div className="card-header">
-            <h2 className="card-title">Booking settings</h2>
+            <h2 className="card-title">{v.bookingOne.charAt(0).toUpperCase() + v.bookingOne.slice(1)} settings</h2>
           </div>
           <div className="card-body grid grid-cols-2 gap-x-4 gap-y-[14px]">
-            <Field label="Duration (minutes)" hint="How long this booking takes, start to finish.">
+            <Field label="Duration (minutes)" hint={`How long this ${v.bookingOne} takes, start to finish.`}>
               <Input type="number" name="duration_min" min={5} defaultValue={config.durationMin} />
             </Field>
             <Field label="Capacity" hint="How many customers can book the same slot at once.">
@@ -188,17 +209,27 @@ export default function ServiceDetail({ loaderData, actionData, params }: Route.
                 <option value="phone">Phone</option>
               </select>
             </Field>
-            <Field label="Deposit (% of price)" hint="What share of the price is due to hold the booking.">
-              <Input type="number" name="deposit_percent" min={1} max={100} defaultValue={config.depositPercent} />
+            {/* Payments are advertised throughout the dashboard (a Payment
+                column, a Revenue card) but were configurable nowhere — these
+                two controls did nothing until a gateway existed to act on
+                them (Defect Dossier's BQ-30 finding). */}
+            <Field
+              label="Deposit (% of price)"
+              hint={paymentsAvailable ? "What share of the price is due to hold the booking." : "Available once you connect a payment provider."}
+            >
+              <Input type="number" name="deposit_percent" min={0} max={100} defaultValue={config.depositPercent} disabled={!paymentsAvailable} />
             </Field>
 
             <div className="col-span-2 flex flex-col gap-3">
-              <Toggle name="payment_required" defaultChecked={config.paymentRequired} label="Payment required to hold the booking" />
+              <Toggle name="payment_required" defaultChecked={paymentsAvailable && config.paymentRequired} disabled={!paymentsAvailable} label="Payment required to hold the booking" />
               <Toggle name="status" defaultChecked={config.status} label="Active" />
             </div>
 
             <div className="col-span-2">
-              <span className="field-label mb-[6px] block">Storefront swatch colour</span>
+              {/* Renders in the dashboard's own bookings list/calendar, not
+                  a storefront — this service has no storefront presence at
+                  all (Defect Dossier's BQ-14 finding). */}
+              <span className="field-label mb-[6px] block">Calendar colour</span>
               <div className="flex gap-2">
                 {swatches.map((c) => (
                   <label key={c} className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full">
@@ -252,12 +283,34 @@ export default function ServiceDetail({ loaderData, actionData, params }: Route.
           </div>
         </div>
 
-        <div>
+        <div className="flex items-center justify-between gap-2">
           <button type="submit" className="btn-pri">
             Save
           </button>
+          <button
+            type="button"
+            className="btn-del"
+            onClick={() => (document.getElementById("delete-service") as HTMLDialogElement | null)?.showModal()}
+          >
+            Delete {v.serviceOne}
+          </button>
         </div>
       </Form>
+
+      <ConfirmDialog
+        id="delete-service"
+        title={`Delete this ${v.serviceOne}?`}
+        body={
+          bookingCount > 0
+            ? `${bookingCount} past ${bookingCount === 1 ? v.bookingOne : v.bookingMany} used this ${v.serviceOne}; they'll keep their name in your history, but it won't be bookable or listed anymore.`
+            : "This can't be undone."
+        }
+        confirmLabel="Delete"
+      >
+        <Form method="post" id="delete-service-form">
+          <input type="hidden" name="_action" value="delete" />
+        </Form>
+      </ConfirmDialog>
     </div>
   );
 }

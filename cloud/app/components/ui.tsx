@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { cloneElement, createContext, isValidElement, useCallback, useContext, useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useClerk } from "@clerk/react-router";
 import { LogoMark } from "./onboarding";
@@ -137,14 +137,34 @@ export function Field({
   label,
   hint,
   error,
+  required,
   children,
-}: { label: string; hint?: string; error?: string; children: ReactNode }) {
+}: { label: string; hint?: string; error?: string; required?: boolean; children: ReactNode }) {
+  // aria-invalid/aria-describedby are injected onto the single form control
+  // this wraps, rather than asked of every call site, so every field gets
+  // them "for free" the moment a `error` prop is passed — kept until the
+  // error clears, not just flashed on submit (Defect Dossier's BQ-24
+  // finding: native-only validation left screen readers with no persistent
+  // message).
+  const errorId = useId();
+  const child =
+    error && isValidElement(children)
+      ? cloneElement(children as ReactElement<Record<string, unknown>>, {
+          "aria-invalid": true,
+          "aria-describedby": errorId,
+        })
+      : children;
   return (
     <label className="field">
-      <span className={`field-label ${error ? "text-danger" : ""}`}>{label}</span>
-      {children}
+      <span className={`field-label ${error ? "text-danger" : ""}`}>
+        {label}
+        {required ? (
+          <span className="text-danger" aria-hidden="true"> *</span>
+        ) : null}
+      </span>
+      {child}
       {error ? (
-        <span className="field-error">
+        <span className="field-error" id={errorId}>
           <span className="inline-flex h-[13px] w-[13px] items-center justify-center rounded-full bg-danger text-[9px] text-white">!</span>
           {error}
         </span>
@@ -155,12 +175,92 @@ export function Field({
   );
 }
 
+/** "N things need fixing" banner with jump links, for a form whose fields
+ * are validated as a batch (public booking form, Add-consultation dialog) —
+ * one place to render this so both keep the same shape (Defect Dossier's
+ * BQ-24 finding, item 2). `errors` keys must match each field's `id`. */
+export function FormErrorSummary({ errors }: { errors: Record<string, string> }) {
+  const entries = Object.entries(errors);
+  if (entries.length === 0) return null;
+  return (
+    <div className="alert-error" role="alert">
+      <div className="flex flex-col gap-[6px]">
+        <span className="font-medium">
+          {entries.length} thing{entries.length === 1 ? "" : "s"} need{entries.length === 1 ? "s" : ""} fixing
+        </span>
+        <ul className="m-0 flex list-none flex-col gap-[2px] p-0">
+          {entries.map(([field, message]) => (
+            <li key={field}>
+              <a href={`#${field}`} className="underline">
+                {message}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 export function Input({
   error,
   className = "",
   ...props
 }: React.InputHTMLAttributes<HTMLInputElement> & { error?: boolean }) {
   return <input {...props} className={`input ${error ? "input-error" : ""} ${className}`} />;
+}
+
+/* ------------------------------------------------------------------ */
+/* Toast — shared save/create-confirmation system. Almost every         */
+/* mutation in the dashboard (a save, a create, a status change) gave   */
+/* zero feedback — the page just re-rendered with the same values, and  */
+/* the Add-consultation dialog didn't even close on success, so a       */
+/* successful booking looked identical to nothing happening at all      */
+/* (Defect Dossier's BQ-02/BQ-25). One provider, mounted once in the    */
+/* dashboard layout; call sites just do `toast("Booking rules updated")`. */
+/* ------------------------------------------------------------------ */
+interface ToastEntry {
+  id: number;
+  message: string;
+}
+const ToastContext = createContext<((message: string) => void) | null>(null);
+const TOAST_DURATION_MS = 4000;
+
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<ToastEntry[]>([]);
+  const nextId = useRef(0);
+
+  const showToast = useCallback((message: string) => {
+    const id = nextId.current++;
+    setToasts((prev) => [...prev, { id, message }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), TOAST_DURATION_MS);
+  }, []);
+
+  return (
+    <ToastContext.Provider value={showToast}>
+      {children}
+      <div
+        role="status"
+        aria-live="polite"
+        className="pointer-events-none fixed inset-x-0 bottom-5 z-50 flex flex-col items-center gap-2 px-4"
+      >
+        {/* bg-brand-950, not bg-ink — ink flips light in dark mode (same
+            always-dark-plate token the sidebar/logo mark already use), so
+            a toast reads correctly regardless of the page's own theme. */}
+        {toasts.map((t) => (
+          <div key={t.id} className="pointer-events-auto rounded-field bg-brand-950 px-4 py-[10px] text-[13px] font-medium text-white shadow-modal">
+            {t.message}
+          </div>
+        ))}
+      </div>
+    </ToastContext.Provider>
+  );
+}
+
+/** Fire-and-forget toast — no-op (not a crash) if called outside a ToastProvider, so a route under test/storybook without one doesn't break. */
+export function useToast(): (message: string) => void {
+  const ctx = useContext(ToastContext);
+  return ctx ?? (() => {});
 }
 
 /* ------------------------------------------------------------------ */
@@ -174,9 +274,16 @@ export function AlertError({ children, className = "" }: { children: ReactNode; 
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     ref.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    // Scrolling alone doesn't move keyboard/screen-reader focus — on a form
+    // taller than the viewport, with the submit button at the bottom and
+    // this banner inserted at the top, a screen-reader user landed right
+    // back where they clicked with no cue anything happened (UX audit's #5
+    // finding). tabIndex={-1} makes a plain <div> focusable programmatically
+    // without joining the tab order.
+    ref.current?.focus();
   }, []);
   return (
-    <div ref={ref} role="alert" aria-live="assertive" className={`alert-error ${className}`}>
+    <div ref={ref} role="alert" aria-live="assertive" tabIndex={-1} className={`alert-error ${className}`}>
       {children}
     </div>
   );
@@ -295,7 +402,7 @@ export function EmptyState({
   title,
   body,
   action,
-}: { icon?: ReactNode; title: string; body?: string; action?: ReactNode }) {
+}: { icon?: ReactNode; title: string; body?: ReactNode; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-[10px] px-5 py-14 text-center">
       {icon ? (
@@ -317,21 +424,41 @@ export function Toggle({
   value,
   defaultChecked,
   label,
+  ariaLabel,
   onChange,
+  disabled,
 }: {
   name: string;
   value?: string;
   defaultChecked?: boolean;
   label?: string;
+  // For a toggle whose visible label lives elsewhere in the row (so
+  // rendering Toggle's own `label` text too would just repeat it) — gives
+  // the checkbox an accessible name without a second visible copy.
+  ariaLabel?: string;
   onChange?: (checked: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
-    <label className="group inline-flex cursor-pointer items-center gap-[10px]">
+    <label className={`group inline-flex items-center gap-[10px] ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
       <input
         type="checkbox"
         name={name}
-        value={value}
+        aria-label={!label ? ariaLabel : undefined}
+        // Omit the attribute entirely when no explicit value was given,
+        // rather than `value={value}` with value=undefined — React renders
+        // that as a literal value="" on a checkbox instead of leaving the
+        // attribute off, so a checked box submitted an empty string in its
+        // FormData instead of the browser's native "on". Every save-time
+        // check this component backs (`=== "on"`, or plain truthiness —
+        // both false for "") silently persisted as unchecked regardless of
+        // what the user actually toggled. Every caller that doesn't pass
+        // `value` (resource/service "Active", gateway config, weekly-hours
+        // day toggles, ...) hit this; the one caller that does pass a real
+        // value (enabled_gateways' per-gateway id) is unaffected either way.
+        {...(value !== undefined ? { value } : {})}
         defaultChecked={defaultChecked}
+        disabled={disabled}
         onChange={onChange ? (e) => onChange(e.currentTarget.checked) : undefined}
         className="peer sr-only"
       />
@@ -375,7 +502,8 @@ export function CheckCard({
 export function BarChart({
   data,
   highlightLast = 3,
-}: { data: { date: string; count: number }[]; highlightLast?: number }) {
+  formatLabel = (d) => d,
+}: { data: { date: string; count: number }[]; highlightLast?: number; formatLabel?: (date: string) => string }) {
   const max = Math.max(1, ...data.map((d) => d.count));
   return (
     <div className="flex flex-col gap-4">
@@ -387,7 +515,7 @@ export function BarChart({
           {data.map((d, i) => (
             <div
               key={d.date}
-              title={`${d.date}: ${d.count}`}
+              title={`${formatLabel(d.date)}: ${d.count}`}
               className={`min-h-[3px] flex-1 rounded-t-[3px] hover:brightness-90 ${
                 i >= data.length - highlightLast ? "bg-brand-500" : "bg-brand-200"
               }`}
@@ -397,9 +525,9 @@ export function BarChart({
         </div>
       </div>
       <div className="num flex justify-between text-[10.5px] text-subtle">
-        <span>{data[0]?.date}</span>
-        <span>{data[Math.floor(data.length / 2)]?.date}</span>
-        <span>{data[data.length - 1]?.date}</span>
+        <span>{data[0] ? formatLabel(data[0].date) : ""}</span>
+        <span>{data[Math.floor(data.length / 2)] ? formatLabel(data[Math.floor(data.length / 2)].date) : ""}</span>
+        <span>{data[data.length - 1] ? formatLabel(data[data.length - 1].date) : ""}</span>
       </div>
     </div>
   );
@@ -442,6 +570,8 @@ export function ConfirmDialog({
   confirmLabel,
   cancelLabel = "Cancel",
   children,
+  pending = false,
+  pendingLabel,
 }: {
   id: string;
   title: string;
@@ -454,6 +584,12 @@ export function ConfirmDialog({
   // was written for still has something more specific to say.
   cancelLabel?: string;
   children?: ReactNode;
+  // Opt-in: a caller whose confirm button submits a real <Form> (not a
+  // fetcher) has no other way to stop a second click from firing a second
+  // navigation while the first is still in flight (Defect Dossier's R3-01
+  // finding). Disables both buttons and swaps the confirm label while true.
+  pending?: boolean;
+  pendingLabel?: string;
 }) {
   // Confirm submits the form passed as `children` via HTML's `form=` attribute
   // (works regardless of DOM nesting) — that form's id must be `${id}-form`.
@@ -479,6 +615,7 @@ export function ConfirmDialog({
           <button
             type="button"
             className="btn-sec"
+            disabled={pending}
             onClick={(e) => (e.currentTarget.closest("dialog") as HTMLDialogElement | null)?.close()}
           >
             {cancelLabel}
@@ -486,9 +623,10 @@ export function ConfirmDialog({
           <button
             form={`${id}-form`}
             type="submit"
-            className="btn rounded-field bg-danger font-semibold text-white hover:bg-[#9a1e14]"
+            disabled={pending}
+            className="btn rounded-field bg-danger-fill font-semibold text-white hover:bg-[#9a1e14]"
           >
-            {confirmLabel}
+            {pending ? (pendingLabel ?? "Saving…") : confirmLabel}
           </button>
         </div>
       </div>

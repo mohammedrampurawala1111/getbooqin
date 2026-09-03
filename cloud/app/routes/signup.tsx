@@ -176,7 +176,7 @@ export default function Signup() {
     <div className="grid min-h-dvh grid-cols-1 md:h-dvh md:grid-cols-2">
       <div className="flex items-center justify-center bg-canvas px-8 py-10 md:overflow-y-auto">
         <div className="card w-full max-w-[372px] p-[26px]">
-          <a href="/" className="flex h-[30px] w-[30px] shrink-0 flex-col justify-center gap-[3px] rounded-[8px] bg-brand-950 p-[6px]">
+          <a href="/" aria-label="GetBooqin home" className="flex h-[30px] w-[30px] shrink-0 flex-col justify-center gap-[3px] rounded-[8px] bg-brand-950 p-[6px]">
             <span className="h-[6px] rounded-[2px] bg-brand-500" />
             <span className="h-[6px] rounded-[2px] border-[1.5px] border-brand-500" />
           </a>

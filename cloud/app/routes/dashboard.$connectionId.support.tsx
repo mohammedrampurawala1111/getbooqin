@@ -26,7 +26,7 @@ export default function Support({ loaderData, params }: Route.ComponentProps) {
       <div className="card">
         <div className="card-body flex flex-col gap-4 text-body text-ink-3">
           <p className="m-0">
-            Need help with your GetBooqin Cloud account, this store, or billing? We're happy to help.
+            Need help with your GetBooqin account or your bookings? We're happy to help.
           </p>
 
           {supportEmail ? (
@@ -41,10 +41,6 @@ export default function Support({ loaderData, params }: Route.ComponentProps) {
             <h2 className="mb-2 mt-0 text-card font-semibold text-ink">Common questions</h2>
             <ul className="m-0 flex flex-col gap-3 pl-5">
               <li>
-                <strong className="text-ink">Need to connect or disconnect a Shopify store?</strong>{" "}
-                That lives under <a href={`${base}/settings?page=integrations`}>Settings → Integrations</a>.
-              </li>
-              <li>
                 <strong className="text-ink">Want to switch your industry template?</strong>{" "}
                 <a href={`${base}/account`}>Account → Profile</a> shows your current one with a link to
                 change it.
@@ -53,6 +49,10 @@ export default function Support({ loaderData, params }: Route.ComponentProps) {
                 <strong className="text-ink">Want to change your password?</strong>{" "}
                 <a href={`${base}/account?tab=security`}>Account → Password &amp; security</a> handles that,
                 plus your linked sign-in methods and active sessions.
+              </li>
+              <li>
+                <strong className="text-ink">If you use Shopify:</strong>{" "}
+                connecting or disconnecting a store lives under <a href={`${base}/settings?page=integrations`}>Settings → Integrations</a>.
               </li>
             </ul>
           </div>

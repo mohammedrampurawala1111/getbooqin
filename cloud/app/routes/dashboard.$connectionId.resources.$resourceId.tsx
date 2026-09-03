@@ -26,7 +26,14 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const [services, schedule, linkedServiceIds, settings] = await Promise.all([
     Data.catalogServices(shop, platform, true),
     isNew ? Promise.resolve([]) : Data.schedule(shop, id),
-    isNew ? Promise.resolve([]) : Data.serviceIdsForResource(shop, id),
+    // A brand-new resource's "Assigned services" started every box unticked
+    // — since resourcesForService() no longer falls back to "everyone" for
+    // an unconfigured service, saving that as-is silently created a
+    // resource nobody could ever book (Defect Dossier's R2-04 finding,
+    // item 3). Defaults to every currently-active service instead, same as
+    // onboarding's own first-resource step already does; the merchant can
+    // still untick anything before saving.
+    isNew ? Data.catalogServices(shop, platform, true).then((list) => list.map((s) => s.id)) : Data.serviceIdsForResource(shop, id),
     Settings.getSettings(shop, platform),
   ]);
 

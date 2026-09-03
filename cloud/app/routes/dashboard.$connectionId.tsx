@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { data, Outlet, NavLink, useLocation } from "react-router";
+import { data, Outlet, NavLink, useLocation, useLoaderData, useParams, useRouteError, isRouteErrorResponse } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId";
-import { Settings, Bookings } from "getbooqin-core";
+import { Settings, Bookings, ensureSlug } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { tenantSelectHeaders, getClerkClient } from "~/session.server";
 import { UserMenu } from "~/components/account";
-import { ThemeToggle } from "~/components/ui";
+import { ThemeToggle, ToastProvider } from "~/components/ui";
 import { vocabFor } from "~/lib/presets";
+import { getAppUrl } from "~/lib/env.server";
 
 // Tenant-scoped dashboard layout. Mints the TenantSession cookie for this
 // connection (same { shop, platform, userId, connectionId } shape the
@@ -22,6 +23,18 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const channelCount = (platform === "shopify" ? 1 : 0) + (settings.enabled_gateways.includes("stripe") ? 1 : 0);
   const pendingCount = await Bookings.count(shop, platform, { status: "pending" });
 
+  // "0 channels connected" under the business name is a permanent nag for
+  // the standalone-by-design setup, with no positive state it ever reaches
+  // (Defect Dossier's BQ-13 finding). Once there's really nothing to count,
+  // show the booking-link handle instead — same slug/fallback logic the
+  // Overview page's own share-link card already uses.
+  let bookingHandle: string | null = null;
+  if (channelCount === 0) {
+    const hasRealName = !!settings.business_name && !(platform === "manual" && settings.business_name === shop);
+    const slug = hasRealName ? await ensureSlug(connection.id, settings.business_name) : connection.id;
+    bookingHandle = `${getAppUrl().replace(/^https?:\/\//, "")}/book/${slug}`;
+  }
+
   const clerkUser = await getClerkClient().users.getUser(connection.userId);
   const email =
     clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId)?.emailAddress ??
@@ -34,6 +47,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // the line underneath it verbatim.
   const name =
     [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || email.split("@")[0] || "Account";
+  // Account → Job title (dashboard.$connectionId.account.tsx) saves here
+  // but nothing ever read it back — the sidebar hardcoded "Owner"
+  // regardless of what was actually set (UX audit's #13 finding).
+  const role = (clerkUser.unsafeMetadata?.jobTitle as string | undefined)?.trim() || "Owner";
   const initials = name
     .split(" ")
     .filter(Boolean)
@@ -66,7 +83,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       : connection.shop;
 
   return data(
-    { connection, channelCount, pendingCount, label, preset: settings.preset, user: { name, email, initials } },
+    { connection, channelCount, pendingCount, label, preset: settings.preset, bookingHandle, user: { name, email, initials, role } },
     { headers: tenantSelectHeaders(tenantSession) }
   );
 }
@@ -163,8 +180,18 @@ function navItemClass({ isActive }: { isActive: boolean }): string {
   return `nav-item ${isActive ? "nav-item-active" : ""}`;
 }
 
-export default function ConnectionDashboard({ loaderData, params }: Route.ComponentProps) {
-  const { channelCount, pendingCount, label, preset, user } = loaderData;
+// Shared between the default export (wraps <Outlet/>) and ErrorBoundary
+// below (wraps a "page not found" panel instead) — a bad nested URL used to
+// bubble past this whole layout to root.tsx's bare boundary, ejecting a
+// signed-in merchant from the sidebar and business context entirely
+// (Defect Dossier's BQ-37 finding). Pulled out rather than duplicated: this
+// is a stateful component (mobile nav open/closed, inert handling, a media
+// query listener) with real bug-fix history attached to nearly every piece
+// of it, and copy-pasting it would let the two copies drift.
+function DashboardShell({
+  loaderData, params, children,
+}: { loaderData: Route.ComponentProps["loaderData"]; params: { connectionId: string }; children: ReactNode }) {
+  const { channelCount, pendingCount, label, preset, bookingHandle, user } = loaderData;
   const v = vocabFor(preset);
   const NAV_ITEMS = navItems(preset, pendingCount);
   const base = `/dashboard/${params.connectionId}`;
@@ -218,6 +245,7 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
   }, [asideInert]);
 
   return (
+    <ToastProvider>
     <div className="flex min-h-dvh">
       {navOpen && (
         <div
@@ -242,9 +270,15 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
           <span className="truncate text-[13.5px] font-semibold" title={label}>
             {label}
           </span>
-          <a href={`${base}/settings?page=integrations`} className="flex items-center text-[12px] font-medium text-[#a49caf] no-underline max-md:min-h-[44px] hover:underline">
-            {channelCount} channel{channelCount === 1 ? "" : "s"} connected
-          </a>
+          {channelCount > 0 ? (
+            <a href={`${base}/settings?page=integrations`} className="flex items-center text-[12px] font-medium text-[#a49caf] no-underline max-md:min-h-[44px] hover:underline">
+              {channelCount} channel{channelCount === 1 ? "" : "s"} connected
+            </a>
+          ) : (
+            <a href={`${base}/settings?page=integrations`} className="truncate text-[12px] font-medium text-[#a49caf] no-underline max-md:min-h-[44px] hover:underline" title={bookingHandle ?? undefined}>
+              {bookingHandle}
+            </a>
+          )}
         </div>
 
         <nav className="mt-5 flex flex-col gap-[2px]">
@@ -268,7 +302,7 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
         <UserMenu
           name={user.name}
           email={user.email}
-          role="Owner"
+          role={user.role}
           initials={user.initials}
           dark
           base={base}
@@ -302,11 +336,59 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
             landmark; a second, nested one is itself an accessibility
             violation (only one <main> per document). */}
         <div className="min-w-0 flex-1">
-          <div className="page">
-            <Outlet context={{ vocab: v }} />
-          </div>
+          <div className="page">{children}</div>
         </div>
       </div>
     </div>
+    </ToastProvider>
+  );
+}
+
+export default function ConnectionDashboard({ loaderData, params }: Route.ComponentProps) {
+  const v = vocabFor(loaderData.preset);
+  return (
+    <DashboardShell loaderData={loaderData} params={params}>
+      <Outlet context={{ vocab: v }} />
+    </DashboardShell>
+  );
+}
+
+// A bad nested URL (mistyped, stale bookmark, a deleted record's old link)
+// used to bubble all the way past this layout to root.tsx's bare boundary,
+// ejecting a signed-in merchant from the whole dashboard shell — sidebar,
+// business context, everything (Defect Dossier's BQ-37 finding). This
+// route's own loader already succeeded whenever the error is in a child
+// (it's what rendered the sidebar in the first place) — useLoaderData()
+// here returns that same data, so DashboardShell renders exactly as it
+// would have, with this panel standing in for <Outlet/>. Deliberately no
+// <html>/<Scripts>, unlike root.tsx's boundary: this renders *inside* the
+// already-mounted document. If this route's *own* loader is what actually
+// failed, useLoaderData() has nothing to return and this component throws
+// while rendering — that's expected: it re-bubbles to root.tsx's boundary,
+// the same fallback every other route already gets today.
+export function ErrorBoundary() {
+  const error = useRouteError();
+  const params = useParams<{ connectionId: string }>();
+  const loaderData = useLoaderData<typeof loader>();
+  const notFound = isRouteErrorResponse(error) && error.status === 404;
+
+  if (import.meta.env.DEV && !notFound) {
+    console.error(error);
+  }
+
+  return (
+    <DashboardShell loaderData={loaderData} params={{ connectionId: params.connectionId! }}>
+      <div className="flex flex-col items-center gap-3 px-4 py-16 text-center">
+        <h1 className="page-title">{notFound ? "Page not found" : "Something went wrong"}</h1>
+        <p className="m-0 max-w-[360px] text-body text-muted">
+          {notFound
+            ? "That page doesn't exist or may have moved."
+            : "An unexpected error occurred. Try again, or head back to the overview."}
+        </p>
+        <a href={`/dashboard/${params.connectionId}`} className="btn-pri mt-2 no-underline hover:no-underline">
+          Back to Overview
+        </a>
+      </div>
+    </DashboardShell>
   );
 }

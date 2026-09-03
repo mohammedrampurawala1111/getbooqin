@@ -18,7 +18,7 @@ export default function Support({ loaderData }: Route.ComponentProps) {
   return (
     <LegalShell title="Support">
       <p>
-        Need help with your GetBooqin Cloud account, a connected store, or billing? We're happy to help.
+        Need help with your GetBooqin account or your bookings? We're happy to help.
       </p>
 
       {supportEmail ? (
@@ -37,13 +37,13 @@ export default function Support({ loaderData }: Route.ComponentProps) {
           email.
         </li>
         <li>
-          <strong>Need to connect or disconnect a Shopify store?</strong> That lives under Settings →
-          Integrations once you're{" "}
-          <a href="/login">logged in</a>.
-        </li>
-        <li>
           <strong>Want to switch your industry template?</strong> Account → Profile shows your current one
           with a link to change it.
+        </li>
+        <li>
+          <strong>If you use Shopify:</strong> connecting or disconnecting a store lives under Settings →
+          Integrations once you're{" "}
+          <a href="/login">logged in</a>.
         </li>
       </ul>
 
