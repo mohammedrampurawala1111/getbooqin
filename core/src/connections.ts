@@ -86,8 +86,33 @@ export async function createManualConnection({ userId }: { userId: string }) {
   return connection;
 }
 
+// Every business this user can reach at all — as owner *or* as an invited
+// team member — not just ones where Connection.userId is literally them.
+// Queried through ConnectionMember (every Connection gets an "owner" row
+// there too, via ensureOwnerMembership above) rather than Connection.userId
+// directly, for the same reason the schema comment on ConnectionMember
+// gives for requireTenant(): a straight `where: { userId }` against
+// Connection only ever finds businesses this user *created*. Before this
+// fix, every one of this function's callers (dashboard.tsx's and
+// dashboard.account.tsx's "already set up, land on the most recent one"
+// redirect, onboarding.tsx's "already set up, don't re-onboard" check, and
+// Settings > Integrations' multi-business switcher) saw an invited
+// Admin/Write/Read teammate as having *zero* businesses the moment they
+// logged in through anything other than the one-time /invite/:token
+// redirect — e.g. a completely ordinary subsequent /login — and routed
+// them straight into onboarding, which then created a brand-new throwaway
+// business for them right on top of the real membership they already had
+// (QA testing found this live: an accepted Admin teammate's very next
+// login minted a second "manual-<uuid>" Connection with the teammate as
+// its owner, while their real "admin" ConnectionMember row on the
+// business they were actually invited to sat untouched).
 export async function listUserConnections(userId: string) {
-  return prisma.connection.findMany({ where: { userId }, orderBy: { connectedAt: "asc" } });
+  const memberships = await prisma.connectionMember.findMany({
+    where: { userId },
+    include: { connection: true },
+    orderBy: { connection: { connectedAt: "asc" } },
+  });
+  return memberships.map((m) => m.connection);
 }
 
 function slugify(input: string): string {

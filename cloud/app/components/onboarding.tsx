@@ -281,6 +281,7 @@ export function SetupChecklist({
   summary,
   hrefs,
   resumeHref,
+  onDismiss,
 }: {
   summary: {
     tasks: { key: string; name: string; hint: string; done: boolean }[];
@@ -288,6 +289,12 @@ export function SetupChecklist({
   };
   hrefs: Record<string, string>;
   resumeHref: string;
+  // Only ever passed once summary.complete is true — see
+  // DismissibleSetupChecklist below (GetBooqin clinic audit's CR-06
+  // finding: this card kept occupying the largest block on Overview even
+  // once genuinely finished, with nothing to collapse it short of waiting
+  // for an actual booking to arrive).
+  onDismiss?: () => void;
 }) {
   return (
     <div className="card">
@@ -309,6 +316,11 @@ export function SetupChecklist({
         </div>
         {!summary.complete && (
           <a href={resumeHref} className="btn-pri no-underline hover:no-underline">Continue setup</a>
+        )}
+        {onDismiss && (
+          <button type="button" className="btn-sec" onClick={onDismiss}>
+            Dismiss
+          </button>
         )}
       </div>
       {summary.tasks.map((t) => (

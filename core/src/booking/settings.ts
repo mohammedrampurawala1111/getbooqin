@@ -13,8 +13,11 @@ import { getPreset, PRESET_CONTROLLED_KEYS } from "./presets.js";
 import type { Settings } from "./settingsShared.js";
 import { PAYMENTS_ENABLED } from "./featureFlags.js";
 
-export type { Settings, GatewaySettings, VideoSettings } from "./settingsShared.js";
-export { term, money, gatewaySetting, videoSetting, template } from "./settingsShared.js";
+export type { Settings, GatewaySettings, VideoSettings, WhatsAppSettings, BookingRuleField, BookingRuleInput } from "./settingsShared.js";
+export {
+  term, money, gatewaySetting, videoSetting, template,
+  BOOKING_RULE_LIMITS, validateBookingRules, cancelCutoffExceedsNotice, bookingWindowIsClosed,
+} from "./settingsShared.js";
 
 /** @param shopDomain The shop's identifier on its platform (e.g. a *.myshopify.com domain). */
 export function defaultSettings(shopDomain: string, adminEmail: string): Settings {
@@ -25,6 +28,7 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
     business_phone: "",
     business_description: "",
     business_address: "",
+    default_country_code: "",
     currency: "USD",
     currency_symbol: "$",
     timezone: "UTC",
@@ -38,7 +42,9 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
     allow_cancel: true,
     cancel_cutoff_hours: 24,
     require_phone: false,
+    require_email: true,
     consent_text: "",
+    privacy_notice_url: "",
     booking_page_url: `https://${shopDomain}`,
     intake_fields: [],
 
@@ -58,6 +64,9 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
     admin_email: adminEmail,
     reminder_enabled: true,
     reminder_hours: 24,
+
+    whatsapp_enabled: false,
+    whatsapp: {},
 
     chat_enabled: true,
     chat_position: "right",
@@ -148,7 +157,39 @@ export async function setSettings(
         valueChanged(values[key], current[key])
     );
     if (touched.length > 0) {
-      customizedFields = Array.from(new Set([...customizedFields, ...(touched as string[])]));
+      // Whether a touched field lands in or out of customizedFields is
+      // decided against the *preset's own default*, not just "did the
+      // value change" — a GetBooqin clinic audit finding (BR-05) set
+      // minimum notice to 3000, then back to its original preset value of
+      // 4, and the field stayed badged "Customized" through a full reload.
+      // The old code only ever added to this set on write and never
+      // re-evaluated it, so a field that happened to be edited back to its
+      // starting value was stuck reading as hand-edited forever — which
+      // matters beyond the badge itself, since the Business template page
+      // promises "switching templates only changes rules you haven't
+      // customized yet": a mis-flagged field permanently stopped following
+      // its preset with no reset control anywhere to undo it. Comparing
+      // against the preset's default (not `current`) means saving a value
+      // straight back to what the preset would have set un-customizes it
+      // automatically, and a value that only coincidentally matches some
+      // *other* preset's default (not this shop's own) still counts as a
+      // real customization.
+      // `generic`'s own preset.defaults deliberately omits every one of
+      // these fields except slot_interval — its values already equal
+      // defaultSettings()'s baseline (see settingsShared.ts's Settings
+      // header comment) — so a key a preset doesn't mention still needs a
+      // real baseline to compare against, not `undefined`, or reverting it
+      // to that baseline would never un-customize it either.
+      const presetDefaults = { ...defaultSettings(shop, ""), ...getPreset(current.preset).defaults } as Partial<Settings>;
+      const next = new Set(customizedFields);
+      for (const key of touched) {
+        if (valueChanged(values[key], presetDefaults[key])) {
+          next.add(key as string);
+        } else {
+          next.delete(key as string);
+        }
+      }
+      customizedFields = Array.from(next);
     }
   }
 

@@ -108,7 +108,11 @@ export async function resourceUtilization(
   platform: string,
   range: DateRange
 ): Promise<Array<{ resourceId: number; resourceName: string; soFar: UtilizationHalf | null; bookedAhead: UtilizationHalf }>> {
-  const resources = await prisma.resource.findMany({ where: { shop, platform, status: true } });
+  // kind: "practitioner" — Overview's own heading reads "{Practitioner}
+  // utilisation", a claim a room's own hours would confuse rather than
+  // support (GetBooqin clinic audit's RS-01 finding). Room utilization
+  // would be a real, separate metric worth adding later, not this one.
+  const resources = await prisma.resource.findMany({ where: { shop, platform, status: true, kind: "practitioner" } });
   if (resources.length === 0) return [];
 
   const now = new Date();

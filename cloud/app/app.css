@@ -202,34 +202,6 @@
   /* dark sidebar variant: wrap sidebar in .side-dark */
   .side-dark { @apply bg-brand-950 text-[#ece9f0]; }
   .side-dark .nav-item { @apply text-[#a49caf] hover:bg-white/5; }
-  /* .text-subtle resolves to whichever value the *page* theme currently
-     has — #5f6675 in light mode — but .side-dark's own background is
-     always dark regardless of page theme (see comment below), so the
-     "Owner" role label under the user's name rendered that light-mode
-     value on the permanently-dark plate: 3.25:1, below the 4.5:1 required
-     for 11px text (UX audit's C2 finding). Same fixed-color-on-a-fixed-
-     plate fix as .nav-item just above, reusing its exact color. */
-  .side-dark .text-subtle { color: #a49caf; }
-  /* ...except inside the UserMenu dropdown popover, whose own background
-     (bg-surface) is always the *page* theme's light/dark surface, not the
-     sidebar's permanently-dark plate — the blanket ".side-dark .text-subtle"
-     rule above still matched it by DOM ancestry, repainting its email-
-     address text to #a49caf regardless, which is ~2.6:1 on a light
-     bg-surface (found while fixing the "Owner" contrast above — same class
-     of bug, not yet reported separately). Re-asserting the token here lets
-     the popover track the page theme like every other surface. */
-  .side-dark .user-menu-pop.text-subtle,
-  .side-dark .user-menu-pop .text-subtle { color: var(--color-subtle); }
-  .side-dark .nav-item-active {
-    /* Mixed from the literal light-mode brand-500 hex, not the token —
-       .side-dark is always a dark plate regardless of page theme, so this
-       needs one fixed lightened accent. Referencing var(--color-brand-500)
-       instead would, once brand-500 itself gets a lighter dark-mode value
-       (K1 fix above), mix light-on-already-light into a washed-out pale
-       lavender that loses the accent's colour identity. */
-    color: color-mix(in oklch, #b05fc9, white 50%);
-    background: color-mix(in oklch, #b05fc9 22%, transparent);
-  }
 
   /* misc */
   .alert-error   { @apply flex items-center gap-3 rounded-[10px] border border-danger-line bg-danger-bg px-[15px] py-[13px] text-[13px] text-[#7a1c14]; }
@@ -302,6 +274,42 @@
    overrides it below the app's one real breakpoint. */
 @media (max-width: 47.999rem) {
   :where(input, select, textarea) { font-size: 16px; }
+}
+
+/* Deliberately outside every @layer — same reasoning as the block above:
+   .text-subtle is a Tailwind-generated utility, which Tailwind v4 places in
+   its own layer ahead of @layer components, so a same-named override
+   written inside @layer components (where these three rules lived at
+   first) never actually won in the app's default light theme. Verified by
+   reproducing the audit's own number: with the override not applying,
+   .text-subtle resolves to light theme's --color-subtle (#5f6675) painted
+   directly on the sidebar's permanently-dark plate (#131118) — exactly the
+   3.25:1 the GetBooqin clinic audit measured for the "Owner" role label
+   (CR-05 finding), the same failure the code here already believed it had
+   fixed for a *previous* audit's identical finding. #a49caf against
+   #131118 is ~7.1:1 — the color choice itself was fine; only its layer was
+   wrong. */
+.side-dark .text-subtle { color: #a49caf; }
+/* ...except inside the UserMenu dropdown popover, whose own background
+   (bg-surface) is always the *page* theme's light/dark surface, not the
+   sidebar's permanently-dark plate — the blanket ".side-dark .text-subtle"
+   rule above still matches it by DOM ancestry, repainting its email-address
+   text to #a49caf regardless, which is ~2.6:1 on a light bg-surface.
+   Re-asserting the token here lets the popover track the page theme like
+   every other surface. */
+.side-dark .user-menu-pop.text-subtle,
+.side-dark .user-menu-pop .text-subtle { color: var(--color-subtle); }
+
+/* Same unlayered treatment for the active sidebar item — measured at
+   2.12:1 (GetBooqin clinic audit's CR-05 finding), the item a user most
+   needs to be able to locate. The color-mix()-in-oklch approach this
+   replaced computed a lighter-than-intended text color over a
+   barely-different background; both values below are plain sRGB hex,
+   individually verified: #f0e4fa text on #3d2c4d is ~10.3:1, comfortably
+   past the 4.5:1 required for this text size. */
+.side-dark .nav-item-active {
+  color: #f0e4fa;
+  background: #3d2c4d;
 }
 
 /* Dark mode: redefine the same custom properties @theme emits above, so

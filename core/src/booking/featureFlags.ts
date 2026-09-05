@@ -6,3 +6,4 @@
 export const PAYMENTS_ENABLED = process.env.ENABLE_PAYMENTS === "true";
 export const CHAT_ENABLED = process.env.ENABLE_CHAT === "true";
 export const VISIT_SUMMARIES_ENABLED = process.env.ENABLE_VISIT_SUMMARIES === "true";
+export const WHATSAPP_ENABLED = process.env.ENABLE_WHATSAPP === "true";

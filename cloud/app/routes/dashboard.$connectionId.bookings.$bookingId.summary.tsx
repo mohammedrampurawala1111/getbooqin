@@ -6,6 +6,7 @@ import { formatInZone } from "getbooqin-core/booking/tz";
 import type { PatientSummary } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Field, Input, ConfirmDialog } from "~/components/ui";
+import { isClinicFeaturePreset } from "~/lib/presets";
 import { transcribeAudioFromForm } from "~/lib/deepgram.server";
 import { useRecordingCapture, RecordingCapturePanel, formatElapsed } from "~/components/recording-capture";
 
@@ -34,7 +35,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   if (!booking) throw data("Booking not found", { status: 404 });
 
   const settings = await Settings.getSettings(shop, platform);
-  if (settings.preset !== "clinic" || !FeatureFlags.VISIT_SUMMARIES_ENABLED || !settings.visit_summaries_enabled) {
+  if (!isClinicFeaturePreset(settings.preset) || !FeatureFlags.VISIT_SUMMARIES_ENABLED || !settings.visit_summaries_enabled) {
     throw data("Visit Summary isn't available for this booking.", { status: 404 });
   }
 

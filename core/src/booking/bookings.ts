@@ -16,9 +16,9 @@ import { zoneAbbr } from "./tz.js";
 import { uid, now } from "./ids.js";
 import { GetBooqinError } from "./errors.js";
 import events from "./events.js";
-import { STATUSES, TRANSITIONS, OCCUPYING, type BookingStatus, statusLabels, paymentStatusLabels, isEmail } from "./bookingsShared.js";
+import { STATUSES, TRANSITIONS, OCCUPYING, type BookingStatus, statusLabels, paymentStatusLabels, isEmail, isRealEmail, isPhone, normalizePhone } from "./bookingsShared.js";
 
-export { STATUSES, TRANSITIONS, OCCUPYING, statusLabels, paymentStatusLabels, isEmail };
+export { STATUSES, TRANSITIONS, OCCUPYING, statusLabels, paymentStatusLabels, isEmail, isRealEmail, isPhone, normalizePhone };
 export type { BookingStatus };
 
 /* ------------------------------------------------------------ Validation */
@@ -90,10 +90,28 @@ export async function create(shop: string, platform: string, shopTimezone: strin
 
   const service = await Data.catalogService(shop, args.service_id);
   if (!service) throw new GetBooqinError("getbooqin_invalid_service", "That service is not available.", 400);
-  if (!isEmail(args.email)) throw new GetBooqinError("getbooqin_invalid_email", "Please provide a valid email address.", 400);
+  // Email used to be hard-required with no matching setting, while phone
+  // had its own require_phone toggle right beside it on Booking rules — a
+  // walk-in patient with no email address (common for a clinic's older or
+  // lower-income patients) couldn't book online at all (GetBooqin clinic
+  // audit's PB-03 finding). A non-empty email must still be well-formed
+  // either way; only the "must be present" half is now conditional.
+  if (args.email && !isEmail(args.email)) {
+    throw new GetBooqinError("getbooqin_invalid_email", "Please provide a valid email address.", 400);
+  }
+  if (settings.require_email && !args.email) {
+    throw new GetBooqinError("getbooqin_missing_email", "Please provide an email address.", 400);
+  }
   if (!args.first_name) throw new GetBooqinError("getbooqin_missing_name", "Please provide your name.", 400);
   if (settings.require_phone && !args.phone) {
     throw new GetBooqinError("getbooqin_missing_phone", "Please provide a phone number.", 400);
+  }
+  // With both email and phone optional, at least one real way to reach the
+  // customer must exist — Data.findOrCreateCustomer() can technically
+  // synthesize a record with neither, but a booking nobody can be
+  // contacted about isn't a state this app should let happen silently.
+  if (!settings.require_email && !settings.require_phone && !args.email && !args.phone) {
+    throw new GetBooqinError("getbooqin_missing_contact", "Please provide a phone number or email address.", 400);
   }
   for (const field of settings.intake_fields) {
     if (!field.required) continue;
@@ -119,6 +137,7 @@ export async function create(shop: string, platform: string, shopTimezone: strin
   }
 
   let chosen: (typeof candidates)[number] | null = null;
+  let chosenRoomId: number | null = null;
   let startUtc: DateTime | null = null;
   let endUtc: DateTime | null = null;
   let tzName = shopTimezone;
@@ -137,8 +156,10 @@ export async function create(shop: string, platform: string, shopTimezone: strin
     if (!start) continue;
     const end = start.plus({ minutes: service.durationMin + addonDurationMin });
 
+    let roomId: number | null = null;
     try {
-      await assertSlotBookable(shop, settings, { resourceId: resource.id, service, start, end, override: args.override });
+      const result = await assertSlotBookable(shop, platform, settings, { resourceId: resource.id, service, start, end, override: args.override });
+      roomId = result.roomId;
     } catch (err) {
       if (err instanceof GetBooqinError) lastReason = err;
       continue;
@@ -155,6 +176,7 @@ export async function create(shop: string, platform: string, shopTimezone: strin
     }
 
     chosen = resource;
+    chosenRoomId = roomId;
     startUtc = start.toUTC();
     endUtc = end.toUTC();
     tzName = tz;
@@ -178,7 +200,7 @@ export async function create(shop: string, platform: string, shopTimezone: strin
     first_name: args.first_name,
     last_name: args.last_name,
     email: args.email,
-    phone: args.phone,
+    phone: args.phone ? normalizePhone(args.phone, settings.default_country_code) : args.phone,
     timezone: shopTimezone,
   });
 
@@ -201,6 +223,7 @@ export async function create(shop: string, platform: string, shopTimezone: strin
       uid: uid(),
       serviceId: service.id,
       resourceId: chosen.id,
+      roomId: chosenRoomId,
       customerId,
       startUtc: startUtc.toJSDate(),
       endUtc: endUtc.toJSDate(),
@@ -283,8 +306,21 @@ export interface SlotCheckArgs {
  * check alone, which is how a reschedule to a closed Sunday night used to
  * succeed silently (UX audit's #1 finding — the whole reason this function
  * exists as one place instead of four).
+ *
+ * When `service.requiresRoom`, this also picks an actual free room and
+ * returns its id — the practitioner and the room are two independently
+ * double-booking-checked resources sharing one time slot (GetBooqin clinic
+ * audit's RS-01 finding: previously nothing tracked room occupancy at all,
+ * so two practitioners could be booked into the same physical chair).
+ * `roomId: null` for every non-room-requiring service, i.e. every shop that
+ * has never turned rooms on.
  */
-export async function assertSlotBookable(shop: string, settings: Settings, args: SlotCheckArgs): Promise<void> {
+export async function assertSlotBookable(
+  shop: string,
+  platform: string,
+  settings: Settings,
+  args: SlotCheckArgs
+): Promise<{ roomId: number | null }> {
   const { resourceId, service, start, end, excludeBookingId = 0, override = false } = args;
   const startUtc = start.toUTC();
   const endUtc = end.toUTC();
@@ -323,6 +359,23 @@ export async function assertSlotBookable(shop: string, settings: Settings, args:
   if (await Availability.hasBookingConflict(shop, resourceId, startUtc, endUtc, service, excludeBookingId)) {
     throw new GetBooqinError("getbooqin_slot_taken", "That slot is already booked.", 409);
   }
+
+  if (!service.requiresRoom) return { roomId: null };
+
+  const rooms = await Data.roomsForService(shop, platform, service.id);
+  for (const room of rooms) {
+    if (!room.status) continue;
+    // Same override semantics as the practitioner check above: "book
+    // outside business hours anyway" skips whether the room's own weekly
+    // hours cover this time, never whether the room is already occupied or
+    // blocked by time off — those aren't policy, they're "this literally
+    // can't happen."
+    if (!override && !(await matchesSchedule(shop, room.id, start, end))) continue;
+    if (await Availability.isBlockedByTimeOff(shop, room.id, startUtc, endUtc, service)) continue;
+    if (await Availability.hasRoomConflict(shop, room.id, startUtc, endUtc, service, excludeBookingId)) continue;
+    return { roomId: room.id };
+  }
+  throw new GetBooqinError("getbooqin_no_room", "No room is available for that time.", 409);
 }
 
 export function get(shop: string, id: number) {
@@ -440,6 +493,13 @@ export async function assertNoSlotConflict(shop: string, booking: Booking): Prom
       409
     );
   }
+  if (booking.roomId && !(await Availability.isRoomFree(shop, booking.roomId, start, end, service, booking.id))) {
+    throw new GetBooqinError(
+      "getbooqin_slot_taken",
+      "That slot is no longer available — the room is now occupied. Reschedule this one instead.",
+      409
+    );
+  }
 }
 
 export interface ScheduleConflict {
@@ -487,6 +547,27 @@ export async function scheduleConflict(shop: string, booking: Booking): Promise<
     reasons.push("This overlaps another booking for the same resource.");
   }
 
+  // A room-requiring booking is just as capable of drifting out of its own
+  // rules as its practitioner is — the room could have been deactivated,
+  // had its hours changed, or double-booked by a different practitioner
+  // entirely (GetBooqin clinic audit's RS-01 finding).
+  if (booking.roomId) {
+    const room = await Data.resource(shop, booking.roomId);
+    if (!room || !room.status) {
+      reasons.push("The room for this booking no longer exists or is inactive.");
+    } else {
+      if (!(await matchesSchedule(shop, booking.roomId, localStart, localEnd))) {
+        reasons.push("This time is outside the room's own hours.");
+      }
+      if (await Availability.isBlockedByTimeOff(shop, booking.roomId, startUtc, endUtc, service)) {
+        reasons.push("This time falls inside the room's time-off block.");
+      }
+      if (await Availability.hasRoomConflict(shop, booking.roomId, startUtc, endUtc, service, booking.id)) {
+        reasons.push("This overlaps another booking in the same room.");
+      }
+    }
+  }
+
   return { ok: reasons.length === 0, reasons };
 }
 
@@ -496,6 +577,33 @@ export function customerCanCancel(booking: Booking, settings: Settings): boolean
   if (!["pending", "confirmed"].includes(booking.status)) return false;
   const cutoffMs = settings.cancel_cutoff_hours * 3600 * 1000;
   return booking.startUtc.getTime() - Date.now() > cutoffMs;
+}
+
+/**
+ * Why customerCanCancel() came back false, in a sentence a customer on the
+ * manage-booking page can actually act on. Before this, the page just
+ * hid the cancel control with no explanation at all — including for the
+ * one case a business's own settings can produce silently: a minimum
+ * notice shorter than the cancellation cutoff means a booking is
+ * un-cancellable from the moment it's created (min_notice_hours: 4,
+ * cancel_cutoff_hours: 24 booked 9h50m out — legal to book, impossible to
+ * then cancel), with "Allow customers to cancel" still switched on and
+ * nothing about the 24-hour rule anywhere on the page (GetBooqin clinic
+ * audit's PB-01 finding). Returns "" when cancellation is actually
+ * available — callers only render this when customerCanCancel() is false.
+ */
+export function cancelUnavailableReason(booking: Booking, settings: Settings): string {
+  if (!settings.allow_cancel) {
+    return "This business has turned off online cancellation for bookings.";
+  }
+  if (!["pending", "confirmed"].includes(booking.status)) {
+    return "";
+  }
+  const cutoffMs = settings.cancel_cutoff_hours * 3600 * 1000;
+  if (booking.startUtc.getTime() - Date.now() <= cutoffMs) {
+    return `This booking is inside the ${settings.cancel_cutoff_hours}-hour cancellation window, so it can no longer be cancelled online.`;
+  }
+  return "";
 }
 
 /**
@@ -537,7 +645,7 @@ export async function reschedule(
   const eUtc = end.toUTC();
 
   const settings = await getSettings(shop, platform);
-  await assertSlotBookable(shop, settings, {
+  const { roomId } = await assertSlotBookable(shop, platform, settings, {
     resourceId,
     service,
     start,
@@ -546,11 +654,28 @@ export async function reschedule(
     override: opts.override,
   });
 
+  // assertSlotBookable() checks business hours/notice/time-off/conflict,
+  // but never that the new time actually sits on the slot_interval lattice
+  // — the reschedule panel's Time field is a bare <input type="time">, not
+  // a slot picker, so staff could type e.g. 11:17 on a 15-minute-interval
+  // business and it would silently save (GetBooqin clinic audit's AP-01
+  // finding). Same override escape hatch as create()'s identical check —
+  // a deliberate off-grid reschedule stays possible, it just can't happen
+  // by accident.
+  if (!opts.override && !(await slotIsPublished(shop, platform, shopTimezone, service.id, resourceId, date, time, id))) {
+    throw new GetBooqinError(
+      "getbooqin_slot_not_offered",
+      "That time isn't one of this resource's normal slots. Check 'Book outside business hours anyway' to force it.",
+      400
+    );
+  }
+
   const previous = booking;
   const updated = await prisma.booking.update({
     where: { id },
     data: {
       resourceId,
+      roomId,
       startUtc: sUtc.toJSDate(),
       endUtc: eUtc.toJSDate(),
       timezone: tz,
@@ -643,13 +768,20 @@ export async function query(shop: string, platform: string, args: QueryArgs = {}
  * Used to warn before a time-off save silently strands existing bookings
  * inside it (Defect Dossier's BQ-08 finding).
  */
-export async function occupyingBetween(shop: string, platform: string, resourceId: number, start: Date, end: Date) {
+export async function occupyingBetween(
+  shop: string,
+  platform: string,
+  resourceId: number,
+  start: Date,
+  end: Date,
+  opts: { statusIn?: string[] } = {}
+) {
   return prisma.booking.findMany({
     where: {
       shop,
       platform,
       ...(resourceId ? { resourceId } : {}),
-      status: { in: OCCUPYING },
+      status: { in: opts.statusIn ?? OCCUPYING },
       startUtc: { lt: end },
       endUtc: { gt: start },
     },

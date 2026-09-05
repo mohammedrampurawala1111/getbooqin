@@ -5,7 +5,7 @@ import { Bookings, Data, Settings, ConsultationSummary, FeatureFlags } from "get
 import { formatInZone } from "getbooqin-core/booking/tz";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Badge, Field, Input, Toggle, ConfirmDialog, useToast } from "~/components/ui";
-import { useVocabulary, vocabFor } from "~/lib/presets";
+import { useVocabulary, vocabFor, isClinicFeaturePreset } from "~/lib/presets";
 import { dashboardPreset } from "~/lib/dashboardMeta";
 
 export const meta: Route.MetaFunction = ({ matches }) => [
@@ -29,9 +29,14 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const booking = await Bookings.get(shop, id);
   if (!booking) throw data("Booking not found", { status: 404 });
 
-  const [service, resource, customer, resourceOptions, settings, conflict] = await Promise.all([
+  const [service, resource, room, customer, resourceOptions, settings, conflict] = await Promise.all([
     Data.catalogService(shop, booking.serviceId),
     Data.resource(shop, booking.resourceId),
+    // Only set when the service requiresRoom — see the Booking.roomId
+    // schema comment (GetBooqin clinic audit's RS-01 finding). Surfaced
+    // here so staff can actually see which chair a patient is booked into,
+    // not just who they're seeing.
+    booking.roomId ? Data.resource(shop, booking.roomId) : Promise.resolve(null),
     Data.customer(shop, booking.customerId),
     Data.resourcesForService(shop, platform, booking.serviceId),
     Settings.getSettings(shop, platform),
@@ -51,7 +56,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // gate the new .summary route's loader enforces server-side, so a direct
   // link can't reach it either when this is off.
   const visitSummariesAvailable =
-    settings.preset === "clinic" &&
+    isClinicFeaturePreset(settings.preset) &&
     FeatureFlags.VISIT_SUMMARIES_ENABLED &&
     settings.visit_summaries_enabled &&
     booking.status === "completed";
@@ -63,7 +68,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // exclusive, so only one of these two cards ever renders for a given
   // booking (docs/recording-poc-ux-spec.md §3.1).
   const recordConsultationAvailable =
-    settings.preset === "clinic" &&
+    isClinicFeaturePreset(settings.preset) &&
     FeatureFlags.VISIT_SUMMARIES_ENABLED &&
     settings.visit_summaries_enabled &&
     booking.status === "confirmed";
@@ -83,7 +88,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       : null;
 
   return {
-    booking, service, resource, customer, resourceOptions, settings, allowedTransitions, conflict, hasStarted,
+    booking, service, resource, room, customer, resourceOptions, settings, allowedTransitions, conflict, hasStarted,
     labels: Bookings.statusLabels(),
     visitSummariesAvailable,
     recordConsultationAvailable,
@@ -147,7 +152,7 @@ const TRANSITION_VERBS: Partial<Record<Bookings.BookingStatus, string>> = {
 };
 
 export default function BookingDetail({ loaderData, actionData, params }: Route.ComponentProps) {
-  const { booking, service, resource, customer, resourceOptions, settings, allowedTransitions, labels, visitSummariesAvailable, recordConsultationAvailable, visitSummary, conflict, hasStarted } = loaderData;
+  const { booking, service, resource, room, customer, resourceOptions, settings, allowedTransitions, labels, visitSummariesAvailable, recordConsultationAvailable, visitSummary, conflict, hasStarted } = loaderData;
   const v = useVocabulary();
   const base = `/dashboard/${params.connectionId}`;
   const canCancel = ["pending", "confirmed"].includes(booking.status);
@@ -166,6 +171,15 @@ export default function BookingDetail({ loaderData, actionData, params }: Route.
     if (!actionData) return;
     if ("statusChanged" in actionData && actionData.statusChanged) {
       toast(`${v.bookingOne.charAt(0).toUpperCase() + v.bookingOne.slice(1)} ${labels[actionData.statusChanged as keyof typeof labels].toLowerCase()}`);
+      // The cancel confirmation submits a real <Form>, not a fetcher — the
+      // page behind it already re-rendered with the new status by the time
+      // this runs, but a native <dialog>'s open state lives outside React,
+      // so it stayed open over its own still-live Confirm button with no
+      // sign the action had gone through (GetBooqin clinic audit's CR-02
+      // finding).
+      if (actionData.statusChanged === "cancelled") {
+        (document.getElementById("cancel-booking") as HTMLDialogElement | null)?.close();
+      }
     } else if ("rescheduled" in actionData && actionData.rescheduled) {
       toast(`${v.bookingOne.charAt(0).toUpperCase() + v.bookingOne.slice(1)} rescheduled — ${formatInZone(booking.startUtc, settings.timezone)}`);
     }
@@ -272,6 +286,16 @@ export default function BookingDetail({ loaderData, actionData, params }: Route.
                 <span className="kv-key">{v.resourceOne ? v.resourceOne.charAt(0).toUpperCase() + v.resourceOne.slice(1) : "Resource"}</span>
                 <span className="kv-val">{resource?.name ?? "—"}</span>
               </div>
+              {/* Only ever set for a service that requiresRoom — previously
+                  nothing tracked which chair a patient was in at all
+                  (GetBooqin clinic audit's RS-01 finding), so staff had no
+                  way to see it even after the fact. */}
+              {booking.roomId && (
+                <div className="kv">
+                  <span className="kv-key">Room</span>
+                  <span className="kv-val">{room?.name ?? "—"}</span>
+                </div>
+              )}
               {booking.notes && (
                 <div className="kv">
                   <span className="kv-key">Notes</span>
@@ -405,11 +429,47 @@ export default function BookingDetail({ loaderData, actionData, params }: Route.
               <h2 className="card-title">{v.customerOne.charAt(0).toUpperCase() + v.customerOne.slice(1)}</h2>
             </div>
             <div className="card-body flex flex-col gap-[10px] text-body">
-              <div className="font-medium">
-                {customer?.firstName} {customer?.lastName}
-              </div>
-              <div className="text-muted">{customer?.email}</div>
-              {customer?.phone && <div className="text-muted">{customer.phone}</div>}
+              {/* Every field here used to be plain text — no link to the
+                  record, no tel: on the number, so a receptionist on a
+                  tablet couldn't tap to call someone running late
+                  (GetBooqin clinic audit's PT-03 finding). */}
+              {customer ? (
+                <a href={`${base}/customers/${customer.id}`} className="font-medium text-ink underline-offset-2 hover:underline">
+                  {customer.firstName} {customer.lastName}
+                </a>
+              ) : (
+                <div className="font-medium">—</div>
+              )}
+              {customer && !customer.email.endsWith("@getbooqin.invalid") && <div className="text-muted">{customer.email}</div>}
+              {customer?.phone && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <a href={`tel:${customer.phone.replace(/[\s()-]/g, "")}`} className="text-brand-600 underline-offset-2 hover:underline">
+                    {customer.phone}
+                  </a>
+                  {/* No SMS channel exists, and full WhatsApp Business API
+                      setup (Meta Business Manager, a pre-approved template,
+                      a permanent access token) is a developer's afternoon,
+                      not something to reach for just to remind one patient
+                      (GetBooqin clinic audit's PB-02 finding). wa.me needs
+                      no API, no template and no account setup at all — it
+                      just opens WhatsApp with this number and a prefilled
+                      message, the same as typing the number in by hand. */}
+                  <a
+                    href={`https://wa.me/${customer.phone.replace(/[^\d]/g, "")}?text=${encodeURIComponent(`Hi ${customer.firstName || ""}, this is ${settings.business_name} reminding you about your ${v.bookingOne} on ${formatInZone(booking.startUtc, settings.timezone)}.`.replace(/\s+/g, " ").trim())}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[12px] font-medium text-ok underline-offset-2 hover:underline"
+                  >
+                    Message on WhatsApp
+                  </a>
+                </div>
+              )}
+              {customer?.medicalAlert && (
+                <div className="flex items-start gap-[7px] rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] font-medium text-warn">
+                  <span className="mt-[1px] inline-flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-full bg-warn text-[9px] text-white">!</span>
+                  {customer.medicalAlert}
+                </div>
+              )}
             </div>
           </div>
 
@@ -438,7 +498,7 @@ export default function BookingDetail({ loaderData, actionData, params }: Route.
       >
         <Form method="post" id="cancel-booking-form" className="flex flex-col gap-2">
           <input type="hidden" name="_action" value="cancel" />
-          <Field label="Reason" hint="Optional, shown to the customer.">
+          <Field label="Reason" hint={`Optional, shown to the ${v.customerOne}.`}>
             <Input name="reason" placeholder="Reason (optional)" />
           </Field>
         </Form>

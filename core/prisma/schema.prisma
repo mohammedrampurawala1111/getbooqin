@@ -191,6 +191,14 @@ model ServiceConfig {
   // reversed an intentional "nobody" choice (Defect Dossier's BQ-05
   // finding).
   resourceAssignmentCustomized Boolean           @default(false)
+  // Off by default — no existing service starts requiring a room it never
+  // needed. When on, the slot engine and Bookings.create()/reschedule()
+  // also need a free room (drawn from this service's own ServiceResource
+  // links to a kind: "room" Resource, same join table practitioners use)
+  // before offering or accepting a time, so two practitioners can no longer
+  // be booked into the same physical chair at once (GetBooqin clinic
+  // audit's RS-01 finding).
+  requiresRoom                 Boolean           @default(false)
   // Set instead of a hard delete when a booking still references this
   // service — the row (and its productId, so historical bookings can still
   // resolve a name) has to survive, but it must disappear from every active
@@ -233,10 +241,21 @@ model ProductCache {
   @@index([platform, shop, productHandle])
 }
 
+// "kind" turns this one table into two bookable dimensions instead of a
+// second model — a room needs exactly the same things a practitioner
+// already has (a name, its own weekly hours via Schedule, its own time off
+// via TimeOff, and a place in a service's ServiceResource assignment list),
+// just none of the practitioner-only fields (email/phone/meetingLink stay
+// on the row but are blank and hidden in the room editor). Defaults to
+// "practitioner" so every existing row is unaffected (GetBooqin clinic
+// audit's RS-01 finding: "Practitioners & rooms" promised a resource type
+// that didn't exist — two practitioners could be booked into the same
+// physical chair at once, since nothing tracked chair occupancy at all).
 model Resource {
   id           Int               @id @default(autoincrement())
   shop         String
   platform     String            @default("shopify")
+  kind         String            @default("practitioner") // practitioner | room
   name         String
   title        String            @default("")
   email        String            @default("")
@@ -251,9 +270,11 @@ model Resource {
   updatedAt    DateTime          @updatedAt
   serviceLinks ServiceResource[]
   schedules    Schedule[]
-  bookings     Booking[]
+  bookings     Booking[]         @relation("BookingPractitioner")
+  roomBookings Booking[]         @relation("BookingRoom")
 
   @@index([platform, shop, status, position])
+  @@index([platform, shop, kind, status, position])
 }
 
 model ServiceResource {
@@ -339,6 +360,15 @@ model Customer {
   phone           String     @default("")
   timezone        String     @default("")
   notes           String?
+  // A dental record isn't a customer record — a patient's date of birth
+  // and any medical alert (allergy, condition, anything staff need to see
+  // before an appointment) had nowhere to live at all before this, and a
+  // mistyped contact detail could only be fixed by erasing and re-creating
+  // the whole record (GetBooqin clinic audit's PT-02 finding). Both blank
+  // by default and shown nowhere unless filled in — no existing shop's
+  // customer records change.
+  dateOfBirth     String?
+  medicalAlert    String     @default("")
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
   bookings        Booking[]
@@ -354,6 +384,14 @@ model Booking {
   uid             String   @unique
   serviceId       Int
   resourceId      Int
+  // Set only when the service delivering this booking has requiresRoom on
+  // — null for the overwhelming majority of bookings, at every shop that
+  // never turned rooms on at all. Occupies the room exactly like
+  // resourceId occupies the practitioner: Availability.hasRoomConflict()
+  // checks this column, not resourceId, so a room and its assigned
+  // practitioner are two independently double-booking-checked resources
+  // sharing one time slot (GetBooqin clinic audit's RS-01 finding).
+  roomId          Int?
   customerId      Int
   startUtc        DateTime
   endUtc          DateTime
@@ -374,13 +412,15 @@ model Booking {
   updatedAt       DateTime @updatedAt
 
   service               ServiceConfig         @relation(fields: [serviceId], references: [id])
-  resource              Resource              @relation(fields: [resourceId], references: [id])
+  resource              Resource              @relation("BookingPractitioner", fields: [resourceId], references: [id])
+  room                  Resource?             @relation("BookingRoom", fields: [roomId], references: [id])
   customer              Customer              @relation(fields: [customerId], references: [id])
   payments              Payment[]
   addons                BookingAddon[]
   consultationSummaries ConsultationSummary[]
 
   @@index([platform, shop, resourceId, startUtc, status])
+  @@index([platform, shop, roomId, startUtc, status])
   @@index([platform, shop, customerId, startUtc])
   @@index([platform, shop, status, startUtc])
   @@index([platform, shop, reminderSent, startUtc])
@@ -507,14 +547,14 @@ model Waitlist {
 
   service  ServiceConfig @relation(fields: [serviceId], references: [id])
   customer Customer      @relation(fields: [customerId], references: [id])
-
-  @@index([platform, shop, serviceId, resourceId, status, createdAt])
-  @@index([platform, shop, status, offerExpiresAt])
-  @@index([platform, shop, customerId, status])
   // Also has a partial unique index -- (platform, shop, serviceId, resourceId,
   // windowStartUtc, customerId) WHERE status IN ('waiting','offered') --
   // hand-written in migrations/20260903140000_waitlist_dedupe_active_joins
   // since Prisma's DSL can't express a filtered unique index.
+
+  @@index([platform, shop, serviceId, resourceId, status, createdAt])
+  @@index([platform, shop, status, offerExpiresAt])
+  @@index([platform, shop, customerId, status])
 }
 
 model Payment {

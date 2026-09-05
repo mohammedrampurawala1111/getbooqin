@@ -50,6 +50,71 @@ export function businessTz(shopTimezone: string, resource?: Resource | null): st
   return shopTimezone || "UTC";
 }
 
+/**
+ * Per-room day data (its own weekly-hours windows for this weekday, plus
+ * its own bookings/time-off for the day) — computed once per candidate room
+ * and reused across every practitioner's own generateSlots() pass, since
+ * none of it depends on which practitioner is being checked. A room is a
+ * plain Resource (kind: "room"), so this reuses windowsForDay/busyRowsForDay
+ * unchanged; only the booking lookup switches to the `roomId` column, since
+ * that's the column that actually records a room's occupancy (GetBooqin
+ * clinic audit's RS-01 finding — a room previously had no occupancy
+ * tracking of its own at all).
+ */
+interface RoomDayData {
+  room: Resource;
+  windows: Array<{ start: string; end: string }>;
+  timeOffRows: BusyRow[];
+  bookingRows: BusyRow[];
+}
+
+async function roomDayData(
+  shop: string,
+  rooms: Resource[],
+  dow: number,
+  dayStart: DateTime,
+  service: CatalogService,
+  excludeBookingId: number
+): Promise<RoomDayData[]> {
+  const out: RoomDayData[] = [];
+  for (const room of rooms) {
+    if (!room.status) continue;
+    const windows = await windowsForDay(shop, room.id, dow);
+    if (!windows.length) continue;
+    const { timeOffRows, bookingRows } = await busyRowsForDay(shop, room.id, dayStart, service, excludeBookingId, "roomId");
+    out.push({ room, windows, timeOffRows, bookingRows });
+  }
+  return out;
+}
+
+/**
+ * A candidate practitioner-side slot (already known to fit the
+ * practitioner's own window and be free of the practitioner's own bookings/
+ * time-off) additionally needs at least one assigned room simultaneously
+ * free for the exact same buffered interval — built once per day and
+ * threaded through every generateSlots() call for that day, so every
+ * practitioner is checked against the same room data. `bufferedStart`/
+ * `bufferedEnd` are business-tz-local (for the window-fit check, matching
+ * how generateSlots already computes a practitioner's own window fit);
+ * `startUtc`/`endUtc` are the unbuffered instants isFreeLocal expects.
+ */
+type RoomGate = (bufferedStart: DateTime, bufferedEnd: DateTime, startUtc: DateTime, endUtc: DateTime) => boolean;
+
+function buildRoomGate(rooms: RoomDayData[], date: string, tz: string, service: CatalogService): RoomGate {
+  return (bufferedStart, bufferedEnd, startUtc, endUtc) => {
+    for (const r of rooms) {
+      const fits = r.windows.some((w) => {
+        const wStart = DateTime.fromISO(`${date}T${w.start}:00`, { zone: tz });
+        const wEnd = DateTime.fromISO(`${date}T${w.end}:00`, { zone: tz });
+        return wStart.isValid && wEnd.isValid && bufferedStart >= wStart && bufferedEnd <= wEnd;
+      });
+      if (!fits) continue;
+      if (isFreeLocal(startUtc, endUtc, service, r.timeOffRows, r.bookingRows)) return true;
+    }
+    return false;
+  };
+}
+
 export async function slots(
   shop: string,
   platform: string,
@@ -82,6 +147,26 @@ export async function slots(
   const candidateResources = resourceId
     ? [await Data.resource(shop, resourceId)].filter((r): r is Resource => !!r)
     : await Data.resourcesForService(shop, platform, serviceId);
+
+  // Built once for the day, independent of which practitioner is being
+  // walked below — a room's own hours/bookings have nothing to do with
+  // which practitioner the customer is seeing (GetBooqin clinic audit's
+  // RS-01 finding). Resolved against the shop's own timezone, not any one
+  // practitioner's — a room belongs to the business's physical location,
+  // not to whoever happens to be using it.
+  let roomGate: RoomGate | undefined;
+  if (service.requiresRoom) {
+    const roomTz = businessTz(shopTimezone);
+    const roomDayStart = DateTime.fromISO(`${date}T00:00:00`, { zone: roomTz });
+    if (roomDayStart.isValid) {
+      const rooms = await Data.roomsForService(shop, platform, serviceId);
+      const dow = roomDayStart.weekday % 7;
+      const dayRooms = await roomDayData(shop, rooms, dow, roomDayStart, service, excludeBookingId);
+      roomGate = buildRoomGate(dayRooms, date, roomTz, service);
+    } else {
+      roomGate = () => false;
+    }
+  }
 
   const found = new Map<string, Slot>();
   const canShowBlocked = includeBlocked && candidateResources.length === 1;
@@ -120,7 +205,8 @@ export async function slots(
       extraDurationMin,
       resource.id,
       found,
-      canShowBlocked
+      canShowBlocked,
+      roomGate
     );
   }
 
@@ -154,7 +240,12 @@ function generateSlots(
   // single coherent "blocked" answer. daysInMonth() never passes this, so
   // its day counts stay exactly what they always were (available slots
   // only).
-  includeUnavailable = false
+  includeUnavailable = false,
+  // Undefined when the service doesn't requireRoom — every existing caller
+  // and every shop that never turns rooms on sees byte-identical behavior.
+  // When present, a candidate time additionally needs this to return true
+  // (GetBooqin clinic audit's RS-01 finding).
+  roomGate?: RoomGate
 ): void {
   for (const window of windows) {
     let cursor = DateTime.fromISO(`${date}T${window.start}:00`, { zone: tz });
@@ -182,7 +273,10 @@ function generateSlots(
       const startUtc = cursor.toUTC();
       const endUtc = slotEnd.toUTC();
       const inRange = startUtc >= earliest && startUtc <= latest;
-      const available = inRange && isFreeLocal(startUtc, endUtc, service, timeOffRows, bookingRows);
+      const available =
+        inRange &&
+        isFreeLocal(startUtc, endUtc, service, timeOffRows, bookingRows) &&
+        (!roomGate || roomGate(bufferedStart, bufferedEnd, startUtc, endUtc));
 
       if (available || (includeUnavailable && inRange)) {
         const key = cursor.toFormat("HH:mm");
@@ -222,6 +316,16 @@ function generateSlots(
  * the two never disagree.
  */
 export async function isServiceBookable(shop: string, platform: string, serviceId: number, resourceId: number): Promise<boolean> {
+  const service = await Data.catalogService(shop, serviceId);
+  // A service that requires a room but has none assigned can never actually
+  // be booked, the same as one with zero practitioners (GetBooqin clinic
+  // audit's RS-01 finding) — checked regardless of which practitioner
+  // branch below runs, since the room requirement applies to all of them.
+  if (service?.requiresRoom) {
+    const rooms = await Data.roomsForService(shop, platform, serviceId);
+    if (rooms.length === 0) return false;
+  }
+
   if (resourceId) {
     const resource = await Data.resource(shop, resourceId);
     return !!resource?.status;
@@ -352,6 +456,49 @@ export async function daysInMonth(
     })
   );
 
+  // Same per-resource precompute as practitioners just above, for whichever
+  // rooms this service is assigned to — only ever fetched when the service
+  // actually requiresRoom, so a shop that never turns rooms on pays nothing
+  // extra here (GetBooqin clinic audit's RS-01 finding).
+  const roomTz = businessTz(shopTimezone);
+  const perRoom = service.requiresRoom
+    ? await Promise.all(
+        (await Data.roomsForService(shop, platform, serviceId)).map(async (room) => {
+          const scheduleRows = await prisma.schedule.findMany({ where: { shop, resourceId: room.id } });
+          const windowsByDow = new Map<number, Array<{ start: string; end: string }>>();
+          for (const row of scheduleRows) {
+            const list = windowsByDow.get(row.dayOfWeek) ?? [];
+            list.push({ start: row.startTime, end: row.endTime });
+            windowsByDow.set(row.dayOfWeek, list);
+          }
+          const rangeStart = DateTime.fromObject({ year, month, day: 1 }, { zone: roomTz })
+            .minus({ minutes: service.bufferBeforeMin })
+            .toUTC()
+            .toJSDate();
+          const rangeEnd = DateTime.fromObject({ year, month, day: daysInThisMonth }, { zone: roomTz })
+            .plus({ days: 1, minutes: service.bufferAfterMin })
+            .toUTC()
+            .toJSDate();
+          const [timeOffRows, bookingRows] = await Promise.all([
+            prisma.timeOff.findMany({
+              where: { shop, OR: [{ resourceId: room.id }, { resourceId: 0 }], startUtc: { lt: rangeEnd }, endUtc: { gt: rangeStart } },
+              select: { startUtc: true, endUtc: true },
+            }),
+            prisma.booking.findMany({
+              where: { shop, roomId: room.id, status: { in: ["pending", "confirmed"] }, startUtc: { lt: rangeEnd }, endUtc: { gt: rangeStart } },
+              select: { serviceId: true, startUtc: true, endUtc: true },
+            }),
+          ]);
+          return {
+            room,
+            windowsByDow,
+            timeOffRows: timeOffRows.map((row) => ({ serviceId: 0, startUtc: row.startUtc, endUtc: row.endUtc })),
+            bookingRows,
+          };
+        })
+      )
+    : [];
+
   const out: Array<{ date: string; count: number; state: DayState }> = [];
   for (let i = 0; i < daysInThisMonth; i++) {
     const day = monthStart.plus({ days: i });
@@ -369,6 +516,20 @@ export async function daysInMonth(
       continue;
     }
 
+    let roomGate: RoomGate | undefined;
+    if (service.requiresRoom) {
+      const roomDow = DateTime.fromISO(`${date}T00:00:00`, { zone: roomTz }).weekday % 7;
+      const dayRooms: RoomDayData[] = perRoom
+        .map(({ room, windowsByDow, timeOffRows, bookingRows }) => ({
+          room,
+          windows: windowsByDow.get(roomDow) ?? [],
+          timeOffRows,
+          bookingRows,
+        }))
+        .filter((r) => r.windows.length > 0);
+      roomGate = buildRoomGate(dayRooms, date, roomTz, service);
+    }
+
     const found = new Map<string, Slot>();
     let anyWindowToday = false;
     for (const { resource, tz, windowsByDow, timeOffRows, bookingRows } of perResource) {
@@ -379,7 +540,7 @@ export async function daysInMonth(
       if (!windows.length) continue;
       anyWindowToday = true;
 
-      generateSlots(date, tz, windows, service, interval, earliest, latest, timeOffRows, bookingRows, extraDurationMin, resource.id, found);
+      generateSlots(date, tz, windows, service, interval, earliest, latest, timeOffRows, bookingRows, extraDurationMin, resource.id, found, false, roomGate);
     }
     // "closed" only when none of the candidate resources work this weekday
     // at all — with multiple resources for a service, one being off a given
@@ -405,13 +566,24 @@ interface BusyRow {
   endUtc: Date;
 }
 
-/** Bookings and time-off for one resource, covering every slot `slots()` could generate for `dayStart`'s date. */
+/**
+ * Bookings and time-off for one resource, covering every slot `slots()`
+ * could generate for `dayStart`'s date. `idField` picks which Booking
+ * column actually records occupancy of `resourceId` — "resourceId" for a
+ * practitioner (the default, every existing call site), "roomId" for a
+ * room, since a room's own busy bookings are the ones whose `roomId`
+ * points at it, not whose `resourceId` does (GetBooqin clinic audit's
+ * RS-01 finding). TimeOff has no such split — a resource's own time-off
+ * rows are keyed by `resourceId` regardless of kind, so that half is
+ * unchanged either way.
+ */
 async function busyRowsForDay(
   shop: string,
   resourceId: number,
   dayStart: DateTime,
   service: CatalogService,
-  excludeBookingId: number
+  excludeBookingId: number,
+  idField: "resourceId" | "roomId" = "resourceId"
 ): Promise<{ timeOffRows: BusyRow[]; bookingRows: BusyRow[] }> {
   const fetchStart = dayStart.toUTC().minus({ minutes: service.bufferBeforeMin }).toJSDate();
   const fetchEnd = dayStart
@@ -433,7 +605,7 @@ async function busyRowsForDay(
     prisma.booking.findMany({
       where: {
         shop,
-        resourceId,
+        [idField]: resourceId,
         status: { in: ["pending", "confirmed"] },
         startUtc: { lt: fetchEnd },
         endUtc: { gt: fetchStart },
@@ -561,4 +733,56 @@ export async function isFree(
 ): Promise<boolean> {
   if (await isBlockedByTimeOff(shop, resourceId, startUtc, endUtc, service)) return false;
   return !(await hasBookingConflict(shop, resourceId, startUtc, endUtc, service, excludeBookingId));
+}
+
+/**
+ * Room counterpart of hasBookingConflict() — checks the `roomId` column,
+ * since that's what actually records a room's occupancy (a room's assigned
+ * practitioner books it via `resourceId`, but the room itself is occupied
+ * via `roomId` — see the Booking.roomId schema comment). No capacity
+ * branch: a room seats one booking at a time regardless of what the
+ * service's own `capacity` says about how many customers can share a
+ * practitioner's slot (GetBooqin clinic audit's RS-01 finding).
+ */
+export async function hasRoomConflict(
+  shop: string,
+  roomId: number,
+  startUtc: DateTime,
+  endUtc: DateTime,
+  service: CatalogService,
+  excludeBookingId = 0
+): Promise<boolean> {
+  const busyStart = startUtc.minus({ minutes: service.bufferBeforeMin }).toJSDate();
+  const busyEnd = endUtc.plus({ minutes: service.bufferAfterMin }).toJSDate();
+
+  const overlap = await prisma.booking.count({
+    where: {
+      shop,
+      roomId,
+      status: { in: ["pending", "confirmed"] },
+      startUtc: { lt: busyEnd },
+      endUtc: { gt: busyStart },
+      id: { not: excludeBookingId },
+    },
+  });
+
+  return overlap > 0;
+}
+
+/**
+ * Is this room free for this range? Time-off is checked the same way as a
+ * practitioner's (isBlockedByTimeOff already keys on plain `resourceId`,
+ * kind-agnostic); the booking-conflict half uses hasRoomConflict() above
+ * instead of hasBookingConflict(). Mirrors isFree()'s own composition.
+ */
+export async function isRoomFree(
+  shop: string,
+  roomId: number,
+  startUtc: DateTime,
+  endUtc: DateTime,
+  service: CatalogService,
+  excludeBookingId = 0
+): Promise<boolean> {
+  if (await isBlockedByTimeOff(shop, roomId, startUtc, endUtc, service)) return false;
+  return !(await hasRoomConflict(shop, roomId, startUtc, endUtc, service, excludeBookingId));
 }

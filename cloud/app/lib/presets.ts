@@ -72,6 +72,24 @@ const PREVIEW: Record<PresetId, Omit<Preset, "id" | "vocab" | "unit"> & { vocabE
     ],
     open: [true, true, true, true, true, true, false], range: "08:00–18:00",
   },
+  dental: {
+    label: "Dental Practice", tint: "#7fb8c9",
+    vocabExtra: { services: "Treatments", resources: "Dentists & rooms" },
+    // Scale & polish, extraction, root canal, crown fitting — the four
+    // treatments a real dental practice actually runs, with durations and
+    // buffers that make sense for each (a root canal needs real chair
+    // time; a scale & polish doesn't) — replacing "clinic"'s generic
+    // Initial assessment/Follow-up/Physiotherapy/Vaccination list, which
+    // had nothing dental in it at all (GetBooqin clinic audit's TR-01
+    // finding).
+    services: [
+      { name: "Scale & polish", minutes: 30, price: 60, location: "onsite" },
+      { name: "Extraction", minutes: 30, price: 90, location: "onsite" },
+      { name: "Root canal", minutes: 60, price: 250, location: "onsite" },
+      { name: "Crown fitting", minutes: 45, price: 220, location: "onsite" },
+    ],
+    open: [true, true, true, true, true, true, false], range: "08:00–18:00",
+  },
   salon: {
     label: "Salon / Spa / Barber", tint: "#e0a8c8",
     vocabExtra: { services: "Services", resources: "Stylists & chairs" },
@@ -254,12 +272,12 @@ export function ruleChips(rules: PresetRules): string[] {
  */
 export function featureNotesFor(fromId: string | null | undefined, toId: string | null | undefined): { text: string; removed: boolean }[] {
   const notes: { text: string; removed: boolean }[] = [];
-  if (toId === "clinic" && fromId !== "clinic") {
+  if (isClinicFeaturePreset(toId) && !isClinicFeaturePreset(fromId)) {
     notes.push({ text: "Adds a Visit summaries page for AI-drafted patient summaries", removed: false });
   }
-  if (fromId === "clinic" && toId !== "clinic") {
+  if (isClinicFeaturePreset(fromId) && !isClinicFeaturePreset(toId)) {
     notes.push({
-      text: "Removes the Visit summaries page (your consent notice and settings are kept, and come back if you switch to Clinic again)",
+      text: `Removes the Visit summaries page (your consent notice and settings are kept, and come back if you switch to ${getPreset(fromId).label} again)`,
       removed: true,
     });
   }
@@ -351,6 +369,19 @@ export function getPreset(id: string | null | undefined): Preset {
   return PRESETS.find((p) => p.id === id) ?? PRESETS[0];
 }
 
+// Visit Summaries (AI-drafted, clinician-reviewed patient summaries) was
+// gated to `preset === "clinic"` at ten separate call sites across six
+// files — adding the new "dental" preset (GetBooqin clinic audit's TR-01
+// finding) would otherwise mean either duplicating "clinic" into a whole
+// second preset just to keep this one feature, or hunting down and
+// updating every one of those ten checks by hand and hoping none were
+// missed. One list, one place a future clinic-shaped preset gets added to.
+export const CLINIC_FEATURE_PRESETS: readonly string[] = ["clinic", "dental"];
+
+export function isClinicFeaturePreset(id: string | null | undefined): boolean {
+  return !!id && CLINIC_FEATURE_PRESETS.includes(id);
+}
+
 /* Derived vocabulary. Call once per request from the connection's preset id and
    pass it down — every user-facing noun in the dashboard should come from here
    so a clinic reads "Appointments / Patients" and a garage reads "Jobs". */
@@ -415,6 +446,29 @@ export const INTEGRATIONS: {
   { id: "stripe", name: "Stripe", initial: "S", tint: "#5f5be0", tag: "Payments",
     blurb: "Take deposits and full payments if you are not selling through Shopify." },
 ];
+
+// Presets whose whole business isn't "sell a product catalogue" — Shopify
+// (products & checkout) leading the Integrations page for one of these read
+// as a retail feature bolted onto the wrong kind of business, while the
+// integration an owner actually asks for first (WhatsApp reminders, a
+// calendar sync) sat at the bottom (GetBooqin clinic audit's CR-04
+// finding). Only reorders; every integration still appears, whether or not
+// its own feature flag is on — visibleIntegrationsFor() below still governs
+// that separately.
+const INTEGRATION_ORDER_OVERRIDE: Partial<Record<PresetId, IntegrationId[]>> = {
+  clinic: ["whatsapp", "calendar", "stripe", "shopify", "wordpress"],
+  dental: ["whatsapp", "calendar", "stripe", "shopify", "wordpress"],
+  legal: ["calendar", "whatsapp", "stripe", "shopify", "wordpress"],
+  education: ["calendar", "whatsapp", "stripe", "shopify", "wordpress"],
+  realestate: ["calendar", "whatsapp", "stripe", "shopify", "wordpress"],
+  homeservice: ["whatsapp", "calendar", "stripe", "shopify", "wordpress"],
+};
+
+export function integrationsFor(presetId: string | null | undefined) {
+  const order = INTEGRATION_ORDER_OVERRIDE[presetId as PresetId];
+  if (!order) return INTEGRATIONS;
+  return [...INTEGRATIONS].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+}
 
 /* ------------------------------------------------------------------ */
 /* Setup checklist — drives the empty dashboard. Derive it from real

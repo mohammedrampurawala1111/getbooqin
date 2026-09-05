@@ -5,6 +5,7 @@
 import * as PaymentManager from "./paymentManager.js";
 import * as MeetingManager from "./meetingManager.js";
 import * as Mailer from "./mailer.js";
+import * as WhatsApp from "./whatsapp.js";
 import * as Waitlist from "./waitlist.js";
 
 declare global {
@@ -22,6 +23,7 @@ export function boot() {
   PaymentManager.init();
   MeetingManager.init();
   Mailer.init();
+  WhatsApp.init();
   Waitlist.init();
 }
 

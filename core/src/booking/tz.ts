@@ -39,6 +39,17 @@ export function wallClockToUtc(localValue: string, zone: string): Date {
 // (Defect Dossier's BQ-10 finding).
 const TZ_LOCALE = "en-GB";
 
+/**
+ * Reduce a stored UTC instant to its calendar date and minutes-since-midnight
+ * in `zone` — the appointments calendar's positioning math (blockTop/height,
+ * open-window shading) works entirely in these zone-local integers so the
+ * client component never has to import luxon or reason about offsets itself.
+ */
+export function zoneDateAndMinutes(utc: Date | string, zone: string): { date: string; minutes: number } {
+  const dt = (typeof utc === "string" ? DateTime.fromISO(utc) : DateTime.fromJSDate(utc)).setZone(zone);
+  return { date: dt.toFormat("yyyy-MM-dd"), minutes: dt.hour * 60 + dt.minute };
+}
+
 /** The short zone abbreviation (CEST, PST, IST, ...) for a UTC instant in `zone`. */
 export function zoneAbbr(utc: Date | string, zone: string): string {
   const dt = (typeof utc === "string" ? DateTime.fromISO(utc) : DateTime.fromJSDate(utc)).setZone(zone).setLocale(TZ_LOCALE);

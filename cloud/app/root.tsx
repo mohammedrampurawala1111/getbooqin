@@ -106,46 +106,77 @@ export function ErrorBoundary() {
   );
 }
 
+// The public booking page (/book/:connectionId) never authenticates a
+// visitor — it's the one screen in the app a customer reaches with no
+// account at all, and no component under it touches Clerk (see
+// components/ui.tsx's LogoutButton and the routes listed alongside it,
+// none of which live under book/). ClerkProvider used to mount
+// unconditionally for every route regardless, pulling four Clerk UI
+// bundles (including a subscriptionDetails chunk) onto this
+// latency-sensitive, otherwise third-party-free page for no functional
+// reason. Gating it here — rather than restructuring routes.ts into
+// separate Clerk/non-Clerk layouts — keeps this a one-place change; every
+// other route's behavior (including "/", which conditionally renders
+// LogoutButton) is untouched.
+function needsClerk(pathname: string): boolean {
+  return !pathname.startsWith("/book/");
+}
+
 export default function Root({ loaderData }: Route.ComponentProps) {
-  return (
-    <ClerkProvider loaderData={loaderData}>
-      <html lang="en">
-        <head>
-          <meta charSet="utf-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1" />
-          <meta name="theme-color" content="#131118" />
-          {/* Sets data-theme on <html> before first paint, straight from
-              localStorage — a stored choice would otherwise only apply
-              after ThemeToggle's own useEffect runs post-hydration, which
-              means every page load flashed the OS-default theme first
-              whenever that choice disagreed with it. Deliberately outside
-              React's render tree (this <html> tag never declares
-              data-theme itself) so this plain DOM mutation can't collide
-              with hydration. */}
-          <script
-            dangerouslySetInnerHTML={{
-              __html: `try{var t=localStorage.getItem("gb-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}`,
-            }}
-          />
-          <Meta />
-          <Links />
-        </head>
-        <body>
-          <ThemeSync />
-          <a href="#main" className="skip-link">Skip to content</a>
-          {/* Single <main> landmark for the whole app — every nested
-              route's chrome (sidebar, headers) renders inside it. One
-              landmark covering everything beats the zero the axe scan
-              found (UX audit's A3 finding); splitting nav out into its
-              own <nav> per layout is a further improvement, not required
-              to clear that violation. */}
-          <main id="main">
-            <Outlet />
-          </main>
-          <ScrollRestoration />
-          <Scripts />
-        </body>
-      </html>
-    </ClerkProvider>
+  const location = useLocation();
+
+  const shell = (
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="theme-color" content="#131118" />
+        {/* Sets data-theme on <html> before first paint, straight from
+            localStorage — a stored choice would otherwise only apply
+            after ThemeToggle's own useEffect runs post-hydration, which
+            means every page load flashed the OS-default theme first
+            whenever that choice disagreed with it. Deliberately outside
+            React's render tree (this <html> tag never declares
+            data-theme itself) so this plain DOM mutation can't collide
+            with hydration. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var t=localStorage.getItem("gb-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}`,
+          }}
+        />
+        <Meta />
+        <Links />
+      </head>
+      <body>
+        <ThemeSync />
+        {/* Every form in the app — signup, login, the invite-accept
+            screen — submits through Clerk's client SDK, and the
+            dashboard itself is client-rendered throughout. With JS
+            disabled/blocked, signup.tsx's form in particular used to
+            just do a silent empty GET to itself (no method/name
+            attributes, nothing server-side to receive it) and look like
+            the click did nothing. This is a real, honest failure
+            instead of a silent one. */}
+        <noscript>
+          <div className="alert-error mx-4 mt-4 justify-center rounded-[10px]">
+            JavaScript is required to use GetBooqin. Please enable it and reload the page.
+          </div>
+        </noscript>
+        <a href="#main" className="skip-link">Skip to content</a>
+        {/* Single <main> landmark for the whole app — every nested
+            route's chrome (sidebar, headers) renders inside it. One
+            landmark covering everything beats the zero the axe scan
+            found (UX audit's A3 finding); splitting nav out into its
+            own <nav> per layout is a further improvement, not required
+            to clear that violation. */}
+        <main id="main">
+          <Outlet />
+        </main>
+        <ScrollRestoration />
+        <Scripts />
+      </body>
+    </html>
   );
+
+  return needsClerk(location.pathname) ? <ClerkProvider loaderData={loaderData}>{shell}</ClerkProvider> : shell;
 }

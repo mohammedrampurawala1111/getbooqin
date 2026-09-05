@@ -7,9 +7,11 @@ import { Field, Input, Toggle, CheckCard, TimezoneSelect, ConfirmDialog } from "
 import { getPreset, useVocabulary, vocabFor } from "~/lib/presets";
 import { dashboardPreset } from "~/lib/dashboardMeta";
 
-export const meta: Route.MetaFunction = ({ params, matches }) => [
+export const meta: Route.MetaFunction = ({ params, matches, data: loaderData }) => [
   {
-    title: `${params.resourceId === "new" ? "Add" : "Edit"} ${vocabFor(dashboardPreset(matches)).resourceOne} · GetBooqin`,
+    title: `${params.resourceId === "new" ? "Add" : "Edit"} ${
+      loaderData?.kind === "room" ? "room" : vocabFor(dashboardPreset(matches)).resourceOne
+    } · GetBooqin`,
   },
 ];
 
@@ -22,6 +24,17 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
   const resource = isNew ? null : await Data.resource(shop, id);
   if (!isNew && !resource) throw data("Resource not found", { status: 404 });
+
+  // The Resources list's "+ Add room" button links here with ?kind=room —
+  // the one place a brand-new resource's kind is actually chosen (GetBooqin
+  // clinic audit's RS-01 finding: "Practitioners & rooms" promised a
+  // resource type that didn't exist at all). Kind is fixed once created,
+  // same as most identity-defining fields elsewhere in this app — changing
+  // an existing practitioner into a room mid-life would leave its own
+  // booking history and assignments in a confusing state.
+  const url = new URL(request.url);
+  const initialKind = url.searchParams.get("kind") === "room" ? "room" : "practitioner";
+  const kind = isNew ? initialKind : (resource!.kind as "practitioner" | "room");
 
   const [services, schedule, linkedServiceIds, settings] = await Promise.all([
     Data.catalogServices(shop, platform, true),
@@ -37,8 +50,22 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     Settings.getSettings(shop, platform),
   ]);
 
-  const scheduleByDay: Record<number, { startTime: string; endTime: string }> = {};
-  for (const s of schedule) scheduleByDay[s.dayOfWeek] = { startTime: s.startTime, endTime: s.endTime };
+  // Multiple blocks per weekday — Schedule already allowed more than one
+  // row per (resourceId, dayOfWeek) and availability.ts's slot generator
+  // already walks every one of them, but this editor only ever wrote and
+  // read a single {start,end} pair per day, so the split morning/evening
+  // session that's the normal shape of an Indian dental practice (roughly
+  // 10:00–14:00 and 17:00–21:00) had no way to be entered short of a
+  // recurring Time off block recreated by hand every week (GetBooqin clinic
+  // audit's RS-02 finding). No backend change needed — this was purely an
+  // editor limitation.
+  const scheduleByDay: Record<number, { startTime: string; endTime: string }[]> = {};
+  for (const s of schedule) {
+    (scheduleByDay[s.dayOfWeek] ??= []).push({ startTime: s.startTime, endTime: s.endTime });
+  }
+  for (const day of Object.keys(scheduleByDay).map(Number)) {
+    scheduleByDay[day].sort((a, b) => a.startTime.localeCompare(b.startTime));
+  }
 
   // A resource created with every day off and 0 bookable hours can't take
   // any bookings, yet the Overview checklist counted "Add resources" done
@@ -54,11 +81,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     for (let day = 0; day < 7; day++) {
       // DAYS below is Sunday-first (index 0); preset.open is Monday-first.
       const presetDay = day === 0 ? 6 : day - 1;
-      if (preset.open[presetDay]) scheduleByDay[day] = { startTime: start, endTime: end };
+      if (preset.open[presetDay]) scheduleByDay[day] = [{ startTime: start, endTime: end }];
     }
   }
 
-  return { resource, services, scheduleByDay, linkedServiceIds, isNew, timezone: settings.timezone };
+  return { resource, services, scheduleByDay, linkedServiceIds, isNew, kind, timezone: settings.timezone };
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
@@ -72,9 +99,22 @@ export async function action({ request, params }: Route.ActionArgs) {
     return redirect(`/dashboard/${params.connectionId}/resources`);
   }
 
+  // Same field name repeated once per block within a day (day_2_start,
+  // day_2_start, ...) — FormData.getAll() keeps them in DOM order, so
+  // zipping starts/ends together reconstructs each day's block list
+  // without needing a separate "how many blocks" field. A block with
+  // either side blank (can only happen if a day is enabled with zero
+  // blocks left after removing all of them) is dropped rather than saved
+  // as a bad row.
   const scheduleRows = [0, 1, 2, 3, 4, 5, 6]
     .filter((day) => form.get(`day_${day}_enabled`))
-    .map((day) => ({ day, start: String(form.get(`day_${day}_start`) ?? ""), end: String(form.get(`day_${day}_end`) ?? "") }));
+    .flatMap((day) => {
+      const starts = form.getAll(`day_${day}_start`).map(String);
+      const ends = form.getAll(`day_${day}_end`).map(String);
+      return starts
+        .map((start, i) => ({ day, start, end: ends[i] ?? "" }))
+        .filter((row) => row.start && row.end);
+    });
 
   const serviceIds = form.getAll("service_ids").map(Number);
 
@@ -83,6 +123,10 @@ export async function action({ request, params }: Route.ActionArgs) {
     platform,
     {
       name: String(form.get("name") ?? ""),
+      // Sent as a hidden field (fixed) when editing, and a real selectable
+      // control only when creating — see the component (GetBooqin clinic
+      // audit's RS-01 finding).
+      kind: form.get("kind") === "room" ? "room" : "practitioner",
       title: String(form.get("title") ?? ""),
       email: String(form.get("email") ?? ""),
       phone: String(form.get("phone") ?? ""),
@@ -118,17 +162,52 @@ function formatHours(h: number): string {
   return h % 1 === 0 ? `${h}h` : `${h.toFixed(1)}h`;
 }
 
+type DayBlock = { start: string; end: string };
+
 export default function ResourceDetail({ loaderData, actionData, params }: Route.ComponentProps) {
-  const { resource, services, scheduleByDay, linkedServiceIds, isNew, timezone } = loaderData;
+  const { resource, services, scheduleByDay, linkedServiceIds, isNew, kind: initialKind, timezone } = loaderData;
   const base = `/dashboard/${params.connectionId}`;
-  const byDay = scheduleByDay as Record<number, { startTime: string; endTime: string } | undefined>;
+  const byDay = scheduleByDay as Record<number, { startTime: string; endTime: string }[] | undefined>;
   const v = useVocabulary();
 
-  const [enabled, setEnabled] = useState<boolean[]>(DAYS.map((_, day) => !!byDay[day]));
+  // Only ever selectable while creating — see the loader's own comment on
+  // why an existing resource's kind is fixed (GetBooqin clinic audit's
+  // RS-01 finding: "Practitioners & rooms" promised a resource type that
+  // didn't exist at all; a room is a Resource row like any other, just one
+  // with no email/phone/video-link fields to fill in).
+  const [kind, setKind] = useState<"practitioner" | "room">(initialKind);
+  const isRoom = kind === "room";
+  const kindLabel = isRoom ? "room" : v.resourceOne;
+
+  const [enabled, setEnabled] = useState<boolean[]>(DAYS.map((_, day) => !!byDay[day]?.length));
+  // One block list per day, independent of `enabled` — turning a day off
+  // and back on again shouldn't lose the blocks it had (same reasoning as
+  // the time inputs' own values surviving a disabled round-trip). Split
+  // morning/evening sessions (roughly 10:00–14:00 and 17:00–21:00), the
+  // normal shape of an Indian dental practice, previously had no way to be
+  // entered at all — this editor only ever offered one start/end pair per
+  // day, and the only workaround was a recurring Time off block recreated
+  // by hand (GetBooqin clinic audit's RS-02 finding).
+  const [blocks, setBlocks] = useState<DayBlock[][]>(
+    DAYS.map((_, day) => {
+      const existing = byDay[day];
+      return existing?.length ? existing.map((b) => ({ start: b.startTime, end: b.endTime })) : [{ start: "09:00", end: "17:00" }];
+    })
+  );
+
+  function updateBlock(day: number, index: number, field: "start" | "end", value: string) {
+    setBlocks((prev) => prev.map((dayBlocks, d) => (d !== day ? dayBlocks : dayBlocks.map((b, i) => (i === index ? { ...b, [field]: value } : b)))));
+  }
+  function addBlock(day: number) {
+    setBlocks((prev) => prev.map((dayBlocks, d) => (d !== day ? dayBlocks : [...dayBlocks, { start: "17:00", end: "21:00" }])));
+  }
+  function removeBlock(day: number, index: number) {
+    setBlocks((prev) => prev.map((dayBlocks, d) => (d !== day ? dayBlocks : dayBlocks.length > 1 ? dayBlocks.filter((_, i) => i !== index) : dayBlocks)));
+  }
+
   const totalHours = DAYS.reduce((sum, _, day) => {
     if (!enabled[day]) return sum;
-    const existing = byDay[day];
-    return sum + hoursBetween(existing?.startTime ?? "09:00", existing?.endTime ?? "17:00");
+    return sum + blocks[day].reduce((daySum, b) => daySum + hoursBetween(b.start, b.end), 0);
   }, 0);
 
   return (
@@ -138,29 +217,66 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
           &larr; All {v.resources}
         </a>
       </div>
-      <h1 className="page-title">{isNew ? `Add ${v.resourceOne}` : resource!.name}</h1>
+      <div className="flex flex-wrap items-center gap-[10px]">
+        <h1 className="page-title">{isNew ? `Add a ${kindLabel}` : resource!.name}</h1>
+        {!isNew && <span className="badge-neutral">{isRoom ? "Room" : v.resourceOneTitle}</span>}
+      </div>
 
       <Form method="post" className="flex flex-col gap-[14px]">
+        {isNew ? (
+          <input type="hidden" name="kind" value={kind} />
+        ) : (
+          <input type="hidden" name="kind" value={initialKind} />
+        )}
+        {isNew && (
+          <div className="card">
+            <div className="card-header">
+              <h2 className="card-title">Type</h2>
+            </div>
+            {/* The one moment kind is actually chosen — see the loader's own
+                comment on why it's fixed after that. A room is a resource
+                with its own bookable hours and its own occupancy, just none
+                of a practitioner's contact fields (GetBooqin clinic audit's
+                RS-01 finding). */}
+            <div className="card-body flex gap-2">
+              <label className={`tile flex-1 cursor-pointer justify-center text-center ${!isRoom ? "tile-on" : ""}`}>
+                <input type="radio" className="sr-only" checked={!isRoom} onChange={() => setKind("practitioner")} />
+                {v.resourceOneTitle}
+              </label>
+              <label className={`tile flex-1 cursor-pointer justify-center text-center ${isRoom ? "tile-on" : ""}`}>
+                <input type="radio" className="sr-only" checked={isRoom} onChange={() => setKind("room")} />
+                Room
+              </label>
+            </div>
+          </div>
+        )}
         <div className="card">
           <div className="card-header">
             <h2 className="card-title">Details</h2>
           </div>
           <div className="card-body grid grid-cols-2 gap-x-4 gap-y-[14px]">
-            <Field label="Name">
+            <Field label="Name" hint={isRoom ? "e.g. Operatory 1, Treatment Room A" : undefined}>
               <Input name="name" required defaultValue={resource?.name ?? ""} />
             </Field>
-            <Field label="Title">
-              <Input name="title" defaultValue={resource?.title ?? ""} />
-            </Field>
-            <Field label="Email">
-              <Input name="email" type="email" defaultValue={resource?.email ?? ""} />
-            </Field>
-            <Field label="Phone">
-              <Input name="phone" defaultValue={resource?.phone ?? ""} />
-            </Field>
-            <Field label="Video meeting link">
-              <Input name="meeting_link" defaultValue={resource?.meetingLink ?? ""} />
-            </Field>
+            {/* A room has no title, email, phone or video-meeting link of
+                its own — those describe a person, not a chair (GetBooqin
+                clinic audit's RS-01 finding). */}
+            {!isRoom && (
+              <>
+                <Field label="Title">
+                  <Input name="title" defaultValue={resource?.title ?? ""} />
+                </Field>
+                <Field label="Email">
+                  <Input name="email" type="email" defaultValue={resource?.email ?? ""} />
+                </Field>
+                <Field label="Phone">
+                  <Input name="phone" defaultValue={resource?.phone ?? ""} />
+                </Field>
+                <Field label="Video meeting link">
+                  <Input name="meeting_link" defaultValue={resource?.meetingLink ?? ""} />
+                </Field>
+              </>
+            )}
             {/* Free-text timezone with the placeholder repeated as its own
                 hint underneath — both patterns already fixed elsewhere
                 (Settings' own timezone field, and the Shopify-domain
@@ -186,11 +302,11 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
             <h2 className="card-title">Weekly hours</h2>
             <span className="num text-meta text-muted">{formatHours(totalHours)} / week</span>
           </div>
-          <div className="card-body flex flex-col gap-2">
+          <div className="card-body flex flex-col gap-3">
             {DAYS.map((label, day) => {
-              const existing = byDay[day];
               const dayEnabled = enabled[day];
-              const summary = dayEnabled ? formatHours(hoursBetween(existing?.startTime ?? "09:00", existing?.endTime ?? "17:00")) : "Closed";
+              const dayBlocks = blocks[day];
+              const summary = dayEnabled ? formatHours(dayBlocks.reduce((s, b) => s + hoursBetween(b.start, b.end), 0)) : "Closed";
               return (
                 // A fixed "132px 1fr 1fr 118px" grid used to run the toggle
                 // and the 118px summary off the edge of the card below
@@ -199,62 +315,72 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
                 // flex-wrap instead of grid: the toggle+summary pair wraps
                 // onto its own full-width row once the two 1fr time inputs
                 // no longer fit beside it, rather than every column
-                // shrinking past usability. The summary itself renders
-                // twice — once inline next to the toggle for the wrapped
-                // (mobile) row, once at the fixed 118px trailing position
-                // for the unwrapped (desktop) row — with `hidden`/`sm:hidden`
-                // making only one present in the accessibility tree at a
-                // time, so nothing is announced twice.
-                <div key={day} className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                  <div className="flex w-full items-center justify-between gap-3 sm:w-[132px] sm:shrink-0 sm:justify-start">
+                // shrinking past usability.
+                <div key={day} className="flex flex-col gap-[6px]">
+                  <div className="flex w-full items-center justify-between gap-3">
                     <Toggle
                       name={`day_${day}_enabled`}
                       defaultChecked={dayEnabled}
                       label={label}
                       onChange={(checked) => setEnabled((prev) => prev.map((v, i) => (i === day ? checked : v)))}
                     />
-                    <span className="num text-[13px] text-muted sm:hidden">{summary}</span>
+                    <span className="num text-[13px] text-muted">{summary}</span>
                   </div>
-                  {/* min-w-0: flex items default to min-width:auto, which
-                      for a native <input type="time"> is wider than these
-                      flex-1 tracks actually have room for below ~520px — the
-                      track can't shrink to fit without this, so the input
-                      overflowed the card's edge instead (UX audit's #11
-                      finding). Same class of fix as Row/RowInput in
-                      settings.tsx for the identical reason.
-                      aria-label: this row isn't a Row/Field, so neither
-                      gets an implicit label from anywhere — Toggle's own
-                      `label` covers the day name, but the two time inputs
-                      had nothing at all (pass 7's N1 finding: 7 days × 2
-                      inputs = 14, exactly the count axe flagged here). */}
-                  {/* lang="en-GB": a native <input type="time"> renders in
-                      whatever clock format the browser's locale prefers —
-                      12-hour with the meridiem cut off entirely at narrow
-                      widths (UX audit's C6 finding), while the rest of the
-                      app always prints 24-hour ("08:00–18:00"). This only
-                      changes display; the value/submitted format is always
-                      "HH:mm" regardless of lang. */}
-                  <input
-                    type="time"
-                    name={`day_${day}_start`}
-                    lang="en-GB"
-                    aria-label={`${label} start time`}
-                    defaultValue={existing?.startTime ?? "09:00"}
-                    disabled={!dayEnabled}
-                    className={`input min-w-0 flex-1 sm:flex-1 ${!dayEnabled ? "bg-canvas" : ""}`}
-                  />
-                  <input
-                    type="time"
-                    name={`day_${day}_end`}
-                    lang="en-GB"
-                    aria-label={`${label} end time`}
-                    defaultValue={existing?.endTime ?? "17:00"}
-                    disabled={!dayEnabled}
-                    className={`input min-w-0 flex-1 sm:flex-1 ${!dayEnabled ? "bg-canvas" : ""}`}
-                  />
-                  <span className="num hidden text-right text-[13px] text-muted sm:block sm:w-[118px] sm:shrink-0">
-                    {summary}
-                  </span>
+                  {dayEnabled && (
+                    <div className="flex flex-col gap-[6px] pl-[2px]">
+                      {dayBlocks.map((b, i) => (
+                        <div key={i} className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                          {/* min-w-0: flex items default to min-width:auto,
+                              which for a native <input type="time"> is
+                              wider than these flex-1 tracks actually have
+                              room for below ~520px (UX audit's #11
+                              finding). aria-label: neither input has a
+                              visible label of its own (pass 7's N1
+                              finding). lang="en-GB" forces 24-hour display
+                              regardless of browser locale (UX audit's C6
+                              finding) — display only, the submitted value
+                              is always "HH:mm". */}
+                          <input
+                            type="time"
+                            name={`day_${day}_start`}
+                            lang="en-GB"
+                            aria-label={`${label} block ${i + 1} start time`}
+                            value={b.start}
+                            onChange={(e) => updateBlock(day, i, "start", e.target.value)}
+                            className="input min-w-0 flex-1"
+                          />
+                          <input
+                            type="time"
+                            name={`day_${day}_end`}
+                            lang="en-GB"
+                            aria-label={`${label} block ${i + 1} end time`}
+                            value={b.end}
+                            onChange={(e) => updateBlock(day, i, "end", e.target.value)}
+                            className="input min-w-0 flex-1"
+                          />
+                          {dayBlocks.length > 1 && (
+                            <button
+                              type="button"
+                              className="btn-link shrink-0 text-danger"
+                              aria-label={`Remove ${label} block ${i + 1}`}
+                              onClick={() => removeBlock(day, i)}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {/* The split morning/evening session a lot of
+                          businesses actually run on — a lunch break, a
+                          midday closure, a second evening sitting — is
+                          exactly what a single start/end pair per day
+                          couldn't express (GetBooqin clinic audit's RS-02
+                          finding). */}
+                      <button type="button" className="btn-link w-fit" onClick={() => addBlock(day)}>
+                        + Add another time
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -295,7 +421,7 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
               className="btn-del"
               onClick={() => (document.getElementById("delete-resource") as HTMLDialogElement | null)?.showModal()}
             >
-              Delete {v.resourceOne}
+              Delete {kindLabel}
             </button>
           )}
         </div>
@@ -304,7 +430,7 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
       {!isNew && (
         <ConfirmDialog
           id="delete-resource"
-          title={`Delete this ${v.resourceOne}?`}
+          title={`Delete this ${kindLabel}?`}
           body="This can't be undone."
           confirmLabel="Delete"
         >

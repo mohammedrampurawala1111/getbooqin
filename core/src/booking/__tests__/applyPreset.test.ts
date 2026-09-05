@@ -77,4 +77,21 @@ describe("applyPreset() customization tracking", () => {
     });
     expect(after.customized_fields).toEqual(["cancel_cutoff_hours"]);
   });
+
+  it("un-customizes a field the moment its value is saved back to the current preset's own default (GetBooqin clinic audit's BR-05 finding)", async () => {
+    await Settings.applyPreset(shop, platform, "clinic", { force: true });
+    const original = await Settings.getSettings(shop, platform);
+    expect(original.min_notice_hours).toBe(4);
+
+    const edited = await Settings.setSettings(shop, platform, { min_notice_hours: 3000 });
+    expect(edited.customized_fields).toContain("min_notice_hours");
+
+    // Before the fix, setSettings only ever added to customized_fields and
+    // never re-evaluated it — saving the value straight back to clinic's
+    // own preset default (4) left the field mis-flagged "Customized"
+    // forever, through a full reload, with no reset control anywhere.
+    const reverted = await Settings.setSettings(shop, platform, { min_notice_hours: 4 });
+    expect(reverted.min_notice_hours).toBe(4);
+    expect(reverted.customized_fields).not.toContain("min_notice_hours");
+  });
 });

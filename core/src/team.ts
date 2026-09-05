@@ -268,6 +268,31 @@ export async function getInviteByToken(token: string) {
   return prisma.connectionInvite.findUnique({ where: { token }, include: { connection: true } });
 }
 
+/**
+ * The most recent invite still actually joinable for this email, across
+ * every business — checked once, right after signup and before any
+ * Connection gets created (onboarding.tsx's loader), so an invited
+ * teammate is routed to accept it instead of being funneled into creating
+ * their own business (QA report's BUG-1: /signup has no concept of
+ * invites and forces a new one regardless). A user can hold pending
+ * invites to several businesses at once (this module's own per-business
+ * dedup, not a global unique-email constraint — see inviteMember) — this
+ * just surfaces the most recently sent one; someone holding more than one
+ * still needs each business's own emailed link for the rest, same as
+ * today.
+ */
+export async function findPendingInviteForEmail(email: string): Promise<ConnectionInvite | null> {
+  const normalizedEmail = normalizeEmail(email);
+  const invites = await prisma.connectionInvite.findMany({
+    where: { email: normalizedEmail, status: "pending" },
+    orderBy: { createdAt: "desc" },
+  });
+  // status: "pending" alone doesn't rule out expiry — inviteState() is the
+  // one place that already knows expiresAt has to be checked against real
+  // time too (see its own comment on BA edge case 3.6).
+  return invites.find((invite) => inviteState(invite) === "pending") ?? null;
+}
+
 export type InviteState = "pending" | "expired" | "revoked" | "accepted";
 
 /** Classifies a resolved invite row into the /invite/:token screen states (docs/team-ui-spec.md §2.4) — expiry is judged against the DB row's own expiresAt, never the signed token's baked-in TTL (BA edge case 3.6). */

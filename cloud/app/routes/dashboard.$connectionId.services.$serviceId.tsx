@@ -17,10 +17,17 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const config = await Data.serviceConfig(shop, id);
   if (!config) throw data("Service not found", { status: 404 });
 
-  const [product, resources, addons, resourceIds, addonIds, settings] = await Promise.all([
+  const [product, resources, rooms, addons, resourceIds, addonIds, settings] = await Promise.all([
     Data.productCacheByProductId(shop, platform, config.productId),
-    Data.resources(shop, platform, true),
+    // "Who can deliver this" means practitioners specifically — a room was
+    // never a valid answer to that question (GetBooqin clinic audit's RS-01
+    // finding); rooms get their own section below instead.
+    Data.resources(shop, platform, true, "practitioner"),
+    Data.resources(shop, platform, true, "room"),
     Data.addons(shop, platform, true),
+    // Both practitioner and room assignments live in the same
+    // ServiceResource join table (see roomsForService()'s own comment) —
+    // this one list already covers checkbox state for both sections below.
     Data.resourceIdsForService(shop, id),
     Data.addonIdsForService(shop, id),
     Settings.getSettings(shop, platform),
@@ -28,7 +35,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
   const paymentsAvailable = FeatureFlags.PAYMENTS_ENABLED && settings.enabled_gateways.length > 0;
   const bookingCount = await Data.bookingCountForService(shop, id);
-  return { config, product, resources, addons, resourceIds, addonIds, currencySymbol: settings.currency_symbol, paymentsAvailable, bookingCount };
+  return { config, product, resources, rooms, addons, resourceIds, addonIds, currencySymbol: settings.currency_symbol, paymentsAvailable, bookingCount };
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
@@ -43,12 +50,23 @@ export async function action({ request, params }: Route.ActionArgs) {
 
   const before = await Data.serviceConfig(shop, id);
   if (!before) throw data("Service not found", { status: 404 });
-  const [beforeResourceIds, beforeAddonIds] = await Promise.all([
-    Data.resourceIdsForService(shop, id),
+  // Practitioner-only — Shopify's own "resource_ids" metafield below is a
+  // storefront-facing "who can deliver this" list with no concept of a
+  // room, so it must never see one mixed in (GetBooqin clinic audit's RS-01
+  // finding: rooms are an internal scheduling detail, invisible to the
+  // customer by design).
+  const [beforePractitionerIds, beforeAddonIds] = await Promise.all([
+    Data.resourcesForService(shop, platform, id).then((list) => list.map((r) => r.id)),
     Data.addonIdsForService(shop, id),
   ]);
 
-  const resourceIds = form.getAll("resource_ids").map(Number);
+  // Practitioner and room checkboxes are two visually separate sections
+  // but the same underlying assignment list (ServiceResource doesn't care
+  // what kind of resource it links) — combined into one array for
+  // saveServiceConfig(), which does need both.
+  const practitionerIds = form.getAll("resource_ids").map(Number);
+  const roomIds = form.getAll("room_ids").map(Number);
+  const resourceIds = [...practitionerIds, ...roomIds];
   const addonIds = form.getAll("addon_ids").map(Number);
 
   const saved = await Data.saveServiceConfig(
@@ -66,6 +84,7 @@ export async function action({ request, params }: Route.ActionArgs) {
       deposit_percent: Number(form.get("deposit_percent") ?? 0),
       color: String(form.get("color") ?? before.color),
       status: form.get("status") === "on",
+      requires_room: form.get("requires_room") === "on",
       resource_ids: resourceIds,
       addon_ids: addonIds,
     },
@@ -92,8 +111,8 @@ export async function action({ request, params }: Route.ActionArgs) {
   // with a metafield concept today).
   if (platform === "shopify") {
     try {
-      const current = ServiceMetafields.serviceConfigToFields(before, beforeResourceIds, beforeAddonIds);
-      const next = ServiceMetafields.serviceConfigToFields(saved, resourceIds, addonIds);
+      const current = ServiceMetafields.serviceConfigToFields(before, beforePractitionerIds, beforeAddonIds);
+      const next = ServiceMetafields.serviceConfigToFields(saved, practitionerIds, addonIds);
       const changed = ServiceMetafields.diffServiceConfigFields(current, next);
       if (Object.keys(changed).length > 0) {
         const accessToken = decryptCredentials(connection.credentials);
@@ -113,7 +132,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function ServiceDetail({ loaderData, actionData, params }: Route.ComponentProps) {
-  const { config, product, resources, addons, resourceIds, addonIds, currencySymbol, paymentsAvailable, bookingCount } = loaderData;
+  const { config, product, resources, rooms, addons, resourceIds, addonIds, currencySymbol, paymentsAvailable, bookingCount } = loaderData;
   const base = `/dashboard/${params.connectionId}`;
   const swatches = SWATCHES.includes(config.color) ? SWATCHES : [config.color, ...SWATCHES];
   const editable = config.platform === "manual";
@@ -264,6 +283,41 @@ export default function ServiceDetail({ loaderData, actionData, params }: Route.
                   defaultChecked={resourceIds.includes(r.id)}
                 />
               ))
+            )}
+          </div>
+        </div>
+
+        {/* Nothing previously tracked chair/room occupancy at all — two
+            practitioners could be booked into the same physical operatory
+            at once (GetBooqin clinic audit's RS-01 finding). Off by
+            default: no existing service starts requiring a room it never
+            needed. */}
+        <div className="card">
+          <div className="card-header">
+            <h2 className="card-title">Room</h2>
+          </div>
+          <div className="card-body flex flex-col gap-3">
+            <Toggle name="requires_room" defaultChecked={config.requiresRoom} label="Requires a room" />
+            {rooms.length === 0 ? (
+              <p className="m-0 text-body text-muted">
+                No rooms yet —{" "}
+                <a href={`${base}/resources/new?kind=room`} className="underline">
+                  add one
+                </a>{" "}
+                before turning this on, or this service won&rsquo;t be bookable.
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {rooms.map((r) => (
+                  <CheckCard
+                    key={r.id}
+                    name="room_ids"
+                    value={String(r.id)}
+                    label={r.name}
+                    defaultChecked={resourceIds.includes(r.id)}
+                  />
+                ))}
+              </div>
             )}
           </div>
         </div>

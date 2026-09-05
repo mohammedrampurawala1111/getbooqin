@@ -16,13 +16,22 @@ export const meta: Route.MetaFunction = ({ matches }) => [
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId);
   const url = new URL(request.url);
-  const status = url.searchParams.get("status") || "";
+  // No status param at all (first visit, or "Clear filters") means "Active"
+  // — cancelled and declined rows no longer show by default. Before this,
+  // "All statuses" was the only view, so a year of cancellations and
+  // declines accumulated permanently on top of the exact list a
+  // receptionist checks every morning, with no delete and no default
+  // filter hiding them (GetBooqin clinic audit's AP-02 finding). An
+  // explicit status= param — including "" for the real "All statuses"
+  // choice — always wins over this default.
+  const statusParam = url.searchParams.get("status");
+  const status = statusParam ?? "active";
   const search = url.searchParams.get("q") || "";
-  const filtered = !!(status || search);
+  const filtered = !!search || (statusParam !== null && status !== "active");
 
   const [rows, totalCount, settings, services, resources, customers] = await Promise.all([
     Bookings.query(shop, platform, {
-      ...(status ? { status } : {}),
+      ...(status === "active" ? { notStatus: ["cancelled", "declined"] } : status ? { status } : {}),
       ...(search ? { search } : {}),
       limit: 100,
     }),
@@ -34,7 +43,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     filtered ? Promise.resolve(-1) : Bookings.count(shop, platform, {}),
     Settings.getSettings(shop, platform),
     Data.catalogServices(shop, platform),
-    Data.resources(shop, platform),
+    // Practitioners only — the Add-booking dialog's resource picker means
+    // "who is this appointment with" (GetBooqin clinic audit's RS-01
+    // finding); any room it needs is picked automatically by
+    // Bookings.create() itself.
+    Data.resources(shop, platform, true, "practitioner"),
     // Backs the Add-consultation dialog's client search/typeahead — staff
     // used to retype name, email and phone from scratch for a repeat
     // client every time (Defect Dossier's BQ-31 finding). Capped at the
@@ -284,15 +297,23 @@ export default function BookingsList({ loaderData, actionData, params }: Route.C
       <PageHeader
         title={v.bookingTitle}
         actions={
-          serviceOptions.length > 0 ? (
-            <button
-              type="button"
-              className="btn-pri"
-              onClick={() => (document.getElementById("add-booking") as HTMLDialogElement | null)?.showModal()}
-            >
-              + Add {v.bookingOne}
-            </button>
-          ) : undefined
+          <>
+            {/* Hidden below 640px, matching DataTable's own mobileCard
+                breakpoint — a multi-column calendar has no useful mobile
+                layout, so phones stay on this list. */}
+            <a href={`${base}/bookings/calendar`} className="btn-sec hidden sm:inline-flex">
+              Calendar
+            </a>
+            {serviceOptions.length > 0 && (
+              <button
+                type="button"
+                className="btn-pri"
+                onClick={() => (document.getElementById("add-booking") as HTMLDialogElement | null)?.showModal()}
+              >
+                + Add {v.bookingOne}
+              </button>
+            )}
+          </>
         }
       />
 
@@ -300,6 +321,11 @@ export default function BookingsList({ loaderData, actionData, params }: Route.C
         <div className="card-header">
           <Form method="get" className="flex w-full flex-wrap items-center gap-2">
             <select name="status" defaultValue={status} aria-label="Filter by status" className="input w-auto">
+              {/* Active — everything except cancelled/declined — is the
+                  default view now (GetBooqin clinic audit's AP-02 finding);
+                  "All statuses" is still one click away for anyone who
+                  needs to see a cancellation. */}
+              <option value="active">Active</option>
               <option value="">All statuses</option>
               {statuses.map((s) => (
                 <option key={s} value={s}>
@@ -310,7 +336,7 @@ export default function BookingsList({ loaderData, actionData, params }: Route.C
             <input
               name="q"
               defaultValue={search}
-              placeholder="Search customer name, email, phone"
+              placeholder={`Search ${v.customerOne} name, email, phone`}
               className="input flex-1"
             />
             <button type="submit" className="btn-sec">

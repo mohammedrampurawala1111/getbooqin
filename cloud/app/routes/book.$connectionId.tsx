@@ -7,12 +7,13 @@ import {
   Settings as CoreSettings,
   ConsultationSummary,
   FeatureFlags,
+  Waitlist,
   getPublicConnection,
   isGetBooqinError,
 } from "getbooqin-core";
 import type { PatientSummary } from "getbooqin-core";
 import { formatInZone, wallClockToUtc, zoneAbbr } from "getbooqin-core/booking/tz";
-import { vocabFor } from "~/lib/presets";
+import { vocabFor, isClinicFeaturePreset } from "~/lib/presets";
 import { AlertError, Badge, ConfirmDialog, Field, FormErrorSummary, Input } from "~/components/ui";
 import { LogoMark } from "~/components/onboarding";
 import { throttle, clientIp } from "~/lib/http.server";
@@ -40,9 +41,25 @@ function publicSettings(settings: CoreSettings.Settings) {
     currencySymbol: settings.currency_symbol,
     timezone: settings.timezone,
     requirePhone: settings.require_phone,
+    requireEmail: settings.require_email,
+    // Drives the date picker's own min/max (GetBooqin clinic audit's PB-05
+    // finding) — previously the field had a min of "tomorrow" and no max
+    // at all, so a date 3 years out or inside an active minimum-notice
+    // window was freely selectable and then blamed on the day itself
+    // ("No open times that day") instead of being told it was out of
+    // range in the first place.
+    minNoticeHours: settings.min_notice_hours,
+    maxAdvanceDays: settings.max_advance_days,
     intakeFields: settings.intake_fields,
     allowCancel: settings.allow_cancel,
     consentText: settings.consent_text,
+    privacyNoticeUrl: settings.privacy_notice_url || "/legal/privacy",
+    // Backs the "Join the waitlist" prompt on an empty-availability day —
+    // the waitlist could be enabled, wired to freed slots, and have a real
+    // offer window configured, and the public page still never mentioned
+    // it at the one moment a patient is most willing to queue for a spot
+    // (GetBooqin clinic audit's PB-04 finding).
+    waitlistEnabled: settings.waitlist_enabled,
   };
 }
 
@@ -142,7 +159,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // never be reachable here.
   const summaryUid = new URL(request.url).searchParams.get("getbooqin_summary");
   if (summaryUid) {
-    if (settings.preset !== "clinic" || !FeatureFlags.VISIT_SUMMARIES_ENABLED || !settings.visit_summaries_enabled) {
+    if (!isClinicFeaturePreset(settings.preset) || !FeatureFlags.VISIT_SUMMARIES_ENABLED || !settings.visit_summaries_enabled) {
       throw data("This page isn't available.", { status: 404 });
     }
 
@@ -183,6 +200,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     return {
       mode: "manage" as const,
       businessName: settings.business_name,
+      businessPhone: settings.business_phone,
       vocab,
       booking: {
         uid: booking.uid,
@@ -193,12 +211,21 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         priceLabel: booking.price > 0 ? `${settings.currency_symbol}${booking.price.toFixed(2)}` : "",
       },
       canCancel: Bookings.customerCanCancel(booking, settings),
+      // Why cancellation isn't available, when it isn't — "" when it is.
+      // See cancelUnavailableReason's own comment for the un-cancellable-
+      // from-the-moment-it's-booked case this exists to explain (GetBooqin
+      // clinic audit's PB-01 finding).
+      cancelUnavailableReason: Bookings.cancelUnavailableReason(booking, settings),
     };
   }
 
   const [services, resources, hours] = await Promise.all([
     Data.catalogServices(connection.shop, connection.platform),
-    Data.resources(connection.shop, connection.platform),
+    // Practitioners only — a room is an internal scheduling detail with no
+    // customer-facing picker of its own; Bookings.create() secures one
+    // automatically once a practitioner and time are chosen (GetBooqin
+    // clinic audit's RS-01 finding).
+    Data.resources(connection.shop, connection.platform, true, "practitioner"),
     Data.businessHours(connection.shop, connection.platform),
   ]);
 
@@ -267,6 +294,12 @@ async function handleBook(connectionId: string, request: Request, form: FormData
         fieldErrors[`intake_${field.key}`] = `Enter ${field.label.toLowerCase()}.`;
       }
     }
+    // The consent checkbox is new UI (TS-01) with no server-side twin to
+    // bypass it before this — same defense-in-depth as require_phone's own
+    // mirrored client/server check just above.
+    if (form.get("consent") !== "on") {
+      fieldErrors.consent = "Please agree to the privacy notice to continue.";
+    }
     if (Object.keys(fieldErrors).length > 0) return { fieldErrors };
 
     const booking = await Bookings.create(connection.shop, connection.platform, settings.timezone, {
@@ -309,8 +342,64 @@ async function handleBook(connectionId: string, request: Request, form: FormData
         // finding).
         canCancel: Bookings.customerCanCancel(booking, settings),
         cancelCutoffHours: settings.cancel_cutoff_hours,
+        // Surfaced immediately on the confirmation screen rather than only
+        // discovered later on the manage page — a booking made inside the
+        // cancellation window is un-cancellable from this exact moment
+        // (GetBooqin clinic audit's PB-01 finding), and the sooner a
+        // patient knows that, the sooner they can call instead of assuming
+        // the "View or cancel" link will work when they need it.
+        cancelUnavailableReason: Bookings.cancelUnavailableReason(booking, settings),
+        businessPhone: settings.business_phone,
       },
     };
+  } catch (err) {
+    if (isGetBooqinError(err)) return { error: err.message, code: err.code };
+    throw err;
+  }
+}
+
+/**
+ * Public "Join the waitlist" — the waitlist backend (Waitlist.join, freed-
+ * slot offers, the offer window) was already fully wired, but only staff
+ * could add someone to it; the public booking page never mentioned it even
+ * on its own empty-availability screen (GetBooqin clinic audit's PB-04
+ * finding). Same throttle bucket convention as handleBook/handleCancel.
+ */
+async function handleJoinWaitlist(connectionId: string, request: Request, form: FormData) {
+  const connection = await getPublicConnection(connectionId);
+  if (!connection) return { error: "This booking page isn't available." };
+
+  if (String(form.get("hp_company") || "").trim() !== "") {
+    return { spam: true };
+  }
+
+  try {
+    throttle(`waitlist:${connectionId}:${clientIp(request)}`, 8);
+    const settings = await CoreSettings.getSettings(connection.shop, connection.platform);
+    if (!settings.waitlist_enabled) return { error: "The waitlist isn't available for this business." };
+
+    const fieldErrors = contactFieldErrors(
+      {
+        first_name: String(form.get("first_name") || ""),
+        email: String(form.get("email") || ""),
+        phone: String(form.get("phone") || ""),
+      },
+      settings.require_phone,
+      settings.require_email
+    );
+    if (Object.keys(fieldErrors).length > 0) return { fieldErrors };
+
+    await Waitlist.join(connection.shop, connection.platform, settings.timezone, {
+      service_id: Number(form.get("service_id") || 0),
+      resource_id: Number(form.get("resource_id") || 0) || undefined,
+      window_start: String(form.get("date") || ""),
+      first_name: String(form.get("first_name") || ""),
+      last_name: String(form.get("last_name") || ""),
+      email: String(form.get("email") || ""),
+      phone: String(form.get("phone") || ""),
+      notes: String(form.get("notes") || ""),
+    });
+    return { waitlisted: true };
   } catch (err) {
     if (isGetBooqinError(err)) return { error: err.message, code: err.code };
     throw err;
@@ -349,6 +438,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 
   if (intent === "book") return handleBook(connectionId, request, form);
   if (intent === "cancel") return handleCancel(connectionId, request, form);
+  if (intent === "join_waitlist") return handleJoinWaitlist(connectionId, request, form);
   return { error: "Unknown request." };
 }
 
@@ -371,7 +461,17 @@ function Shell({ businessName, children }: { businessName: string; children: Rea
 
 export default function BookingPage({ loaderData, params }: Route.ComponentProps) {
   if (loaderData.mode === "manage") {
-    return <ManageBooking connectionId={params.connectionId!} businessName={loaderData.businessName} vocab={loaderData.vocab} initial={loaderData.booking} canCancelInitial={loaderData.canCancel} />;
+    return (
+      <ManageBooking
+        connectionId={params.connectionId!}
+        businessName={loaderData.businessName}
+        businessPhone={loaderData.businessPhone}
+        vocab={loaderData.vocab}
+        initial={loaderData.booking}
+        canCancelInitial={loaderData.canCancel}
+        cancelUnavailableReason={loaderData.cancelUnavailableReason}
+      />
+    );
   }
   if (loaderData.mode === "summary") {
     return <PatientSummaryView loaderData={loaderData} />;
@@ -501,13 +601,15 @@ function PatientList({ label, items, bare = false }: { label: string; items: { t
 /* ---------------------------------------------------------- Manage view */
 
 function ManageBooking({
-  connectionId, businessName, vocab, initial, canCancelInitial,
+  connectionId, businessName, businessPhone, vocab, initial, canCancelInitial, cancelUnavailableReason,
 }: {
   connectionId: string;
   businessName: string;
+  businessPhone: string;
   vocab: ReturnType<typeof vocabFor>;
   initial: { uid: string; status: string; serviceName: string; resourceName: string; when: string; priceLabel: string };
   canCancelInitial: boolean;
+  cancelUnavailableReason: string;
 }) {
   const fetcher = useFetcher<{ cancelled?: boolean; error?: string }>();
   const cancelled = fetcher.data?.cancelled || initial.status === "cancelled";
@@ -540,9 +642,26 @@ function ManageBooking({
             Cancel this {vocab.bookingOne}
           </button>
         )}
+        {/* Previously this dead-ended silently: no cancel control, no
+            message, no mention of *why* — a customer booked 9h50m ahead
+            under a 4-hour minimum-notice rule sat against a 24-hour
+            cancellation cutoff with zero way to act and zero explanation
+            (GetBooqin clinic audit's PB-01 finding). Only shown once
+            (not alongside the button above), and never for an
+            already-cancelled booking, which has its own status badge. */}
+        {!canCancel && !cancelled && cancelUnavailableReason && (
+          <p className="mt-4 rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">{cancelUnavailableReason}</p>
+        )}
       </div>
       <p className="text-center text-body text-muted">
-        Need to change the time instead? Contact {businessName} directly.
+        Need to change the time instead?{" "}
+        {businessPhone ? (
+          <>
+            Call {businessName} at <a href={`tel:${businessPhone.replace(/[\s()-]/g, "")}`} className="text-brand-600 underline">{businessPhone}</a>.
+          </>
+        ) : (
+          <>Contact {businessName} directly.</>
+        )}
       </p>
 
       {canCancel && (
@@ -595,6 +714,136 @@ function SummaryBar({
   );
 }
 
+// Relative, not exact — "39 open" on an empty diary reads as a scarcity
+// signal running the wrong way for a business (GetBooqin clinic audit's
+// PB-06 finding). Thresholds are deliberately coarse; the point is never
+// to let a customer back-calculate how quiet a day actually is.
+function availabilityLabel(count: number): string {
+  if (count <= 0) return "Full";
+  if (count <= 2) return "Few left";
+  if (count <= 6) return "Some open";
+  return "Open";
+}
+
+function partOfDay(time: string): "Morning" | "Afternoon" | "Evening" {
+  const hour = Number(time.slice(0, 2));
+  if (hour < 12) return "Morning";
+  if (hour < 17) return "Afternoon";
+  return "Evening";
+}
+
+const PART_OF_DAY_ORDER = ["Morning", "Afternoon", "Evening"] as const;
+
+/**
+ * A ten-hour, 15-minute-interval day is 39 undifferentiated buttons in
+ * three columns with nothing to orient a customer scanning for "sometime
+ * after work" — grouped by part of day instead (GetBooqin clinic audit's
+ * PB-06 finding).
+ */
+function SlotGrid({
+  slots, time, onPick,
+}: { slots: { time: string; label: string }[]; time: string; onPick: (time: string) => void }) {
+  const groups: Partial<Record<(typeof PART_OF_DAY_ORDER)[number], typeof slots>> = {};
+  for (const s of slots) {
+    const group = partOfDay(s.time);
+    (groups[group] ??= []).push(s);
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      {PART_OF_DAY_ORDER.filter((g) => groups[g]?.length).map((g) => (
+        <div key={g}>
+          <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-subtle">{g}</span>
+          <div className="grid grid-cols-3 gap-2">
+            {groups[g]!.map((s) => (
+              <button
+                key={s.time}
+                type="button"
+                className={`tile justify-center ${time === s.time ? "tile-on" : ""}`}
+                onClick={() => onPick(s.time)}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Inline "Join the waitlist" — collapsed to a single button until clicked,
+ * then a small self-contained form on its own fetcher so it can't get
+ * tangled up with the page's main booking fetcher. The waitlist backend
+ * (freed-slot offers, the offer window) was already fully built; only
+ * staff could ever add someone to it, and the public page never mentioned
+ * it — including on its own empty-availability screen, the one moment a
+ * customer is most willing to queue for a spot (GetBooqin clinic audit's
+ * PB-04 finding).
+ */
+function WaitlistJoinPrompt({
+  serviceId, resourceId, vocab, settings,
+}: {
+  serviceId: number;
+  resourceId: number;
+  vocab: ReturnType<typeof vocabFor>;
+  settings: BookLoaderData["settings"];
+}) {
+  const [open, setOpen] = useState(false);
+  const fetcher = useFetcher<{ waitlisted?: boolean; error?: string; fieldErrors?: Record<string, string> }>();
+  const submitting = fetcher.state !== "idle";
+
+  if (fetcher.data?.waitlisted) {
+    return (
+      <p className="m-0 rounded-[8px] bg-ok-bg px-3 py-2 text-[12.5px] font-medium text-ok">
+        You're on the waitlist — we'll let you know the moment a {vocab.bookingOne} opens up.
+      </p>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button type="button" className="btn-sec w-full justify-center" onClick={() => setOpen(true)}>
+        Join the waitlist instead
+      </button>
+    );
+  }
+
+  return (
+    <fetcher.Form method="post" className="flex flex-col gap-[10px] rounded-[10px] border border-line p-3">
+      <input type="hidden" name="_intent" value="join_waitlist" />
+      <input type="hidden" name="service_id" value={serviceId} />
+      <input type="hidden" name="resource_id" value={resourceId} />
+      {/* Honeypot — same convention as the main booking form below. */}
+      <input type="text" name="hp_company" tabIndex={-1} autoComplete="off" className="sr-only" aria-hidden="true" />
+      <p className="m-0 text-[12.5px] text-muted">We'll reach out the moment a spot frees up.</p>
+      {fetcher.data?.error && <span className="text-[12px] text-danger">{fetcher.data.error}</span>}
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="First name" required error={fetcher.data?.fieldErrors?.first_name}>
+          <Input name="first_name" required autoComplete="given-name" />
+        </Field>
+        <Field label="Last name">
+          <Input name="last_name" autoComplete="family-name" />
+        </Field>
+      </div>
+      <Field label="Email" required={settings.requireEmail} error={fetcher.data?.fieldErrors?.email}>
+        <Input type="email" name="email" required={settings.requireEmail} autoComplete="email" />
+      </Field>
+      <Field label="Phone" required={settings.requirePhone} error={fetcher.data?.fieldErrors?.phone}>
+        <Input type="tel" name="phone" required={settings.requirePhone} autoComplete="tel" />
+      </Field>
+      <div className="flex justify-end gap-2">
+        <button type="button" className="btn-sec" onClick={() => setOpen(false)} disabled={submitting}>
+          Cancel
+        </button>
+        <button type="submit" className="btn-pri" disabled={submitting}>
+          {submitting ? "Joining…" : "Join waitlist"}
+        </button>
+      </div>
+    </fetcher.Form>
+  );
+}
+
 function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
   const { connectionId, businessName, businessHours, vocab, settings, services, resources } = loaderData;
   const [step, setStep] = useState<Step>("service");
@@ -607,13 +856,24 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
   // timezone the visitor is in, so an SSR-computed "today" (in the server's
   // own timezone) could disagree with the visitor's actual local date and
   // wrongly block them from picking it. `Bookings.create`'s own
-  // min_notice_hours check is what actually enforces this server-side;
-  // this is only ever a picker hint.
+  // min_notice_hours/max_advance_days checks are what actually enforce this
+  // server-side; this is only ever a picker hint. Previously this only set
+  // a min of "today" and no max at all — a date years past the advance
+  // window, or one that fell inside an active minimum-notice period, was
+  // freely pickable and then reported as "No open times that day" instead
+  // of "outside our booking window" (GetBooqin clinic audit's PB-05
+  // finding).
   const [dateMin, setDateMin] = useState<string | undefined>(undefined);
+  const [dateMax, setDateMax] = useState<string | undefined>(undefined);
+  const toDateInputValue = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   useEffect(() => {
     const now = new Date();
-    setDateMin(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`);
-  }, []);
+    const earliest = new Date(now.getTime() + settings.minNoticeHours * 3600_000);
+    const latest = new Date(now.getTime() + settings.maxAdvanceDays * 86_400_000);
+    setDateMin(toDateInputValue(earliest));
+    setDateMax(toDateInputValue(latest));
+  }, [settings.minNoticeHours, settings.maxAdvanceDays]);
+  const dateOutOfRange = !!date && !!dateMin && !!dateMax && (date < dateMin || date > dateMax);
 
   const daysFetcher = useFetcher<{ mode: "days"; days: { date: string; label: string; count: number }[]; unbookable: boolean }>();
   const slotsFetcher = useFetcher<{ mode: "slots"; slots: { time: string; label: string }[] }>();
@@ -633,6 +893,8 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
       needsPayment: boolean;
       canCancel: boolean;
       cancelCutoffHours: number;
+      cancelUnavailableReason: string;
+      businessPhone: string;
     };
   }>();
 
@@ -680,7 +942,15 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
   }, [bookFetcher.data]);
 
   if (bookFetcher.data?.booking) {
-    return <Confirmation connectionId={connectionId} businessName={businessName} vocab={vocab} booking={bookFetcher.data.booking} />;
+    return (
+      <Confirmation
+        connectionId={connectionId}
+        businessName={businessName}
+        businessAddress={settings.businessAddress}
+        vocab={vocab}
+        booking={bookFetcher.data.booking}
+      />
+    );
   }
 
   return (
@@ -784,13 +1054,18 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
                   onClick={() => { setDate(d.date); setTime(""); }}
                 >
                   <span className="text-body font-medium">{d.label}</span>
-                  <span className="ml-auto text-[12px] text-subtle">{d.count} open</span>
+                  {/* An exact count ("39 open") broadcasts an empty diary as
+                      a scarcity signal running the wrong way for a business
+                      — most booking products show relative availability, or
+                      nothing at all (GetBooqin clinic audit's PB-06
+                      finding). */}
+                  <span className="ml-auto text-[12px] text-subtle">{availabilityLabel(d.count)}</span>
                 </button>
               ))}
           </div>
 
           <Field label="Or pick a specific date">
-            <Input type="date" value={date} onChange={(e) => { setDate(e.target.value); setTime(""); }} min={dateMin} />
+            <Input type="date" value={date} onChange={(e) => { setDate(e.target.value); setTime(""); }} min={dateMin} max={dateMax} />
           </Field>
 
           {date && (
@@ -803,26 +1078,42 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
                 <span className="text-[11.5px] text-subtle">Times shown in {zoneAbbr(new Date(), settings.timezone)}</span>
               )}
               {slotsFetcher.data?.mode === "slots" && slotsFetcher.data.slots.length === 0 && (
-                <p className="text-body text-muted">No open times that day — try another date.</p>
+                // "Outside our booking window" (a date the calendar was
+                // never open on) used to render identically to "fully
+                // booked" (a date that is open but every slot is taken) —
+                // both just said "No open times that day", which taught a
+                // customer stuck past the max-advance ceiling to keep
+                // trying other dates that could never work either
+                // (GetBooqin clinic audit's PB-05 finding).
+                <p className="text-body text-muted">
+                  {dateOutOfRange
+                    ? `We only take ${vocab.bookingMany} between ${dateMin} and ${dateMax} — try a date in that range.`
+                    : "No open times that day — try another date."}
+                </p>
               )}
-              {slotsFetcher.data?.mode === "slots" && (
-                <div className="grid grid-cols-3 gap-2">
-                  {slotsFetcher.data.slots.map((s) => (
-                    <button
-                      key={s.time}
-                      type="button"
-                      className={`tile justify-center ${time === s.time ? "tile-on" : ""}`}
-                      onClick={() => setTime(s.time)}
-                    >
-                      {s.label}
-                    </button>
-                  ))}
-                </div>
+              {slotsFetcher.data?.mode === "slots" && slotsFetcher.data.slots.length > 0 && (
+                <SlotGrid slots={slotsFetcher.data.slots} time={time} onPick={setTime} />
+              )}
+              {/* The one moment a customer is most willing to join a queue
+                  is the one moment they aren't asked — enabled, wired to
+                  freed slots, and never mentioned here (GetBooqin clinic
+                  audit's PB-04 finding). */}
+              {settings.waitlistEnabled && slotsFetcher.data?.mode === "slots" && slotsFetcher.data.slots.length === 0 && !dateOutOfRange && (
+                <WaitlistJoinPrompt serviceId={service.id} resourceId={resourceId} vocab={vocab} settings={settings} />
               )}
             </div>
           )}
 
-          <div className="mt-4 flex justify-between">
+          {daysFetcher.data?.mode === "days" && daysFetcher.data.days.length === 0 && !daysFetcher.data.unbookable && settings.waitlistEnabled && (
+            <WaitlistJoinPrompt serviceId={service.id} resourceId={resourceId} vocab={vocab} settings={settings} />
+          )}
+
+          {/* Sticky on mobile: a ten-hour, 15-minute-interval day renders as
+              dozens of buttons, leaving Continue several screens below the
+              fold once a time is picked (GetBooqin clinic audit's PB-06
+              finding). Desktop is unaffected — the bar only detaches from
+              normal flow below the sm breakpoint. */}
+          <div className="sticky bottom-0 -mx-[18px] -mb-[18px] mt-4 flex justify-between border-t border-line bg-surface px-[18px] py-3 max-sm:shadow-[0_-4px_10px_rgba(16,24,40,.08)] sm:static sm:mx-0 sm:mb-0 sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
             <button type="button" className="btn-ghost" onClick={() => setStep(resources.length <= 1 ? "service" : "resource")}>&larr; Back</button>
             <button type="button" className="btn-pri" disabled={!time} onClick={() => setStep("details")}>Continue</button>
           </div>
@@ -832,6 +1123,7 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
       {step === "details" && service && (
         <DetailsForm
           connectionId={connectionId}
+          businessName={businessName}
           vocab={vocab}
           settings={settings}
           service={service}
@@ -847,9 +1139,10 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
 }
 
 function DetailsForm({
-  connectionId, vocab, settings, service, resourceId, date, time, fetcher, onBack,
+  connectionId, businessName, vocab, settings, service, resourceId, date, time, fetcher, onBack,
 }: {
   connectionId: string;
+  businessName: string;
   vocab: ReturnType<typeof vocabFor>;
   settings: BookLoaderData["settings"];
   service: { id: number; name: string; durationMin: number };
@@ -886,12 +1179,21 @@ function DetailsForm({
         email: String(form.get("email") || ""),
         phone: String(form.get("phone") || ""),
       },
-      settings.requirePhone
+      settings.requirePhone,
+      settings.requireEmail
     );
     for (const f of settings.intakeFields) {
       if (f.required && !String(form.get(`intake_${f.key}`) || "").trim()) {
         next[`intake_${f.key}`] = `Enter ${f.label.toLowerCase()}.`;
       }
+    }
+    // Mirrors the server-side check in handleBook (GetBooqin clinic
+    // audit's TS-01 finding) — the booking form collected a name, email,
+    // phone and free-text notes patients routinely type symptoms into,
+    // with no consent checkbox, no privacy notice and no statement of what
+    // was stored or for how long, anywhere.
+    if (form.get("consent") !== "on") {
+      next.consent = "Please agree to the privacy notice to continue.";
     }
     if (Object.keys(next).length > 0) {
       event.preventDefault();
@@ -922,8 +1224,8 @@ function DetailsForm({
             <Input id="last_name" name="last_name" autoComplete="family-name" />
           </Field>
         </div>
-        <Field label="Email" required error={errors.email}>
-          <Input id="email" type="email" name="email" required autoComplete="email" onChange={() => clearError("email")} />
+        <Field label="Email" required={settings.requireEmail} error={errors.email}>
+          <Input id="email" type="email" name="email" required={settings.requireEmail} autoComplete="email" onChange={() => clearError("email")} />
         </Field>
         <Field label="Phone" required={settings.requirePhone} error={errors.phone}>
           <Input id="phone" type="tel" name="phone" required={settings.requirePhone} autoComplete="tel" onChange={() => clearError("phone")} />
@@ -952,6 +1254,33 @@ function DetailsForm({
         <Field label="Notes"><textarea name="notes" className="input min-h-[70px]" /></Field>
 
         {settings.consentText && <p className="m-0 text-[11.5px] text-subtle">{settings.consentText}</p>}
+
+        {/* No consent checkbox, privacy notice link or statement of what's
+            stored existed anywhere on this form before — patients routinely
+            type symptoms into the Notes field above with zero notice given
+            (GetBooqin clinic audit's TS-01 finding; India's DPDP Act 2023
+            requires notice and consent at the point of collection). Not
+            legal advice — a business should have its own counsel confirm
+            this wording and its own privacy notice meet the law it
+            actually operates under. */}
+        <label className={`flex items-start gap-[10px] text-[12.5px] ${errors.consent ? "text-danger" : "text-muted"}`}>
+          <input
+            type="checkbox"
+            name="consent"
+            required
+            className="mt-[2px]"
+            onChange={() => clearError("consent")}
+          />
+          <span>
+            I agree to {businessName} storing my contact and {vocab.bookingOne} details to manage this {vocab.bookingOne}, per
+            their{" "}
+            <a href={settings.privacyNoticeUrl} target="_blank" rel="noreferrer" className="underline">
+              privacy notice
+            </a>
+            .
+          </span>
+        </label>
+        {errors.consent && <p className="m-0 text-[12px] text-danger">{errors.consent}</p>}
 
         <div className="mt-1 flex justify-between">
           <button type="button" className="btn-ghost" onClick={onBack} disabled={submitting}>&larr; Back</button>
@@ -989,10 +1318,11 @@ function icsDataUrl(booking: { uid: string; serviceName: string; resourceName: s
 }
 
 function Confirmation({
-  connectionId, businessName, vocab, booking,
+  connectionId, businessName, businessAddress, vocab, booking,
 }: {
   connectionId: string;
   businessName: string;
+  businessAddress: string;
   vocab: ReturnType<typeof vocabFor>;
   booking: {
     uid: string;
@@ -1005,6 +1335,8 @@ function Confirmation({
     needsPayment: boolean;
     canCancel: boolean;
     cancelCutoffHours: number;
+    cancelUnavailableReason: string;
+    businessPhone: string;
   };
 }) {
   const bookingRef = booking.uid.slice(-6).toUpperCase();
@@ -1019,6 +1351,22 @@ function Confirmation({
         <p className="m-0 text-body text-muted">
           {booking.serviceName}{booking.resourceName ? ` with ${booking.resourceName}` : ""} — {booking.when}
         </p>
+        {/* Address and a tappable phone number — this screen used to give a
+            patient nowhere to go: a reference code and a manage link, but
+            nothing about where the business actually is or how to reach it
+            (GetBooqin clinic audit's PB-07 finding). Only ever renders what
+            the business has actually filled in on Settings > General. */}
+        {(businessAddress || booking.businessPhone) && (
+          <p className="mt-1 text-[12.5px] text-subtle">
+            {businessAddress}
+            {businessAddress && booking.businessPhone ? " · " : ""}
+            {booking.businessPhone && (
+              <a href={`tel:${booking.businessPhone.replace(/[\s()-]/g, "")}`} className="text-brand-600 underline">
+                {booking.businessPhone}
+              </a>
+            )}
+          </p>
+        )}
         <p className="mt-1 text-[12px] text-subtle">Reference #{bookingRef}</p>
         {booking.status === "pending" && (
           <p className="mt-2 text-body text-muted">{businessName} will confirm this {vocab.bookingOne} shortly.</p>
@@ -1045,6 +1393,20 @@ function Confirmation({
           {booking.canCancel && (
             <p className="m-0 text-[12px] text-subtle">
               You can cancel up to {booking.cancelCutoffHours}h before.
+            </p>
+          )}
+          {/* Told immediately, not just discovered later on the manage page
+              — a booking made inside the cancellation cutoff is
+              un-cancellable from this exact moment (GetBooqin clinic audit's
+              PB-01 finding). */}
+          {!booking.canCancel && booking.cancelUnavailableReason && (
+            <p className="m-0 max-w-[340px] text-[12px] text-warn">
+              {booking.cancelUnavailableReason}
+              {booking.businessPhone && (
+                <>
+                  {" "}Call <a href={`tel:${booking.businessPhone.replace(/[\s()-]/g, "")}`} className="underline">{booking.businessPhone}</a> if you need to change it.
+                </>
+              )}
             </p>
           )}
           <a

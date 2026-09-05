@@ -29,10 +29,19 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // show the booking-link handle instead — same slug/fallback logic the
   // Overview page's own share-link card already uses.
   let bookingHandle: string | null = null;
+  // The handle text ("getbooqin.fly.dev/book/idris-dental") looks like a
+  // link to the booking page itself — clicking it instead opened Settings
+  // → Integrations, the same destination as the "N channels connected"
+  // variant above, which has its own real reason to point there (GetBooqin
+  // clinic audit's CR-04 finding). Kept separate from the display handle
+  // (which has its protocol stripped for a cleaner read) so the anchor
+  // below can link to the real, working URL.
+  let bookingUrl: string | null = null;
   if (channelCount === 0) {
     const hasRealName = !!settings.business_name && !(platform === "manual" && settings.business_name === shop);
     const slug = hasRealName ? await ensureSlug(connection.id, settings.business_name) : connection.id;
-    bookingHandle = `${getAppUrl().replace(/^https?:\/\//, "")}/book/${slug}`;
+    bookingUrl = `${getAppUrl()}/book/${slug}`;
+    bookingHandle = bookingUrl.replace(/^https?:\/\//, "");
   }
 
   const clerkUser = await getClerkClient().users.getUser(connection.userId);
@@ -91,7 +100,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     // nav link is hidden for them here so it doesn't dead-end (orchestrator
     // decision on Settings access, §2). Named distinctly from `role` inside
     // `user` below, which is the unrelated Account-page "job title" label.
-    { connection, channelCount, pendingCount, label, preset: settings.preset, bookingHandle, canViewSettings: role === "owner" || role === "admin", user: { name, email, initials, role: jobTitle } },
+    { connection, channelCount, pendingCount, label, preset: settings.preset, bookingHandle, bookingUrl, canViewSettings: role === "owner" || role === "admin", user: { name, email, initials, role: jobTitle } },
     { headers: tenantSelectHeaders(tenantSession) }
   );
 }
@@ -194,6 +203,54 @@ function navItemClass({ isActive }: { isActive: boolean }): string {
   return `nav-item ${isActive ? "nav-item-active" : ""}`;
 }
 
+/**
+ * The booking-link handle in the sidebar — the one thing every account
+ * without a connected Shopify/Stripe channel sees under its business name.
+ * Previously the whole thing was an anchor pointing at Settings →
+ * Integrations (the same destination as the "N channels connected"
+ * variant, copy-pasted without noticing this text isn't that link) — the
+ * one place a merchant could actually reach their own public booking page
+ * from here was a working Copy button that lives on Overview instead
+ * (GetBooqin clinic audit's CR-04 finding). Now opens the real page in a
+ * new tab, with copy alongside it right where the link itself is.
+ */
+function BookingLinkRow({ bookingHandle, bookingUrl }: { bookingHandle: string | null; bookingUrl: string | null }) {
+  const [copied, setCopied] = useState(false);
+  if (!bookingHandle || !bookingUrl) return null;
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(bookingUrl!);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard permission denied or unavailable — the link is still
+      // reachable by opening it.
+    }
+  }
+
+  return (
+    <span className="flex min-w-0 items-center gap-[6px]">
+      <a
+        href={bookingUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="min-w-0 truncate text-[12px] font-medium text-[#a49caf] no-underline max-md:min-h-[44px] hover:underline"
+        title={bookingHandle}
+      >
+        {bookingHandle}
+      </a>
+      <button
+        type="button"
+        onClick={copy}
+        className="shrink-0 text-[11px] font-medium text-[#a49caf] hover:text-[#ece9f0] hover:underline"
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </span>
+  );
+}
+
 // Shared between the default export (wraps <Outlet/>) and ErrorBoundary
 // below (wraps a "page not found" panel instead) — a bad nested URL used to
 // bubble past this whole layout to root.tsx's bare boundary, ejecting a
@@ -205,7 +262,7 @@ function navItemClass({ isActive }: { isActive: boolean }): string {
 function DashboardShell({
   loaderData, params, children,
 }: { loaderData: Route.ComponentProps["loaderData"]; params: { connectionId: string }; children: ReactNode }) {
-  const { channelCount, pendingCount, label, preset, bookingHandle, canViewSettings, user } = loaderData;
+  const { channelCount, pendingCount, label, preset, bookingHandle, bookingUrl, canViewSettings, user } = loaderData;
   const v = vocabFor(preset);
   const NAV_ITEMS = navItems(preset, pendingCount, canViewSettings);
   const base = `/dashboard/${params.connectionId}`;
@@ -289,9 +346,7 @@ function DashboardShell({
               {channelCount} channel{channelCount === 1 ? "" : "s"} connected
             </a>
           ) : (
-            <a href={`${base}/settings?page=integrations`} className="truncate text-[12px] font-medium text-[#a49caf] no-underline max-md:min-h-[44px] hover:underline" title={bookingHandle ?? undefined}>
-              {bookingHandle}
-            </a>
+            <BookingLinkRow bookingHandle={bookingHandle} bookingUrl={bookingUrl} />
           )}
         </div>
 
@@ -376,10 +431,7 @@ export default function ConnectionDashboard({ loaderData, params }: Route.Compon
 // here returns that same data, so DashboardShell renders exactly as it
 // would have, with this panel standing in for <Outlet/>. Deliberately no
 // <html>/<Scripts>, unlike root.tsx's boundary: this renders *inside* the
-// already-mounted document. If this route's *own* loader is what actually
-// failed, useLoaderData() has nothing to return and this component throws
-// while rendering — that's expected: it re-bubbles to root.tsx's boundary,
-// the same fallback every other route already gets today.
+// already-mounted document.
 export function ErrorBoundary() {
   const error = useRouteError();
   const params = useParams<{ connectionId: string }>();
@@ -390,19 +442,46 @@ export function ErrorBoundary() {
     console.error(error);
   }
 
+  const body = (
+    <div className="flex flex-col items-center gap-3 px-4 py-16 text-center">
+      <h1 className="page-title">{notFound ? "Page not found" : "Something went wrong"}</h1>
+      <p className="m-0 max-w-[360px] text-body text-muted">
+        {notFound
+          ? "That page doesn't exist or may have moved."
+          : "An unexpected error occurred. Try again, or head back to the overview."}
+      </p>
+      {/* loaderData missing (checked below) means this route's own id was
+          never a real connection to link back to — /dashboard is the one
+          link that always resolves, to whatever active connection this
+          account actually has. */}
+      <a href={loaderData ? `/dashboard/${params.connectionId}` : "/dashboard"} className="btn-pri mt-2 no-underline hover:no-underline">
+        Back to Overview
+      </a>
+    </div>
+  );
+
+  // Whether this layout's *own* loader succeeded decides which fallback
+  // renders, not just cosmetics. When a *child* route's loader/action
+  // failed instead, this route's own loader already ran fine — the same
+  // call that produced the sidebar's data in the first place — so
+  // useLoaderData() above has real data and DashboardShell renders exactly
+  // as it would have. But when this route's *own* loader is what threw —
+  // e.g. requireTenant 404ing a foreign or unknown connectionId —
+  // useLoaderData() has nothing to return, and rendering DashboardShell
+  // anyway used to destructure that `undefined` and throw a second,
+  // unrelated error mid-render. React only lets an ErrorBoundary catch
+  // errors from its *children*, not from its own render, so that second
+  // throw skipped straight past this boundary to root.tsx's — which sees
+  // a plain TypeError instead of the original 404 Response and serves 500
+  // instead (QA report's BUG-2, reproduced via direct request replay
+  // against a real foreign connection id).
+  if (!loaderData) {
+    return <div className="flex min-h-dvh flex-col items-center justify-center bg-canvas">{body}</div>;
+  }
+
   return (
     <DashboardShell loaderData={loaderData} params={{ connectionId: params.connectionId! }}>
-      <div className="flex flex-col items-center gap-3 px-4 py-16 text-center">
-        <h1 className="page-title">{notFound ? "Page not found" : "Something went wrong"}</h1>
-        <p className="m-0 max-w-[360px] text-body text-muted">
-          {notFound
-            ? "That page doesn't exist or may have moved."
-            : "An unexpected error occurred. Try again, or head back to the overview."}
-        </p>
-        <a href={`/dashboard/${params.connectionId}`} className="btn-pri mt-2 no-underline hover:no-underline">
-          Back to Overview
-        </a>
-      </div>
+      {body}
     </DashboardShell>
   );
 }

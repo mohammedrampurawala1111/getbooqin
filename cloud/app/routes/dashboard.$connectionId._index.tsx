@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Route } from "./+types/dashboard.$connectionId._index";
 import { Metrics, Bookings, Data, Settings, FeatureFlags, ensureSlug } from "getbooqin-core";
 // Direct subpath import, not the root barrel — see bookingsShared.ts's
@@ -27,7 +27,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     Metrics.overview(shop, platform, range),
     Bookings.count(shop, platform, { status: "pending" }),
     Data.catalogServices(shop, platform, false),
-    Data.resources(shop, platform, false),
+    // Practitioners only — "Add resources"/"bookable resource count" mean
+    // "you need someone who can take a booking," not "you need a room"
+    // (GetBooqin clinic audit's RS-01 finding).
+    Data.resources(shop, platform, false, "practitioner"),
     Bookings.count(shop, platform, {}),
     Settings.getSettings(shop, platform),
     // "Needs attention" — a booking that violates its own business's rules
@@ -92,6 +95,15 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     // show but "No settled payments in range" (Defect Dossier's R2-09
     // finding, second half).
     paymentsAvailable: FeatureFlags.PAYMENTS_ENABLED && settings.enabled_gateways.length > 0,
+    // A rule change that leaves zero bookable slots (minimum notice at or
+    // past the maximum advance window) used to have no signal anywhere —
+    // the Booking rules page showed a green "Saved just now" and Overview
+    // kept right on saying setup was complete (GetBooqin clinic audit's
+    // BR-02 finding). Checked here so this stays visible even for a value
+    // written before validateBookingRules existed to block a new one.
+    bookingWindowClosed: Settings.bookingWindowIsClosed(settings),
+    minNoticeHours: settings.min_notice_hours,
+    maxAdvanceDays: settings.max_advance_days,
   };
 }
 
@@ -130,15 +142,48 @@ const PAYMENT_TINT: Record<string, string> = {
 // "No-show rate" onto three lines (UX audit's M5 finding).
 const STAT_GRID: Record<number, string> = { 3: "grid-cols-2 md:grid-cols-3", 4: "grid-cols-2 md:grid-cols-4" };
 
+// Persistent, not a one-time toast — an owner could go days without
+// noticing their calendar went dark otherwise (GetBooqin clinic audit's
+// BR-02 finding: "I turned off online bookings for this clinic entirely
+// with one number in one field, and the app answered with a green tick and
+// 'Saved just now'. The Overview page went on saying setup was complete.").
+// Shown on both the populated and empty Overview states, since a shop can
+// hit this before or after taking its first real booking.
+function BookingWindowClosedBanner({
+  connectionId, minNoticeHours, maxAdvanceDays,
+}: { connectionId: string; minNoticeHours: number; maxAdvanceDays: number }) {
+  return (
+    <a
+      href={`/dashboard/${connectionId}/settings?page=rules`}
+      className="card flex items-center justify-between gap-3 border-l-[3px] border-l-danger p-[14px] no-underline hover:no-underline"
+    >
+      <span className="text-body font-medium text-ink">
+        Online booking is closed: minimum notice ({minNoticeHours}h) leaves no bookable moment before your{" "}
+        {maxAdvanceDays}-day maximum advance window. Fix your booking rules to reopen it.
+      </span>
+      <span className="text-faint">›</span>
+    </a>
+  );
+}
+
 export default function Overview({ loaderData, params }: Route.ComponentProps) {
-  const { overview, pendingCount, activeServiceCount, range, timezone, allTimeBookingCount, setupFacts, hiddenCards, bookingUrl, conflictCount, unbookableCount, paymentsAvailable } = loaderData;
+  const { overview, pendingCount, activeServiceCount, range, timezone, allTimeBookingCount, setupFacts, hiddenCards, bookingUrl, conflictCount, unbookableCount, paymentsAvailable, bookingWindowClosed, minNoticeHours, maxAdvanceDays } = loaderData;
   const totalBookings = overview.bookingsSeries.reduce((sum, d) => sum + d.count, 0);
   const paymentLabels = paymentStatusLabels();
   const paymentTotal = overview.paymentBreakdown.reduce((sum, p) => sum + p.count, 0);
   const v = useVocabulary();
 
   if (allTimeBookingCount === 0) {
-    return <EmptyOverview connectionId={params.connectionId} setupFacts={setupFacts} bookingUrl={bookingUrl} />;
+    return (
+      <EmptyOverview
+        connectionId={params.connectionId}
+        setupFacts={setupFacts}
+        bookingUrl={bookingUrl}
+        bookingWindowClosed={bookingWindowClosed}
+        minNoticeHours={minNoticeHours}
+        maxAdvanceDays={maxAdvanceDays}
+      />
+    );
   }
 
   const hidden = new Set(hiddenCards);
@@ -165,6 +210,10 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
       />
 
       <ShareLinkCard bookingUrl={bookingUrl} vocab={v} />
+
+      {bookingWindowClosed && (
+        <BookingWindowClosedBanner connectionId={params.connectionId} minNoticeHours={minNoticeHours} maxAdvanceDays={maxAdvanceDays} />
+      )}
 
       {/* A booking that violates its own business's rules used to have no
           signal anywhere in the app (Defect Dossier's BQ-07 finding). The
@@ -368,10 +417,16 @@ function EmptyOverview({
   connectionId,
   setupFacts,
   bookingUrl,
+  bookingWindowClosed,
+  minNoticeHours,
+  maxAdvanceDays,
 }: {
   connectionId: string;
   setupFacts: Route.ComponentProps["loaderData"]["setupFacts"];
   bookingUrl: string;
+  bookingWindowClosed: boolean;
+  minNoticeHours: number;
+  maxAdvanceDays: number;
 }) {
   const base = `/dashboard/${connectionId}`;
   const summary = setupSummary(setupFacts);
@@ -393,6 +448,10 @@ function EmptyOverview({
     <div className="flex flex-col gap-[18px]">
       <PageHeader title="Overview" subtitle={summary.headline} />
 
+      {bookingWindowClosed && (
+        <BookingWindowClosedBanner connectionId={connectionId} minNoticeHours={minNoticeHours} maxAdvanceDays={maxAdvanceDays} />
+      )}
+
       {/* "Waiting on setup" stayed on these two tiles even once setup was
           genuinely finished (6 of 6 done) and the merchant was just
           waiting on their first real booking — the same disagreement as
@@ -408,7 +467,8 @@ function EmptyOverview({
         <EmptyStat label="No-show rate" value="—" note={`Needs ${v.bookingMany} first`} />
       </div>
 
-      <SetupChecklist
+      <DismissibleSetupChecklist
+        connectionId={connectionId}
         summary={summary}
         hrefs={hrefs}
         resumeHref={firstUnfinished ? hrefs[firstUnfinished.key] : hrefs.services}
@@ -429,6 +489,80 @@ function EmptyOverview({
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * Wraps SetupChecklist with a per-browser "dismissed" preference, offered
+ * only once the checklist is genuinely complete — before this, "Setup
+ * complete — 6 of 6 done" occupied the largest block on Overview
+ * indefinitely, with the only way to shrink it being to wait for an actual
+ * booking to arrive (GetBooqin clinic audit's CR-06 finding). Stored in
+ * localStorage, not settings: this is a per-viewer convenience, not shared
+ * business state, and starts false on every render (including the client's
+ * first paint) to match the SSR markup — same hydration-safety pattern as
+ * ui.tsx's ThemeToggle — so a returning dismissed user briefly sees the
+ * full card before the effect below collapses it.
+ */
+function DismissibleSetupChecklist({
+  connectionId, summary, hrefs, resumeHref,
+}: {
+  connectionId: string;
+  summary: { tasks: { key: string; name: string; hint: string; done: boolean }[]; done: number; total: number; pct: number; complete: boolean };
+  hrefs: Record<string, string>;
+  resumeHref: string;
+}) {
+  const storageKey = `gb-setup-dismissed-${connectionId}`;
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    if (!summary.complete) return;
+    try {
+      if (localStorage.getItem(storageKey) === "1") setDismissed(true);
+    } catch {
+      // Private browsing etc. — the checklist just won't stay dismissed
+      // across visits, same fallback as ThemeToggle's own localStorage use.
+    }
+  }, [storageKey, summary.complete]);
+
+  if (summary.complete && dismissed) {
+    return (
+      <button
+        type="button"
+        className="card flex w-full items-center justify-between gap-3 p-[14px] text-left"
+        onClick={() => {
+          try {
+            localStorage.removeItem(storageKey);
+          } catch {
+            // Same fallback as above.
+          }
+          setDismissed(false);
+        }}
+      >
+        <span className="text-body font-medium text-ink">Setup complete — {summary.done} of {summary.total} done</span>
+        <span className="text-meta font-medium text-brand-600">Show</span>
+      </button>
+    );
+  }
+
+  return (
+    <SetupChecklist
+      summary={summary}
+      hrefs={hrefs}
+      resumeHref={resumeHref}
+      onDismiss={
+        summary.complete
+          ? () => {
+              try {
+                localStorage.setItem(storageKey, "1");
+              } catch {
+                // Same fallback as above.
+              }
+              setDismissed(true);
+            }
+          : undefined
+      }
+    />
   );
 }
 

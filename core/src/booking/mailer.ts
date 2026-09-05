@@ -13,10 +13,12 @@ import prisma from "../db.js";
 import * as Data from "./data.js";
 import * as Bookings from "./bookings.js";
 import { manageUrl as waitlistManageUrl } from "./waitlist.js";
-import { getSettings, term, money, template as settingTemplate, type Settings } from "./settings.js";
-import { zoneAbbr } from "./tz.js";
+import { getSettings, template as settingTemplate, type Settings } from "./settings.js";
 import events from "./events.js";
 import { GetBooqinError } from "./errors.js";
+import { tokens, previewTokens, replace } from "./notificationTokens.js";
+
+export { tokens, previewTokens };
 
 /**
  * Canonical list of every customizable notification. Drives the "Email
@@ -233,95 +235,6 @@ async function mail(to: string, subject: string, body: string, settings: Setting
 
 /* --------------------------------------------------------------- Tokens */
 
-export async function tokens(shop: string, booking: Booking, settings: Settings): Promise<Record<string, string>> {
-  const service = await Data.catalogService(shop, booking.serviceId);
-  const resource = await Data.resource(shop, booking.resourceId);
-  const customer = await Data.customer(shop, booking.customerId);
-  const customFields = parseCustomFields(booking.customFields);
-  const addons = await Data.bookingAddons(shop, booking.id);
-  const addonsSummary = addons.length
-    ? "Add-ons: " + addons.map((a) => (a.price > 0 ? `${a.name} (${money(settings, a.price)})` : a.name)).join(", ")
-    : "";
-
-  return {
-    "{{business_name}}": settings.business_name,
-    "{{booking_term}}": term(settings, "booking_single").toLowerCase(),
-    "{{service}}": service?.name ?? "",
-    "{{resource}}": resource?.name ?? "",
-    "{{date}}": Bookings.localDate(booking, settings.timezone),
-    "{{time}}": Bookings.localTime(booking, settings.timezone),
-    "{{status}}": booking.status,
-    "{{timezone}}": Bookings.localTzLabel(booking, settings.timezone),
-    "{{price}}": booking.price > 0 ? money(settings, booking.price) : "",
-    "{{notes}}": booking.notes ?? "",
-    "{{source}}": booking.source,
-    "{{customer_name}}": customer ? `${customer.firstName} ${customer.lastName}`.trim() : "",
-    "{{customer_email}}": customer?.email ?? "",
-    "{{customer_phone}}": customer?.phone ?? "",
-    "{{manage_url}}": Bookings.manageUrl(booking, settings),
-    "{{summary_url}}": Bookings.summaryUrl(booking, settings),
-    // Optional, off by default (Settings > Visit summaries > Consultation
-    // consent notice) — see the integration plan's Part 3 §6. Empty when
-    // unset, same "resolves to ''" convention as payment_line/meeting_line
-    // below, rather than a new conditional-token mechanism.
-    "{{summary_consent_line}}": settings.visit_summary_consent_line || "",
-    "{{meeting_url}}": booking.meetingUrl,
-    "{{meeting_line}}": booking.meetingUrl ? `Join the video call here: ${booking.meetingUrl}` : "",
-    "{{amount_due}}": booking.amountDue > 0 ? money(settings, booking.amountDue) : "",
-    "{{payment_status}}": booking.paymentStatus,
-    "{{payment_line}}": Bookings.needsPayment(booking)
-      ? `Outstanding: ${money(settings, booking.amountDue)}. You can pay here: ${Bookings.manageUrl(booking, settings)}`
-      : "",
-    "{{decline_reason_line}}": customFields._decline_reason ? `Reason: ${customFields._decline_reason}` : "",
-    "{{addons_summary}}": addonsSummary,
-  };
-}
-
-/**
- * Sample data for Settings > Notifications' "Preview" (Defect Dossier's
- * BQ-34 finding, item 2) — no real booking exists to render against there,
- * so this fabricates a plausible one instead of touching the database.
- * Covers every token any TEMPLATE_DEFS subject/body uses.
- */
-export function previewTokens(settings: Settings): Record<string, string> {
-  const sampleDate = DateTime.now().setZone(settings.timezone).plus({ days: 2 }).set({ hour: 10, minute: 0 });
-  const expiresAt = DateTime.now().setZone(settings.timezone).plus({ hours: 2 });
-  const manageUrl = `${settings.booking_page_url}?getbooqin_booking=sample`;
-  return {
-    "{{business_name}}": settings.business_name || "Your business",
-    "{{booking_term}}": term(settings, "booking_single").toLowerCase(),
-    "{{service}}": `Example ${term(settings, "service_single").toLowerCase()}`,
-    "{{resource}}": "Jamie Rivera",
-    "{{date}}": sampleDate.toFormat("d LLL yyyy"),
-    "{{time}}": sampleDate.toFormat("HH:mm"),
-    "{{status}}": "confirmed",
-    "{{timezone}}": zoneAbbr(sampleDate.toJSDate(), settings.timezone),
-    "{{price}}": money(settings, 45),
-    "{{amount_due}}": money(settings, 45),
-    "{{notes}}": "Please arrive 10 minutes early.",
-    "{{source}}": "form",
-    "{{customer_name}}": "Jordan Lee",
-    "{{customer_email}}": "jordan@example.com",
-    "{{customer_phone}}": "+1 555 0100",
-    "{{manage_url}}": manageUrl,
-    "{{summary_url}}": `${settings.booking_page_url}?getbooqin_summary=sample`,
-    "{{summary_consent_line}}": settings.visit_summary_consent_line || "",
-    "{{meeting_url}}": "https://meet.example.com/sample",
-    "{{meeting_line}}": "Join the video call here: https://meet.example.com/sample",
-    "{{payment_status}}": "unpaid",
-    "{{payment_line}}": `Outstanding: ${money(settings, 45)}. You can pay here: ${manageUrl}`,
-    "{{decline_reason_line}}": "Reason: Fully booked that day.",
-    "{{addons_summary}}": `Add-ons: Extra 15 minutes (${money(settings, 10)})`,
-    "{{expires_at}}": expiresAt.toFormat("HH:mm"),
-    "{{claim_url}}": `${settings.booking_page_url}?getbooqin_claim=sample`,
-    "{{leave_url}}": `${settings.booking_page_url}?getbooqin_leave=sample`,
-    "{{lead_name}}": "Jordan Lee",
-    "{{lead_email}}": "jordan@example.com",
-    "{{lead_message}}": "Do you have anything available this Friday afternoon?",
-    "{{lead_page}}": settings.booking_page_url,
-  };
-}
-
 /** Public wrapper for the settings UI's preview — same substitution the real send path uses. */
 export function renderTemplate(text: string, sampleTokens: Record<string, string>): string {
   return replace(text, sampleTokens);
@@ -329,27 +242,9 @@ export function renderTemplate(text: string, sampleTokens: Record<string, string
 
 export { templateEnabled };
 
-function parseCustomFields(raw: string | null): Record<string, string> {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function replace(text: string, replacements: Record<string, string>): string {
-  let out = text;
-  for (const [token, value] of Object.entries(replacements)) {
-    out = out.split(token).join(value);
-  }
-  return out.replace(/\{\{[a-z_]+\}\}/g, "");
-}
-
 async function sendToCustomer(shop: string, booking: Booking, settings: Settings, subject: string, body: string) {
   const customer = await Data.customer(shop, booking.customerId);
-  if (!customer || !Bookings.isEmail(customer.email)) {
+  if (!customer || !Bookings.isRealEmail(customer.email)) {
     console.warn(
       `[getbooqin mailer] skipped customer email for booking ${booking.uid} — ${!customer ? "no customer record" : `invalid email "${customer.email}"`}`
     );
@@ -595,6 +490,24 @@ export async function sendReminders(): Promise<{ sent: number }> {
     const windowEnd = new Date(Date.now() + hours * 3600_000);
     if (booking.startUtc > windowEnd) continue;
 
+    // A reminder's whole point is to arrive some time *before* the booking
+    // — if its ideal send moment (start minus lead time) had already
+    // passed by the time the booking was even made, sending it "right
+    // away" on the next sweep instead reads as a system glitch, not a
+    // reminder: a patient who books at 9am for 9:50am gets an email at
+    // 9:01 (GetBooqin clinic audit's BR-06 finding, the live consequence
+    // of reminder_hours >= min_notice_hours, which the Notifications page
+    // already warns about but never actually prevented). Suppressed here
+    // rather than sent late — reminderSent still flips to true so this
+    // never gets retried, it just never fires for a booking that could
+    // never have received it "ahead of time" in the first place.
+    const naturalFireTime = booking.startUtc.getTime() - hours * 3600_000;
+    if (naturalFireTime <= booking.createdAt.getTime()) {
+      await prisma.booking.update({ where: { id: booking.id }, data: { reminderSent: true } });
+      console.log(`[getbooqin mailer] reminder suppressed for booking uid=${booking.uid} — booked too close to its own start time for a lead-time reminder to make sense`);
+      continue;
+    }
+
     try {
       await sendToCustomer(
         booking.shop,
@@ -743,7 +656,7 @@ async function waitlistTokens(shop: string, entry: Waitlist, settings: Settings)
 
 async function sendToWaitlistCustomer(shop: string, entry: Waitlist, settings: Settings, subject: string, body: string) {
   const customer = await prisma.customer.findFirst({ where: { shop, id: entry.customerId } });
-  if (!customer || !Bookings.isEmail(customer.email)) {
+  if (!customer || !Bookings.isRealEmail(customer.email)) {
     console.warn(
       `[getbooqin mailer] skipped waitlist email for entry ${entry.uid} — ${!customer ? "no customer record" : `invalid email "${customer.email}"`}`
     );

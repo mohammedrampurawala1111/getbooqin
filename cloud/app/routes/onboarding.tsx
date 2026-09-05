@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { redirect, useFetcher, useNavigate, useSearchParams } from "react-router";
 import type { Route } from "./+types/onboarding";
@@ -9,7 +8,7 @@ import { INTEGRATIONS, getPreset, vocabFor, SERVICE_SWATCHES, type PresetId } fr
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 import { CURRENCIES, guessCurrency } from "~/lib/currency";
 import { getAppUrl } from "~/lib/env.server";
-import { Data, Settings, FeatureFlags, createManualConnection, getUserConnection, listUserConnections } from "getbooqin-core";
+import { Data, Settings, FeatureFlags, Team, createManualConnection, getUserConnection, listUserConnections } from "getbooqin-core";
 
 // Two ways to leave this wizard with a working account: connect a real
 // Shopify store (ShopifyConnectForm below — answers ride through the OAuth
@@ -49,6 +48,25 @@ export async function loader({ request }: Route.LoaderArgs) {
   // Deliberately adding another store is Settings › Integrations' own
   // "+ Connect a Shopify store" flow, not this wizard.
   if (!url.searchParams.get("cid")) {
+    // An invited teammate lands here on their very first authenticated
+    // request — either of signup.tsx's own two paths (password or
+    // Google), or dashboard.tsx's own "no active connection -> onboarding"
+    // redirect — and /signup itself has no concept of invites at all, so
+    // this is the one choke point every post-auth path funnels through
+    // before a Connection gets created below. Checked first, ahead of even
+    // the "already has an active connection" check right after it, so a
+    // pending invite always wins over creating a throwaway business
+    // (QA report's BUG-1: this used to be unconditional, so an invited
+    // email that went through /signup instead of its emailed link ended up
+    // owning a brand-new business with the real invite never consumed).
+    const clerkUser = await getClerkClient().users.getUser(session.userId);
+    const email =
+      clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId)?.emailAddress ??
+      clerkUser.emailAddresses[0]?.emailAddress ??
+      "";
+    const pendingInvite = email ? await Team.findPendingInviteForEmail(email) : null;
+    if (pendingInvite) throw redirect(`/invite/${pendingInvite.token}`);
+
     const connections = await listUserConnections(session.userId);
     const active = connections.find((c) => c.status === "active");
     if (active) throw redirect(`/dashboard/${active.id}`);
@@ -138,7 +156,10 @@ async function handleStep1(userId: string, form: FormData): Promise<ActionResult
       const services = getPreset(presetId).services;
       for (let i = 0; i < services.length; i++) {
         const svc = services[i];
-        const productId = randomUUID();
+        // Web Crypto's global `crypto`, not `node:crypto` — see
+        // settings.tsx's identical fix for why an explicit node:crypto
+        // import here breaks the client bundle.
+        const productId = crypto.randomUUID();
         const productHandle = `${slugify(svc.name)}-${productId.slice(0, 8)}`;
         await Data.upsertProductCache(shop, platform, {
           productId,

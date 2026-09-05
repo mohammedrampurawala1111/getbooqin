@@ -30,6 +30,7 @@ export * as WaitlistShared from "./booking/waitlistShared.js";
 export * as PaymentManager from "./booking/paymentManager.js";
 export * as MeetingManager from "./booking/meetingManager.js";
 export * as Mailer from "./booking/mailer.js";
+export * as WhatsApp from "./booking/whatsapp.js";
 export * as ChatFlow from "./booking/chatFlow.js";
 export * as Settings from "./booking/settings.js";
 export * as TZ from "./booking/tz.js";

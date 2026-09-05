@@ -15,7 +15,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const [entries, services, resources, settings] = await Promise.all([
     Waitlist.list(shop, platform),
     Data.catalogServices(shop, platform, true),
-    Data.resources(shop, platform, true),
+    // Practitioners only — a customer/staff waitlist entry names who they
+    // want to see, and a room was never a valid answer to that (GetBooqin
+    // clinic audit's RS-01 finding).
+    Data.resources(shop, platform, true, "practitioner"),
     Settings.getSettings(shop, platform),
   ]);
   return {

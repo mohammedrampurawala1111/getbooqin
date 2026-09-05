@@ -126,16 +126,29 @@ function isUniqueConstraintViolation(err: unknown): boolean {
 export async function join(shop: string, platform: string, shopTimezone: string, args: JoinWaitlistArgs): Promise<Waitlist> {
   const service = await Data.catalogService(shop, args.service_id);
   if (!service || !service.status) throw new GetBooqinError("getbooqin_invalid_service", "That service is not available.", 400);
-  if (!isEmail(args.email)) throw new GetBooqinError("getbooqin_invalid_email", "Please provide a valid email address.", 400);
   if (!args.first_name) throw new GetBooqinError("getbooqin_missing_name", "Please provide the customer's name.", 400);
 
   // Task 5a (fixpromptwaitlist.md): a waitlist offer is the time-critical
   // one — the business needs to be able to reach someone fast once a spot
   // opens — so it honours the same require_phone setting Bookings.create()
-  // already enforces, not a looser rule of its own.
+  // already enforces, not a looser rule of its own. Mirrors that same
+  // function's require_email handling too (GetBooqin clinic audit's PB-03
+  // finding) — this used to hard-require a valid email regardless of the
+  // setting, which the public page's own "Join the waitlist" prompt
+  // (PB-04) would otherwise silently fail against for a walk-in patient
+  // with no email address.
   const settings = await getSettings(shop, platform);
+  if (args.email && !isEmail(args.email)) {
+    throw new GetBooqinError("getbooqin_invalid_email", "Please provide a valid email address.", 400);
+  }
+  if (settings.require_email && !args.email) {
+    throw new GetBooqinError("getbooqin_missing_email", "Please provide an email address.", 400);
+  }
   if (settings.require_phone && !args.phone) {
     throw new GetBooqinError("getbooqin_missing_phone", "Please provide a phone number.", 400);
+  }
+  if (!settings.require_email && !settings.require_phone && !args.email && !args.phone) {
+    throw new GetBooqinError("getbooqin_missing_contact", "Please provide a phone number or email address.", 400);
   }
 
   const tz = shopTimezone || "UTC";
@@ -164,7 +177,7 @@ export async function join(shop: string, platform: string, shopTimezone: string,
     first_name: args.first_name,
     last_name: args.last_name,
     email: args.email,
-    phone: args.phone,
+    phone: args.phone ? Bookings.normalizePhone(args.phone, settings.default_country_code) : args.phone,
     timezone: shopTimezone,
   });
 
@@ -334,6 +347,17 @@ export async function matchAndOffer(shop: string, platform: string, freed: Freed
     const endUtc = DateTime.fromJSDate(offerEndJs, { zone: "utc" });
     if (startUtc.toMillis() <= Date.now()) continue;
     if (!(await Availability.isFree(shop, freed.resourceId, startUtc, endUtc, service))) continue;
+    // Not offering something the candidate can't actually claim — a
+    // room-requiring service could easily have a free practitioner slot
+    // with every assigned room already occupied by something else
+    // (GetBooqin clinic audit's RS-01 finding). Bookings.claim() would
+    // still catch this at claim time and cascade to the next candidate,
+    // but that means an "offer" email nobody could actually redeem.
+    if (service.requiresRoom) {
+      const rooms = await Data.roomsForService(shop, platform, service.id);
+      const anyRoomFree = await Promise.all(rooms.map((r) => Availability.isRoomFree(shop, r.id, startUtc, endUtc, service)));
+      if (!anyRoomFree.some(Boolean)) continue;
+    }
 
     const offerExpiresAt = DateTime.utc().plus({ hours: Math.max(0.1, settings.waitlist_offer_window_hours) }).toJSDate();
     const claimedLock = await prisma.waitlist.updateMany({

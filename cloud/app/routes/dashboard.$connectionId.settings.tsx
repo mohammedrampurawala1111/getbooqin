@@ -1,19 +1,28 @@
-import { randomUUID } from "node:crypto";
 import { useEffect, useRef, useState } from "react";
 import { Form, redirect, useFetcher, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.settings";
-import { Settings, Data, Mailer, PaymentManager, FeatureFlags, Team, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
+import { Settings, Data, Mailer, PaymentManager, WhatsApp, FeatureFlags, Team, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
+// Client-safe subpath for the two rule-checks the component below calls at
+// render time — importing these off the main `Settings` namespace instead
+// would pull core's *entire* barrel (nodemailer, the Razorpay/Shopify HMAC
+// signing code, ...) into the browser bundle, which crashes on load the
+// moment any of that code's own `node:crypto` imports get evaluated
+// client-side (Vite externalizes Node builtins for the browser and throws
+// on any property access — see settingsShared.ts's own header comment on
+// why these pure helpers live apart from the DB-touching settings module).
+import { type BookingRuleField, bookingWindowIsClosed, cancelCutoffExceedsNotice } from "getbooqin-core/booking/settingsShared";
 import { requireTenant } from "~/tenant.server";
 import { getClerkClient } from "~/session.server";
 import { Badge, TimezoneSelect, Toggle, useToast } from "~/components/ui";
 import { IntegrationRow } from "~/components/onboarding";
 import { TemplateConfig, overviewCards, type OverviewCardKey } from "~/components/account";
 import {
-  SettingsShell, Row, RowInput, RowTextarea, ToggleRow, Segmented, ValueRow, SettingsCard, isSettingsPage, PresetFieldBadge, hiddenSettingsNavKeys,
+  SettingsShell, Row, RowInput, RowSelect, RowTextarea, ToggleRow, Segmented, ValueRow, SettingsCard, isSettingsPage, PresetFieldBadge, hiddenSettingsNavKeys,
   MemberRow, PendingInviteRow, InviteMemberCard, TeamReadOnlyNotice, TeamEmptyHint,
 } from "~/components/settings";
-import { INTEGRATIONS, getPreset, useVocabulary, SERVICE_SWATCHES, type PresetId, type PresetRules } from "~/lib/presets";
+import { integrationsFor, getPreset, isClinicFeaturePreset, useVocabulary, SERVICE_SWATCHES, type PresetId, type PresetRules } from "~/lib/presets";
 import { PHONE_PATTERN } from "~/lib/validation";
+import { CURRENCIES } from "~/lib/currency";
 
 export const meta: Route.MetaFunction = () => [{ title: "Settings · GetBooqin" }];
 
@@ -74,7 +83,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // renderer to the client — there are only ~16 of these, cheap to
   // precompute all at once.
   const previewTokens = Mailer.previewTokens(settings);
-  const visitSummariesVisibleForMessages = FeatureFlags.VISIT_SUMMARIES_ENABLED && settings.preset === "clinic";
+  const visitSummariesVisibleForMessages = FeatureFlags.VISIT_SUMMARIES_ENABLED && isClinicFeaturePreset(settings.preset);
   // A "Payment received" message enabled on a product that can't yet take
   // payment advertised a capability the business doesn't have (Defect
   // Dossier's R2-09 finding) — same gate as the Payment column/Deposit
@@ -151,6 +160,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     settings,
     gatewayFields,
     paymentsEnabled: FeatureFlags.PAYMENTS_ENABLED,
+    whatsappEnabled: FeatureFlags.WHATSAPP_ENABLED,
+    whatsappFields: WhatsApp.settingsFields(),
+    whatsappConfigured: WhatsApp.isConfigured(settings),
+    whatsappRequiredTemplate: WhatsApp.requiredTemplate(),
     viewerRole,
     canManageTeam,
     members,
@@ -199,43 +212,91 @@ export async function action({ request, params }: Route.ActionArgs) {
   } else if (section === "update_member_role") {
     const targetUserId = String(form.get("target_user_id") ?? "");
     const role = String(form.get("role") ?? "");
-    await Team.updateMemberRole({ connectionId: params.connectionId, targetUserId, role, actingUserId: userId });
-    return { saved: true };
+    try {
+      await Team.updateMemberRole({ connectionId: params.connectionId, targetUserId, role, actingUserId: userId });
+      return { saved: true };
+    } catch (err) {
+      // No UI control ever submits this against the owner row (see
+      // Team.updateMemberRole's own comment) — but the reject there is
+      // enforced by throwing, and this action used to let that exception
+      // reach the caller unhandled, turning a deliberate authorization
+      // boundary into an unhandled-exception 500 for anyone who posted
+      // this directly (QA found the same shape of bug in requireTenant's
+      // cross-tenant 404 — this is the same class, one layer in).
+      if (isGetBooqinError(err)) return { error: err.message };
+      throw err;
+    }
   } else if (section === "remove_member") {
     const targetUserId = String(form.get("target_user_id") ?? "");
-    await Team.removeMember({ connectionId: params.connectionId, targetUserId, actingUserId: userId });
-    return { saved: true };
+    try {
+      await Team.removeMember({ connectionId: params.connectionId, targetUserId, actingUserId: userId });
+      return { saved: true };
+    } catch (err) {
+      if (isGetBooqinError(err)) return { error: err.message };
+      throw err;
+    }
   } else if (section === "resend_invite") {
     const inviteId = String(form.get("invite_id") ?? "");
-    const { invite, emailSent } = await Team.resendInvite({ connectionId: params.connectionId, inviteId, actingUserId: userId });
-    return { saved: true, inviteSent: true, invitedEmail: invite.email, emailSent };
+    try {
+      const { invite, emailSent } = await Team.resendInvite({ connectionId: params.connectionId, inviteId, actingUserId: userId });
+      return { saved: true, inviteSent: true, invitedEmail: invite.email, emailSent };
+    } catch (err) {
+      if (isGetBooqinError(err)) return { error: err.message };
+      throw err;
+    }
   } else if (section === "revoke_invite") {
     const inviteId = String(form.get("invite_id") ?? "");
-    await Team.revokeInvite({ connectionId: params.connectionId, inviteId, actingUserId: userId });
-    return { saved: true };
+    try {
+      await Team.revokeInvite({ connectionId: params.connectionId, inviteId, actingUserId: userId });
+      return { saved: true };
+    } catch (err) {
+      if (isGetBooqinError(err)) return { error: err.message };
+      throw err;
+    }
   } else if (section === "general") {
     await Settings.setSettings(shop, platform, {
       business_name: String(form.get("business_name") ?? ""),
       business_email: String(form.get("business_email") ?? ""),
       business_phone: String(form.get("business_phone") ?? ""),
+      default_country_code: String(form.get("default_country_code") ?? "").trim(),
       business_description: String(form.get("business_description") ?? ""),
       business_address: String(form.get("business_address") ?? ""),
+      privacy_notice_url: String(form.get("privacy_notice_url") ?? "").trim(),
       currency: String(form.get("currency") ?? "USD"),
       currency_symbol: String(form.get("currency_symbol") ?? "$"),
       timezone: String(form.get("timezone") ?? "UTC"),
     });
   } else if (section === "rules") {
-    await Settings.setSettings(shop, platform, {
+    const ruleValues = {
       slot_interval: Number(form.get("slot_interval") ?? 30),
       min_notice_hours: Number(form.get("min_notice_hours") ?? 2),
       max_advance_days: Number(form.get("max_advance_days") ?? 60),
+      cancel_cutoff_hours: Number(form.get("cancel_cutoff_hours") ?? 24),
+      waitlist_offer_window_hours: Number(form.get("waitlist_offer_window_hours") ?? 4),
+    };
+    // Server-side range + collision validation — the four number fields'
+    // only guard used to be their <input>'s own HTML `min` attribute,
+    // which a stale tab, a browser that ignores it, or a direct POST all
+    // bypass equally easily. Posting slot_interval=-5, min_notice_hours=
+    // -100, max_advance_days=0 previously returned 200 OK and saved every
+    // value verbatim — the negative interval then fed straight into the
+    // slot engine as its own absolute value (GetBooqin clinic audit's
+    // BR-01 finding), and a minimum notice past the maximum advance window
+    // silently closed online booking entirely with no warning anywhere
+    // (BR-02 finding).
+    const ruleErrors = Settings.validateBookingRules(ruleValues);
+    if (Object.keys(ruleErrors).length > 0) {
+      return { ruleErrors };
+    }
+    await Settings.setSettings(shop, platform, {
+      ...ruleValues,
       auto_confirm: form.get("auto_confirm") === "on",
       allow_cancel: form.get("allow_cancel") === "on",
-      cancel_cutoff_hours: Number(form.get("cancel_cutoff_hours") ?? 24),
       require_phone: form.get("require_phone") === "on",
+      require_email: form.get("require_email") === "on",
       waitlist_enabled: form.get("waitlist_enabled") === "on",
-      waitlist_offer_window_hours: Number(form.get("waitlist_offer_window_hours") ?? 4),
     });
+    return { saved: true };
   } else if (section === "template") {
     const preset = String(form.get("preset") ?? "");
     const current = await Settings.getSettings(shop, platform);
@@ -257,10 +318,20 @@ export async function action({ request, params }: Route.ActionArgs) {
       // nobody", just never decided) until someone visits its own page,
       // which is exactly the ambiguous state two otherwise-identical
       // services could silently differ on (Defect Dossier's R2-04 finding).
-      const activeResourceIds = (await Data.resources(shop, platform, true)).map((r) => r.id);
+      // Practitioners only — a newly seeded service shouldn't silently pick
+      // up a "requires a room" assignment nobody asked for; that stays an
+      // explicit, deliberate choice per service (GetBooqin clinic audit's
+      // RS-01 finding).
+      const activeResourceIds = (await Data.resources(shop, platform, true, "practitioner")).map((r) => r.id);
       for (let i = 0; i < toSeed.length; i++) {
         const svc = toSeed[i];
-        const productId = randomUUID();
+        // Web Crypto's global `crypto`, not `node:crypto` — an explicit
+        // "node:crypto" import in a route file (client+server universal
+        // module) makes Vite's client bundle try to load it too, and
+        // referencing any of its properties on the externalized browser
+        // stub throws immediately on page load. The global works
+        // identically in both environments with no import needed.
+        const productId = crypto.randomUUID();
         const productHandle = `${svc.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "service"}-${productId.slice(0, 8)}`;
         await Data.upsertProductCache(shop, platform, { productId, productHandle, title: svc.name, price: svc.price });
         await Data.saveServiceConfig(shop, platform, {
@@ -341,7 +412,7 @@ export async function action({ request, params }: Route.ActionArgs) {
     // same defense-in-depth as the client-side gate below; a non-clinic shop
     // posting this section directly shouldn't be able to persist these keys.
     const current = await Settings.getSettings(shop, platform);
-    if (current.preset === "clinic") {
+    if (isClinicFeaturePreset(current.preset)) {
       const rawLanguage = String(form.get("visit_summary_default_language") ?? "auto");
       await Settings.setSettings(shop, platform, {
         visit_summaries_enabled: form.get("visit_summaries_enabled") === "on",
@@ -360,13 +431,32 @@ export async function action({ request, params }: Route.ActionArgs) {
       }
       if (Object.keys(values).length) await PaymentManager.saveGatewaySettings(shop, platform, id, values);
     }
+  } else if (section === "whatsapp" && FeatureFlags.WHATSAPP_ENABLED) {
+    const values: Record<string, string> = {};
+    for (const field of WhatsApp.settingsFields()) {
+      values[field.key] = String(form.get(`whatsapp_${field.key}`) ?? "");
+    }
+    await WhatsApp.saveWhatsAppSettings(shop, platform, values);
+    await Settings.setSettings(shop, platform, { whatsapp_enabled: form.get("whatsapp_enabled") === "on" });
+  } else if (section === "whatsapp_test" && FeatureFlags.WHATSAPP_ENABLED) {
+    const toPhone = String(form.get("whatsapp_test_phone") ?? "");
+    try {
+      await WhatsApp.sendTestMessage(shop, platform, toPhone);
+      return { saved: true, whatsappTestSent: true };
+    } catch (err) {
+      if (isGetBooqinError(err)) return { whatsappTestError: err.message };
+      return { whatsappTestError: err instanceof Error ? err.message : "Couldn't send that test message." };
+    }
   }
 
   return { saved: true };
 }
 
 export default function SettingsPage({ loaderData, actionData }: Route.ComponentProps) {
-  const { settings, gatewayFields, paymentsEnabled, visitSummariesEnabled, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites } = loaderData;
+  const {
+    settings, gatewayFields, paymentsEnabled, visitSummariesEnabled, whatsappEnabled, whatsappFields, whatsappConfigured, whatsappRequiredTemplate,
+    notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites,
+  } = loaderData;
   const v = useVocabulary();
   // defaultSettings() seeds business_name to the connection's own opaque
   // shop id, so a manual connection that never completed onboarding step 1
@@ -388,14 +478,23 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
   // second gated page: "visit_summaries" is a real slug but only buildable
   // when both the global rollout flag and this shop's preset allow it
   // (docs/patient-summary-cloud-integration-plan.md Part 3 §6).
-  const visitSummariesVisible = visitSummariesEnabled && settings.preset === "clinic";
+  const visitSummariesVisible = visitSummariesEnabled && isClinicFeaturePreset(settings.preset);
   const page = isSettingsPage(rawPage)
     && (rawPage !== "payments" || paymentsEnabled)
     && (rawPage !== "visit_summaries" || visitSummariesVisible)
+    && (rawPage !== "whatsapp" || whatsappEnabled)
     ? rawPage : "general";
   const savedAt = actionData?.saved ? "just now" : undefined;
   const base = `/dashboard/${currentConnectionId}`;
-  const hiddenNavKeys = hiddenSettingsNavKeys({ paymentsEnabled, visitSummariesEnabled, preset: settings.preset });
+  const hiddenNavKeys = hiddenSettingsNavKeys({ paymentsEnabled, visitSummariesEnabled, whatsappEnabled, preset: settings.preset });
+
+  // Field-level errors from a blocked "rules" save (BR-01/BR-02) — see the
+  // action's validateBookingRules call above.
+  const ruleErrors: Partial<Record<BookingRuleField, string>> =
+    (actionData && "ruleErrors" in actionData ? actionData.ruleErrors : undefined) ?? {};
+  const ruleErrorSummary = Object.keys(ruleErrors).length > 0 ? "Fix the highlighted fields below before saving." : undefined;
+  const bookingWindowClosed = bookingWindowIsClosed(settings);
+  const cutoffExceedsNotice = cancelCutoffExceedsNotice(settings);
 
   return (
     <SettingsShell active={page} base={base} hide={hiddenNavKeys}>
@@ -411,6 +510,15 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
           <Row label="Business phone">
             <RowInput type="tel" name="business_phone" defaultValue={settings.business_phone} pattern={PHONE_PATTERN} />
           </Row>
+          {/* A phone number saved with no country code silently fails to
+              deliver the moment WhatsApp is switched on — Meta's Cloud API
+              requires E.164 (GetBooqin clinic audit's PB-03 finding). This
+              is prepended automatically to any phone number typed without
+              one, business-wide (booking form, staff-entered bookings,
+              client records) — see bookingsShared.ts's normalizePhone(). */}
+          <Row label="Default country code" hint="Added automatically to phone numbers entered without one, e.g. +91">
+            <RowInput name="default_country_code" defaultValue={settings.default_country_code} placeholder="+91" cap={100} />
+          </Row>
           {/* Shown on the public booking page's business header — it used
               to give a prospective client only a name and a bare list of
               service durations, with none of this already-collected
@@ -421,11 +529,22 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
           <Row label="Address" hint="Shown on your booking page">
             <RowInput name="business_address" defaultValue={settings.business_address} cap={9999} />
           </Row>
-          <Row label="Currency code">
-            <RowInput name="currency" defaultValue={settings.currency} cap={120} />
+          {/* The booking form's required consent checkbox links here — see
+              the "rules" page's own note — falling back to GetBooqin's own
+              privacy page when this is blank. Every business collecting
+              real contact details (and for a clinic, health-adjacent
+              notes) should point this at their own notice once they have
+              one (GetBooqin clinic audit's TS-01 finding). */}
+          <Row label="Privacy notice URL" hint="Linked from the consent checkbox on your booking form. Leave blank to use GetBooqin's own privacy page.">
+            <RowInput type="url" name="privacy_notice_url" defaultValue={settings.privacy_notice_url} placeholder="https://your-clinic.example/privacy" cap={9999} />
           </Row>
-          <Row label="Currency symbol">
-            <RowInput name="currency_symbol" defaultValue={settings.currency_symbol} cap={120} />
+          {/* One dropdown driving both stored values, replacing two free-text
+              fields that could independently disagree — nothing stopped
+              "INR" sitting beside "$", which would render every price
+              wrongly on the public booking page with no warning (GetBooqin
+              clinic audit's CR-03 finding). */}
+          <Row label="Currency">
+            <CurrencyRowSelect defaultCode={settings.currency} defaultSymbol={settings.currency_symbol} />
           </Row>
           <Row label="Timezone" hint="All times shown in this zone">
             <TimezoneSelect defaultValue={settings.timezone} />
@@ -458,35 +577,82 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
       )}
 
       {page === "rules" && (
-        <SettingsCard saveLabel="Save booking rules" savedAt={savedAt}>
+        <SettingsCard saveLabel="Save booking rules" savedAt={savedAt} error={ruleErrorSummary}>
           <input type="hidden" name="_section" value="rules" />
+          {/* Every save producing zero bookable slots for the next 30+ days
+              used to go through silently, green tick and all — a minimum
+              notice of 3000 hours against a 90-day advance window closed
+              online booking entirely with nothing anywhere saying so
+              (GetBooqin clinic audit's BR-02 finding). Blocked at save time
+              now (see the action's validateBookingRules call); this repeats
+              as a standing banner too, since a value written before this
+              fix shipped is still live until someone opens this page. */}
+          {bookingWindowClosed && (
+            <p className="m-0 mx-[18px] mt-[14px] rounded-[8px] bg-danger-bg px-3 py-2 text-[12.5px] font-medium text-danger">
+              Online booking is currently closed: minimum notice ({settings.min_notice_hours}h) leaves no bookable
+              moment before your {settings.max_advance_days}-day maximum advance window. Fix one of the two fields
+              below to reopen it.
+            </p>
+          )}
           <Row label="Slot interval (minutes)" hint="The spacing between bookable start times."
             badge={<PresetFieldBadge customized={settings.customized_fields.includes("slot_interval")} />}>
-            <RowInput type="number" name="slot_interval" min={5} defaultValue={settings.slot_interval} cap={140} />
+            <RowInput type="number" name="slot_interval" min={5} max={480} defaultValue={settings.slot_interval} cap={140} />
+            {ruleErrors.slot_interval && <p className="m-0 mt-1 text-[12px] text-danger">{ruleErrors.slot_interval}</p>}
           </Row>
           <Row label="Minimum notice (hours)" hint="How soon before a slot someone can still book it."
             badge={<PresetFieldBadge customized={settings.customized_fields.includes("min_notice_hours")} />}>
-            <RowInput type="number" name="min_notice_hours" min={0} defaultValue={settings.min_notice_hours} cap={140} />
+            <RowInput type="number" name="min_notice_hours" min={0} max={720} defaultValue={settings.min_notice_hours} cap={140} />
+            {ruleErrors.min_notice_hours && <p className="m-0 mt-1 text-[12px] text-danger">{ruleErrors.min_notice_hours}</p>}
           </Row>
           <Row label="Max advance booking (days)" hint="How far ahead your calendar opens up."
             badge={<PresetFieldBadge customized={settings.customized_fields.includes("max_advance_days")} />}>
-            <RowInput type="number" name="max_advance_days" min={1} defaultValue={settings.max_advance_days} cap={140} />
+            <RowInput type="number" name="max_advance_days" min={1} max={730} defaultValue={settings.max_advance_days} cap={140} />
+            {ruleErrors.max_advance_days && <p className="m-0 mt-1 text-[12px] text-danger">{ruleErrors.max_advance_days}</p>}
           </Row>
-          <Row label="Cancellation cutoff (hours before start)" hint="How late a customer can still cancel."
+          <Row label="Cancellation cutoff (hours before start)" hint={`How late a ${v.customerOne} can still cancel.`}
             badge={<PresetFieldBadge customized={settings.customized_fields.includes("cancel_cutoff_hours")} />}>
-            <RowInput type="number" name="cancel_cutoff_hours" min={0} defaultValue={settings.cancel_cutoff_hours} cap={140} />
+            <RowInput type="number" name="cancel_cutoff_hours" min={0} max={720} defaultValue={settings.cancel_cutoff_hours} cap={140} />
+            {ruleErrors.cancel_cutoff_hours && <p className="m-0 mt-1 text-[12px] text-danger">{ruleErrors.cancel_cutoff_hours}</p>}
           </Row>
+          {/* A cutoff longer than the notice window means a booking made at
+              the earliest allowed moment is un-cancellable from the instant
+              it's created — legitimate for e.g. deliberately-final
+              same-day slots, so this only warns, it never blocks a save
+              (GetBooqin clinic audit's PB-01 finding; see the un-cancellable
+              patient's own fix on the manage-booking page). */}
+          {cutoffExceedsNotice && (
+            <p className="m-0 mx-[18px] mt-[14px] rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+              Cancellation cutoff ({settings.cancel_cutoff_hours}h) is longer than minimum notice ({settings.min_notice_hours}h)
+              — anyone who books inside that gap won't be able to cancel online at all.
+            </p>
+          )}
           <ToggleRow name="auto_confirm" label="Auto-confirm new bookings" hint="Skip manual approval for new bookings" defaultChecked={settings.auto_confirm}
             badge={<PresetFieldBadge customized={settings.customized_fields.includes("auto_confirm")} />} />
           <ToggleRow name="require_phone" label="Require a phone number" hint="Ask for a phone number when booking" defaultChecked={settings.require_phone}
             badge={<PresetFieldBadge customized={settings.customized_fields.includes("require_phone")} />} />
+          {/* Email was hard-required with no matching setting at all — a
+              walk-in patient with no email address couldn't book online,
+              full stop (GetBooqin clinic audit's PB-03 finding). Defaults
+              on, so no shop's booking form changes until this is explicitly
+              turned off. */}
+          <ToggleRow name="require_email" label="Require an email address" hint="Ask for an email address when booking" defaultChecked={settings.require_email} />
           <ToggleRow name="waitlist_enabled" label="Offer freed slots to the waitlist" hint="Cancelled, declined or no-show bookings get offered to the next matching waitlist entry" defaultChecked={settings.waitlist_enabled}
             badge={<PresetFieldBadge customized={settings.customized_fields.includes("waitlist_enabled")} />} />
-          <Row label="Waitlist offer window (hours)" hint="How long someone has to claim an offered slot before it moves to the next person."
+          <Row label="Waitlist offer window (hours)" hint={settings.waitlist_enabled ? "How long someone has to claim an offered slot before it moves to the next person." : "Inactive — turn on \"Offer freed slots to the waitlist\" above for this to take effect."}
             badge={<PresetFieldBadge customized={settings.customized_fields.includes("waitlist_offer_window_hours")} />}>
-            <RowInput type="number" name="waitlist_offer_window_hours" min={0.25} step={0.25} defaultValue={settings.waitlist_offer_window_hours} cap={140} />
+            {/* Stayed editable and looked identically live whether or not
+                the toggle above was on, with nothing indicating it was
+                inert (GetBooqin clinic audit's finding under BR-02's rule
+                table, "waitlist_offer_window"). The hint above is the fix,
+                not a disabled input — a `disabled` field is dropped from
+                FormData entirely on submit, which would silently reset
+                this to the action's fallback default instead of preserving
+                whatever a merchant had it set to before switching the
+                toggle off. */}
+            <RowInput type="number" name="waitlist_offer_window_hours" min={0.25} max={168} step={0.25} defaultValue={settings.waitlist_offer_window_hours} cap={140} />
+            {ruleErrors.waitlist_offer_window_hours && <p className="m-0 mt-1 text-[12px] text-danger">{ruleErrors.waitlist_offer_window_hours}</p>}
           </Row>
-          <ToggleRow name="allow_cancel" label="Allow customers to cancel" hint="Let customers cancel their own bookings" defaultChecked={settings.allow_cancel} />
+          <ToggleRow name="allow_cancel" label={`Allow ${v.customers.toLowerCase()} to cancel`} hint={`Let ${v.customers.toLowerCase()} cancel their own ${v.bookingMany}`} defaultChecked={settings.allow_cancel} />
         </SettingsCard>
       )}
 
@@ -572,6 +738,63 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
         </SettingsCard>
       )}
 
+      {page === "whatsapp" && whatsappEnabled && (
+        <div className="flex flex-col gap-[14px]">
+          <SettingsCard saveLabel="Save WhatsApp settings" savedAt={savedAt}>
+            <input type="hidden" name="_section" value="whatsapp" />
+            <div className="mx-[18px] mt-[14px] rounded-[8px] border border-line bg-canvas-alt px-3 py-3">
+              <p className="m-0 text-[13px] font-medium text-body">Before you turn this on, add one template from Meta's library</p>
+              <p className="m-0 mt-1 text-[12.5px] text-subtle">
+                In WhatsApp Manager: Message templates → Create template → browse the template library (don't write
+                your own — a library template is pre-approved by Meta, so there's no review wait). Find{" "}
+                <span className="font-mono">{whatsappRequiredTemplate.libraryPath}</span>, add it to your account, and
+                use exactly these values — the name and language must match exactly, or messages fail to send:
+              </p>
+              <dl className="m-0 mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-[3px] font-mono text-[12px]">
+                <dt className="text-subtle">Name</dt>
+                <dd className="m-0">{whatsappRequiredTemplate.name}</dd>
+                <dt className="text-subtle">Language</dt>
+                <dd className="m-0">{whatsappRequiredTemplate.language}</dd>
+                <dt className="text-subtle">Category</dt>
+                <dd className="m-0">{whatsappRequiredTemplate.category}</dd>
+              </dl>
+              <p className="m-0 mt-2 text-[12.5px] text-subtle">
+                Its "View details" button uses a Static URL — point it at your own booking page. The body's wording is
+                fixed by Meta; GetBooqin fills in its five blanks automatically, in order:
+              </p>
+              <ol className="m-0 mt-1 list-inside list-decimal text-[12px] text-subtle">
+                {whatsappRequiredTemplate.variables.map((v) => (
+                  <li key={v.token}>{v.label}</li>
+                ))}
+              </ol>
+              <p className="m-0 mt-2 whitespace-pre-wrap rounded-[6px] bg-surface px-2 py-2 font-mono text-[11.5px] text-subtle">
+                {whatsappRequiredTemplate.body}
+              </p>
+            </div>
+            <Row as="div" label="Send via WhatsApp" hint="Turn on to send a WhatsApp confirmation whenever a booking is confirmed, through your connected number">
+              <Toggle name="whatsapp_enabled" defaultChecked={settings.whatsapp_enabled} label="Enabled" />
+            </Row>
+            {whatsappFields.map((field) => (
+              <Row key={field.key} label={field.label} hint={field.description}>
+                <RowInput
+                  type={field.type === "password" ? "password" : "text"}
+                  name={`whatsapp_${field.key}`}
+                  defaultValue={(settings.whatsapp as Record<string, string | undefined>)[field.key] ?? ""}
+                />
+              </Row>
+            ))}
+            {settings.whatsapp_enabled && !whatsappConfigured && (
+              <p className="m-0 rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+                WhatsApp is turned on, but the phone number ID or access token is still missing — no messages will
+                send until both are filled in.
+              </p>
+            )}
+          </SettingsCard>
+
+          <WhatsAppTestCard />
+        </div>
+      )}
+
       {page === "visit_summaries" && visitSummariesVisible && (
         <SettingsCard saveLabel="Save visit summary settings" savedAt={savedAt}>
           <input type="hidden" name="_section" value="visit_summaries" />
@@ -604,8 +827,9 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
               />
               <p className="m-0 text-meta text-subtle">
                 Shown to patients ahead of a visit that may be summarized with AI assistance. This is not
-                legal advice — have your legal/compliance advisor review this wording, especially around
-                GDPR and medical-record consent, before enabling this for real patients.
+                legal advice — have your legal/compliance advisor review this wording against whichever
+                data-protection and medical-record consent law your practice actually operates under (e.g.
+                GDPR, India's DPDP Act, HIPAA) before enabling this for real patients.
               </p>
             </div>
           </Row>
@@ -615,7 +839,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
       {page === "integrations" && (
         <>
           <div className="card">
-            {INTEGRATIONS.map((integ) => {
+            {integrationsFor(settings.preset).map((integ) => {
               if (integ.id === "shopify") {
                 return (
                   <IntegrationRow
@@ -635,6 +859,30 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
                       ) : (
                         <span className="btn-sec pointer-events-none opacity-60">Connected</span>
                       )
+                    }
+                  />
+                );
+              }
+              if (integ.id === "whatsapp") {
+                const connected = whatsappEnabled && settings.whatsapp_enabled && whatsappConfigured;
+                return (
+                  <IntegrationRow
+                    key={integ.id}
+                    id={integ.id}
+                    name={integ.name}
+                    initial={integ.initial}
+                    tint={integ.tint}
+                    tag={whatsappEnabled ? integ.tag : "Coming soon"}
+                    blurb={integ.blurb}
+                    connected={connected}
+                    variant="settings"
+                    disabled={!whatsappEnabled}
+                    action={
+                      whatsappEnabled ? (
+                        <a href="?page=whatsapp" className="btn-sec no-underline hover:no-underline">
+                          {connected ? "Manage" : "Configure"}
+                        </a>
+                      ) : undefined
                     }
                   />
                 );
@@ -917,6 +1165,71 @@ function MessageRow({ message, vocab }: { message: NotificationMessage; vocab: R
   );
 }
 
+// Lets a merchant confirm their credentials/template actually work before
+// relying on them for real bookings — its own fetcher (not the page's
+// actionData) so sending a test doesn't get tangled up with whichever other
+// section's form last submitted on this page.
+function WhatsAppTestCard() {
+  const fetcher = useFetcher<{ saved?: boolean; whatsappTestSent?: boolean; whatsappTestError?: string }>();
+  const sending = fetcher.state !== "idle";
+  return (
+    <fetcher.Form method="post" className="card">
+      <div className="card-header flex flex-col gap-[2px]">
+        <h2 className="card-title">Send a test message</h2>
+        <p className="m-0 text-meta text-muted">Confirm your credentials and template work before relying on real bookings.</p>
+      </div>
+      <input type="hidden" name="_section" value="whatsapp_test" />
+      <Row label="Send to">
+        <RowInput type="tel" name="whatsapp_test_phone" placeholder="+1 555 000 1234" pattern={PHONE_PATTERN} required cap={280} />
+      </Row>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-canvas-alt px-[18px] py-3">
+        {fetcher.data?.whatsappTestError ? (
+          <span className="flex items-center gap-[7px] text-meta font-medium text-danger">
+            <span className="inline-flex h-[15px] w-[15px] items-center justify-center rounded-full bg-danger text-[9px] text-white">!</span>
+            {fetcher.data.whatsappTestError}
+          </span>
+        ) : fetcher.data?.whatsappTestSent ? (
+          <span className="alert-success">
+            <span className="inline-flex h-[15px] w-[15px] items-center justify-center rounded-full bg-ok text-[9px] text-white">✓</span>
+            Sent — check that phone.
+          </span>
+        ) : <span />}
+        <button className="btn-pri" disabled={sending}>{sending ? "Sending…" : "Send test message"}</button>
+      </div>
+    </fetcher.Form>
+  );
+}
+
+/**
+ * One dropdown driving both stored values (currency code + symbol) —
+ * previously two independent free-text fields that could disagree (nothing
+ * stopped "INR" sitting beside "$"), which would render every price
+ * wrongly on the public booking page with no warning (GetBooqin clinic
+ * audit's CR-03 finding). The symbol travels as a hidden input alongside
+ * the real `currency` select so the form still posts both fields the
+ * action already expects, with only one value for a merchant to pick.
+ */
+function CurrencyRowSelect({ defaultCode, defaultSymbol }: { defaultCode: string; defaultSymbol: string }) {
+  const [code, setCode] = useState(defaultCode);
+  const known = CURRENCIES.some((c) => c.code === code);
+  // A shop whose stored code was hand-typed before this dropdown existed
+  // and isn't in the curated list keeps its original symbol until the
+  // merchant actually picks something from the list — better than
+  // guessing blank for a real value we don't otherwise recognize.
+  const symbol = known ? CURRENCIES.find((c) => c.code === code)!.symbol : defaultSymbol;
+  return (
+    <>
+      <RowSelect name="currency" value={code} onChange={(e) => setCode(e.target.value)}>
+        {!known && <option value={code}>{code}</option>}
+        {CURRENCIES.map((c) => (
+          <option key={c.code} value={c.code}>{c.label}</option>
+        ))}
+      </RowSelect>
+      <input type="hidden" name="currency_symbol" value={symbol} />
+    </>
+  );
+}
+
 // Local controlled state drives TemplateConfig's live renames/cards preview
 // on pick/toggle; its inputs are still real named radios/checkboxes so the
 // #template-form submit above works whether or not this state ever changes.
@@ -999,6 +1312,13 @@ function TeamSection({
   const inviting = navigation.state !== "idle" && navigation.formData?.get("_section") === "invite_member";
   const inviteError = actionData && "inviteError" in actionData ? actionData.inviteError : undefined;
 
+  // Bumped on every successful send and used as InviteMemberCard's `key`
+  // below — the card's email/role inputs are uncontrolled (a plain <Form>,
+  // not react state), so remounting is what actually clears them. Without
+  // this the fields kept whatever was last typed/selected after "Invite
+  // sent to …", making it easy to double-invite the same address.
+  const [formKey, setFormKey] = useState(0);
+
   // The invite form is a real <Form> (client-side transition, not a full
   // reload) precisely so this effect can catch its completion the same way
   // TemplateTab already does for its own <Form> above.
@@ -1019,6 +1339,7 @@ function TeamSection({
       } else {
         toast(`Invite sent to ${email}.`);
       }
+      setFormKey((k) => k + 1);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigation.state]);
@@ -1048,7 +1369,7 @@ function TeamSection({
         </div>
       )}
 
-      {canManageTeam && <InviteMemberCard pending={inviting} error={inviteError} />}
+      {canManageTeam && <InviteMemberCard key={formKey} pending={inviting} error={inviteError} />}
     </>
   );
 }

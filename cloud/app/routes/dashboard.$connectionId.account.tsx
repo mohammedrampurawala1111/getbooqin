@@ -42,6 +42,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     template: { presetId: settings.preset, href: `/dashboard/${connection.id}/settings?page=template` },
     paymentsEnabled: FeatureFlags.PAYMENTS_ENABLED,
     visitSummariesEnabled: FeatureFlags.VISIT_SUMMARIES_ENABLED,
+    whatsappEnabled: FeatureFlags.WHATSAPP_ENABLED,
   };
 }
 
@@ -53,6 +54,7 @@ export default function Account({ loaderData, params }: Route.ComponentProps) {
   const hide = hiddenSettingsNavKeys({
     paymentsEnabled: loaderData.paymentsEnabled,
     visitSummariesEnabled: loaderData.visitSummariesEnabled,
+    whatsappEnabled: loaderData.whatsappEnabled,
     preset: loaderData.template.presetId,
   });
 
@@ -343,6 +345,34 @@ function SecurityTab() {
       <PasswordCard user={user} />
       <LinkedAccountsCard user={user} />
       <SessionsCard user={user} currentSessionId={currentSession?.id} onSignOutEverywhere={() => clerk.signOut(() => navigate("/logout"))} />
+      {/* This card, and everything on it, was already solid — 2FA, linked
+          sign-in methods, active sessions with device/city, sign out
+          everywhere, a 15-character minimum. What was missing was any nudge
+          at all toward actually turning 2FA on for the one account with
+          full access to every patient record (GetBooqin clinic audit's
+          TS-04 finding). Only shown once Clerk has loaded a real answer for
+          whether it's on — never a false "you should enable this" flash
+          for someone who already has. */}
+      {!user.twoFactorEnabled && (
+        <div className="card border-l-[3px] border-l-warn">
+          <div className="card-body flex items-center justify-between gap-3">
+            <div className="flex flex-col gap-[3px]">
+              <span className="text-body font-medium">Turn on two-step verification</span>
+              <span className="text-meta text-muted">
+                This account can see every patient's contact details and notes. A second sign-in step is the
+                single biggest thing you can do to protect it.
+              </span>
+            </div>
+            <button
+              type="button"
+              className="btn-pri shrink-0"
+              onClick={() => clerk.openUserProfile({ __experimental_startPath: "/security" })}
+            >
+              Turn on
+            </button>
+          </div>
+        </div>
+      )}
       <div className="card">
         <div className="card-body flex items-center justify-between gap-3">
           <div className="flex flex-col gap-[3px]">

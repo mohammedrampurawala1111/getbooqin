@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { Form, redirect } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.services.new";
 import { Data, Settings } from "getbooqin-core";
@@ -36,7 +35,10 @@ export async function action({ request, params }: Route.ActionArgs) {
     return { error: "Enter a name for this service." };
   }
 
-  const productId = randomUUID();
+  // Web Crypto's global `crypto`, not `node:crypto` — see settings.tsx's
+  // identical fix for why an explicit node:crypto import here breaks the
+  // client bundle.
+  const productId = crypto.randomUUID();
   const productHandle = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "service"}-${productId.slice(0, 8)}`;
 
   await Data.upsertProductCache(shop, platform, {

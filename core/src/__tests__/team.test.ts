@@ -267,6 +267,65 @@ describe("Team", () => {
     });
   });
 
+  describe("findPendingInviteForEmail — onboarding.tsx's join-instead-of-create-a-business check (QA report BUG-1)", () => {
+    it("returns null when the email holds no invite at all", async () => {
+      expect(await Team.findPendingInviteForEmail(`no-invite-${RUN}@example.com`)).toBeNull();
+    });
+
+    it("finds a pending invite, matching case-insensitively/untrimmed the same way inviteMember stores it", async () => {
+      const email = `find-pending-${RUN}@example.com`;
+      const { invite } = await Team.inviteMember({ connectionId, email, role: "write", invitedByUserId: ownerUserId });
+
+      const found = await Team.findPendingInviteForEmail(`  ${email.toUpperCase()}  `);
+      expect(found?.id).toBe(invite.id);
+    });
+
+    it("ignores a revoked or already-accepted invite for that email", async () => {
+      const revokedEmail = `find-revoked-${RUN}@example.com`;
+      const revoked = await Team.inviteMember({ connectionId, email: revokedEmail, role: "write", invitedByUserId: ownerUserId });
+      await Team.revokeInvite({ connectionId, inviteId: revoked.invite.id, actingUserId: ownerUserId });
+      expect(await Team.findPendingInviteForEmail(revokedEmail)).toBeNull();
+
+      const acceptedEmail = `find-accepted-${RUN}@example.com`;
+      const accepted = await Team.inviteMember({ connectionId, email: acceptedEmail, role: "write", invitedByUserId: ownerUserId });
+      const acceptor = await createUser(acceptedEmail);
+      try {
+        await Team.acceptInvite({ token: accepted.invite.token, userId: acceptor });
+        expect(await Team.findPendingInviteForEmail(acceptedEmail)).toBeNull();
+      } finally {
+        await prisma.connectionMember.deleteMany({ where: { connectionId, userId: acceptor } });
+        await prisma.user.delete({ where: { id: acceptor } });
+      }
+    });
+
+    it("ignores a pending row whose DB expiresAt has passed (edge case 3.6, same gate as acceptInvite)", async () => {
+      const email = `find-expired-${RUN}@example.com`;
+      const { invite } = await Team.inviteMember({ connectionId, email, role: "write", invitedByUserId: ownerUserId });
+      await prisma.connectionInvite.update({ where: { id: invite.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+      expect(await Team.findPendingInviteForEmail(email)).toBeNull();
+    });
+
+    it("picks the most recently sent invite when the same email has pending invites to more than one business (edge case: multi-business invites, docs/team-management-spec.md)", async () => {
+      const email = `find-multi-${RUN}@example.com`;
+      const secondConnection = await prisma.connection.create({
+        data: { userId: ownerUserId, platform, shop: `team-test-second-${RUN}.myshopify.com`, credentials: "", status: "active" },
+      });
+      try {
+        const older = await Team.inviteMember({ connectionId, email, role: "read", invitedByUserId: ownerUserId });
+        // createdAt has millisecond resolution — force a real ordering gap
+        // rather than relying on two upserts landing in the same tick.
+        await prisma.connectionInvite.update({ where: { id: older.invite.id }, data: { createdAt: new Date(Date.now() - 60_000) } });
+        const newer = await Team.inviteMember({ connectionId: secondConnection.id, email, role: "admin", invitedByUserId: ownerUserId });
+
+        const found = await Team.findPendingInviteForEmail(email);
+        expect(found?.id).toBe(newer.invite.id);
+      } finally {
+        await prisma.connectionInvite.deleteMany({ where: { connectionId: secondConnection.id } });
+        await prisma.connection.delete({ where: { id: secondConnection.id } });
+      }
+    });
+  });
+
   describe("owner protection (edge case 3.4) — updateMemberRole/removeMember must reject targeting the owner row unconditionally", () => {
     it("updateMemberRole rejects any role change targeting the owner", async () => {
       await expect(

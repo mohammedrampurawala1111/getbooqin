@@ -85,6 +85,53 @@ export const PRESETS: Record<string, Preset> = {
       },
     },
   },
+  // A dental practice is exactly the primary example "Clinic / Healthcare"
+  // was written for, but that preset's own default treatments (Initial
+  // assessment, Follow-up consultation, Physiotherapy session,
+  // Vaccination) have nothing dental in them — a real dental practice's
+  // live services stayed the generic scaffold (Standard appointment, Short
+  // appointment, Consultation, Follow-up) with placeholder ₹25–₹50 prices,
+  // publicly visible on its booking page (GetBooqin clinic audit's TR-01
+  // finding). Same terms/rule defaults as clinic (a dental practice's
+  // booking rules aren't meaningfully different from a GP's); only the
+  // seeded services differ — see cloud/app/lib/presets.ts's PREVIEW.dental
+  // for those.
+  dental: {
+    label: "Dental Practice",
+    terms: {
+      resource_single: "Dentist",
+      resource_plural: "Dentists",
+      service_single: "Treatment",
+      service_plural: "Treatments",
+      booking_single: "Appointment",
+      booking_plural: "Appointments",
+      customer_single: "Patient",
+      customer_plural: "Patients",
+    },
+    defaults: {
+      slot_interval: 15,
+      min_notice_hours: 4,
+      max_advance_days: 180,
+      cancel_cutoff_hours: 24,
+      auto_confirm: false,
+      require_phone: true,
+      waitlist_enabled: true,
+      waitlist_offer_window_hours: 3,
+      consent_text:
+        "We require at least 24 hours' notice to cancel or reschedule your appointment. Cancellations made with less notice, or missed appointments, may be subject to a missed-appointment fee. This helps us keep appointment times available for other patients who need care.",
+      widget_text: {
+        noSlots: "No further appointments left with this dentist today. Please call us if you need urgent dental care.",
+      },
+      templates: {
+        customer_created_pending_subject: "We've received your {{booking_term}} request — {{date}} at {{time}}",
+        customer_created_pending_body:
+          "Hi {{customer_name}},\n\nThank you — we've received your request to see {{resource}} for {{service}} on {{date}} at {{time}} {{timezone}}.\n\nA member of our team will confirm your appointment shortly. If you have any relevant dental or medical history to share beforehand, please reply to this email.\n\n{{manage_url}}\n\n{{business_name}}",
+        customer_cancelled_subject: "Your appointment on {{date}} has been cancelled",
+        customer_cancelled_body:
+          "Hi {{customer_name}},\n\nYour appointment for {{service}} with {{resource}} on {{date}} at {{time}} has been cancelled.\n\nIf you still need care, please book a new time on our website or call us directly.\n\n{{business_name}}",
+      },
+    },
+  },
   salon: {
     label: "Salon / Spa / Barber",
     terms: {

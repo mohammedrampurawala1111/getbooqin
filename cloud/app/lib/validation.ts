@@ -29,22 +29,34 @@ export function isValidEmail(value: string): boolean {
 }
 
 /**
- * Shared client/server validation for the public booking form and the
- * Add-consultation dialog — both relied entirely on native HTML5 validation,
- * which shows a transient tooltip and leaves no persistent message for a
- * screen-reader user or anyone reading slowly (Defect Dossier's BQ-24
- * finding). Framework-free so it runs identically in a browser onSubmit
- * handler and in a route action.
+ * Shared client/server validation for the public booking form, the
+ * Add-consultation dialog and the staff Add-client dialog — all three
+ * relied entirely on native HTML5 validation, which shows a transient
+ * tooltip and leaves no persistent message for a screen-reader user or
+ * anyone reading slowly (Defect Dossier's BQ-24 finding). Framework-free so
+ * it runs identically in a browser onSubmit handler and in a route action.
+ *
+ * `requireEmail` defaults true — email was unconditionally required before
+ * Settings > Booking rules gained a matching toggle (GetBooqin clinic
+ * audit's PB-03 finding: a walk-in patient with no email address couldn't
+ * book online at all), so every existing call site keeps its old behavior
+ * until it's updated to pass the real setting. When both email and phone
+ * are optional, at least one must still be given — a booking nobody can be
+ * reached about isn't a state any of these forms should allow.
  */
 export function contactFieldErrors(
   fields: { first_name: string; email: string; phone: string },
-  requirePhone: boolean
+  requirePhone: boolean,
+  requireEmail = true
 ): Record<string, string> {
   const errors: Record<string, string> = {};
   if (!fields.first_name.trim()) errors.first_name = "Enter a first name.";
-  if (!fields.email.trim()) errors.email = "Enter an email address.";
-  else if (!isValidEmail(fields.email)) errors.email = "Enter a valid email address.";
+  if (requireEmail && !fields.email.trim()) errors.email = "Enter an email address.";
+  else if (fields.email.trim() && !isValidEmail(fields.email)) errors.email = "Enter a valid email address.";
   if (requirePhone && !fields.phone.trim()) errors.phone = "Enter a phone number.";
   else if (fields.phone.trim() && !isValidPhone(fields.phone)) errors.phone = "Enter a valid phone number.";
+  if (!requireEmail && !requirePhone && !fields.email.trim() && !fields.phone.trim() && !errors.email && !errors.phone) {
+    errors.phone = "Enter a phone number or email address so we can reach you.";
+  }
   return errors;
 }

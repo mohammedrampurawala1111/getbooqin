@@ -1,11 +1,12 @@
 import { useEffect, useRef } from "react";
 import { Form, redirect, useNavigate, useSearchParams, useSubmit } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.customers";
-import { Data } from "getbooqin-core";
+import { Data, Settings, Bookings } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Field, Input, PageHeader, EmptyState, DataTable, useToast } from "~/components/ui";
 import { useVocabulary, vocabFor } from "~/lib/presets";
 import { dashboardPreset } from "~/lib/dashboardMeta";
+import { contactFieldErrors } from "~/lib/validation";
 
 export const meta: Route.MetaFunction = ({ matches }) => [
   { title: `${vocabFor(dashboardPreset(matches)).customers} · GetBooqin` },
@@ -15,26 +16,41 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId);
   const url = new URL(request.url);
   const search = url.searchParams.get("q") || "";
-  const [customers, totalCount] = await Promise.all([
+  const [customers, totalCount, settings] = await Promise.all([
     Data.customers(shop, platform, search, 100, 0),
     Data.customersCount(shop, platform, search),
+    Settings.getSettings(shop, platform),
   ]);
-  return { customers, search, totalCount };
+  return {
+    customers,
+    search,
+    totalCount,
+    requirePhone: settings.require_phone,
+    requireEmail: settings.require_email,
+  };
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId, "write");
   const form = await request.formData();
+  const settings = await Settings.getSettings(shop, platform);
   const firstName = String(form.get("first_name") ?? "").trim();
   const email = String(form.get("email") ?? "").trim();
-  if (!firstName || !email) {
-    return { error: "Enter at least a first name and email." };
+  const phone = String(form.get("phone") ?? "").trim();
+  // Matches the public/staff-booking forms' own contactFieldErrors check
+  // (Defect Dossier's BQ-24 finding) instead of a bespoke "first name and
+  // email" requirement that didn't move when Settings > Booking rules'
+  // require_phone/require_email toggles do (GetBooqin clinic audit's PB-03
+  // finding).
+  const fieldErrors = contactFieldErrors({ first_name: firstName, email, phone }, settings.require_phone, settings.require_email);
+  if (Object.keys(fieldErrors).length > 0) {
+    return { error: Object.values(fieldErrors)[0], fieldErrors };
   }
   await Data.createCustomer(shop, platform, {
     first_name: firstName,
     last_name: String(form.get("last_name") ?? ""),
     email,
-    phone: String(form.get("phone") ?? ""),
+    phone: phone ? Bookings.normalizePhone(phone, settings.default_country_code) : phone,
   });
   // Same "?added=1" convention as the other create dialogs (BQ-02/BQ-29) —
   // a plain redirect to this same URL just revalidates the already-mounted
@@ -43,7 +59,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function Customers({ loaderData, actionData, params }: Route.ComponentProps) {
-  const { customers, search, totalCount } = loaderData;
+  const { customers, search, totalCount, requirePhone, requireEmail } = loaderData;
   const v = useVocabulary();
   const base = `/dashboard/${params.connectionId}`;
   const [searchParams] = useSearchParams();
@@ -65,7 +81,7 @@ export default function Customers({ loaderData, actionData, params }: Route.Comp
       toast(`${v.customerOne.charAt(0).toUpperCase() + v.customerOne.slice(1)} added`);
       navigate(`${base}/customers`, { replace: true });
     } else if (searchParams.get("erased") === "1") {
-      toast("Client data erased.");
+      toast(searchParams.get("hardDeleted") === "1" ? "Client deleted." : "Client's contact details erased.");
       navigate(`${base}/customers`, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -172,11 +188,17 @@ export default function Customers({ loaderData, actionData, params }: Route.Comp
                 <Input name="last_name" autoComplete="family-name" />
               </Field>
             </div>
-            <Field label="Email">
-              <Input type="email" name="email" required autoComplete="email" />
+            {/* Required/optional now mirrors Settings > Booking rules
+                instead of hardcoding email as required and phone as
+                optional regardless of what those toggles say — the public
+                booking form and this staff dialog used to disagree about
+                what identifies a customer (GetBooqin clinic audit's PB-03
+                finding). */}
+            <Field label="Email" hint={requireEmail ? undefined : "Optional"}>
+              <Input type="email" name="email" required={requireEmail} autoComplete="email" />
             </Field>
-            <Field label="Phone" hint="Optional">
-              <Input type="tel" name="phone" autoComplete="tel" />
+            <Field label="Phone" hint={requirePhone ? undefined : "Optional"}>
+              <Input type="tel" name="phone" required={requirePhone} autoComplete="tel" />
             </Field>
             <div className="mt-1 flex justify-end gap-2">
               <button

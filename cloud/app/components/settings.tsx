@@ -1,6 +1,7 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Form, useFetcher } from "react-router";
 import { ConfirmDialog, useToast } from "~/components/ui";
+import { isClinicFeaturePreset } from "~/lib/presets";
 
 /* ==================================================================
    Settings shell — one rail, one page at a time (design handoff v4).
@@ -34,6 +35,7 @@ export const SETTINGS_NAV = [
     { key: "rules", label: "Booking rules", path: "/settings?page=rules", title: "Booking rules", subtitle: "When customers can book, and what happens automatically." },
     { key: "notifications", label: "Notifications", path: "/settings?page=notifications", title: "Notifications", subtitle: "Emails sent to customers and staff." },
     { key: "payments", label: "Payments", path: "/settings?page=payments", title: "Payments", subtitle: "How money is collected for bookings." },
+    { key: "whatsapp", label: "WhatsApp", path: "/settings?page=whatsapp", title: "WhatsApp", subtitle: "Send booking confirmations and updates through your own WhatsApp Business number." },
     { key: "visit_summaries", label: "Visit summaries", path: "/settings?page=visit_summaries", title: "Visit summaries", subtitle: "AI-drafted, clinician-reviewed summaries patients can keep after a visit." },
     { key: "integrations", label: "Integrations", path: "/settings?page=integrations", title: "Integrations", subtitle: "Optional integrations. GetBooqin works fully without any of them." },
     { key: "team", label: "Team", path: "/settings?page=team", title: "Team", subtitle: "Who can access this dashboard, and what they can do." },
@@ -55,11 +57,13 @@ export type SettingsKey = typeof SETTINGS_NAV[number]["items"][number]["key"];
 export function hiddenSettingsNavKeys(gates: {
   paymentsEnabled: boolean;
   visitSummariesEnabled: boolean;
+  whatsappEnabled: boolean;
   preset: string | null;
 }): SettingsKey[] {
   return [
     ...(gates.paymentsEnabled ? [] : (["payments"] as const)),
-    ...(gates.visitSummariesEnabled && gates.preset === "clinic" ? [] : (["visit_summaries"] as const)),
+    ...(gates.visitSummariesEnabled && isClinicFeaturePreset(gates.preset) ? [] : (["visit_summaries"] as const)),
+    ...(gates.whatsappEnabled ? [] : (["whatsapp"] as const)),
   ];
 }
 
@@ -217,16 +221,31 @@ export function ValueRow({
 }
 
 /* Toggle row — wrapping flex, not a 3-column grid: at narrow widths a
-   grid squeezes the hint to nothing while the switch keeps its 34px. */
+   grid squeezes the hint to nothing while the switch keeps its 34px.
+
+   The whole row used to be one <label>, which meant the *hint* text —
+   the description explaining what the rule does, the exact sentence a
+   reader's eye lands on to understand the row before deciding whether to
+   flip it — was itself inside the switch's clickable hit area. Clicking
+   "Cancelled, declined or no-show bookings get offered to the next
+   matching waitlist entry" to read it silently turned the waitlist off,
+   with nothing about the row visually suggesting that text was clickable
+   at all (GetBooqin clinic audit's BR-03 finding). The checkbox now sits
+   outside any <label>, addressed by two separate <label htmlFor>s — one
+   wrapping the short title, one wrapping the switch itself — so only those
+   two ever toggle it; the hint is a plain, inert <span>. */
 export function ToggleRow({
   name, label, hint, defaultChecked, badge,
 }: { name: string; label: string; hint: string; defaultChecked?: boolean; badge?: ReactNode }) {
+  const inputId = useId();
   return (
-    <label className="group flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-1 border-b border-row px-[18px] py-[13px]">
-      <input type="checkbox" name={name} defaultChecked={defaultChecked} className="peer sr-only" />
-      <span className="flex flex-[0_0_200px] items-center gap-2 text-[13px] font-medium">{label}{badge}</span>
+    <div className="group flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-row px-[18px] py-[13px]">
+      <input type="checkbox" id={inputId} name={name} defaultChecked={defaultChecked} className="peer sr-only" />
+      <label htmlFor={inputId} className="flex flex-[0_0_200px] cursor-pointer items-center gap-2 text-[13px] font-medium">
+        {label}{badge}
+      </label>
       <span className="min-w-0 flex-[1_1_160px] text-meta text-muted">{hint}</span>
-      <span className="flex h-5 w-[34px] shrink-0 rounded-full bg-[#d3d7e0] p-[2px] peer-checked:bg-brand-500">
+      <label htmlFor={inputId} className="flex h-5 w-[34px] shrink-0 cursor-pointer rounded-full bg-[#d3d7e0] p-[2px] peer-checked:bg-brand-500">
         {/* `peer-checked` only matches true siblings of the checkbox — this
             knob is a child of the track span above, one level too deep, so
             peer-checked never applied and the knob never visibly moved,
@@ -234,10 +253,11 @@ export function ToggleRow({
             same class of bug already fixed in ui.tsx's Toggle and the
             inline toggle in account.tsx; this row had drifted from that
             pattern). group-has-checked reaches into descendants via
-            `:has()` on the <label>, which does match here. */}
+            `:has()` on the parent div, which does match here regardless of
+            it no longer being a <label> itself. */}
         <span className="h-4 w-4 rounded-full bg-white shadow-[0_1px_2px_rgba(16,24,40,.2)] transition-transform group-has-checked:translate-x-[14px]" />
-      </span>
-    </label>
+      </label>
+    </div>
   );
 }
 
@@ -267,7 +287,18 @@ export function Segmented({
 /* Card + footer with the page's own save button and feedback. `onSubmit`
    is for pages whose save is a client SDK call (Clerk), not a server
    action — when given, it replaces the default real POST (still
-   `preventDefault()`-driven by the caller, so nothing here changes). */
+   `preventDefault()`-driven by the caller, so nothing here changes).
+   Every settings section rendered inside one of these (General, Booking
+   rules, Notifications, Payments, WhatsApp, Visit summaries) previously had
+   no guard at all against losing an edit: changing a toggle, clicking a
+   different item in the settings rail — a plain <a href>, i.e. a real page
+   navigation, not a client-side transition — and coming back showed the
+   change gone, with no dirty-state indicator, no confirmation prompt, and
+   no browser warning (GetBooqin clinic audit's BR-04 finding, reproduced
+   on a page where "every field alters who can book you"). Dirty tracking
+   here is event-delegation on the form's own onChange/onInput — one
+   listener catches every descendant control, so no individual Row/Toggle
+   needs to know about this. */
 export function SettingsCard({
   title, subtitle, saveLabel, savedAt, error, onSubmit, children,
 }: {
@@ -275,8 +306,34 @@ export function SettingsCard({
   savedAt?: string; error?: string; onSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
   children: ReactNode;
 }) {
+  const [dirty, setDirty] = useState(false);
+
+  // Real navigations only — every settings-rail link is a plain <a href>
+  // (see SettingsShell above), so the moment a merchant clicks away this
+  // is exactly what fires, same as closing the tab or hitting reload.
+  // Cleared on submit (see handleSubmit below) so a deliberate Save can't
+  // trigger its own "leave site?" prompt.
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+
+  function handleChange() {
+    if (!dirty) setDirty(true);
+  }
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    setDirty(false);
+    onSubmit?.(event);
+  }
+
   return (
-    <form method="post" onSubmit={onSubmit} className="card">
+    <form method="post" onSubmit={handleSubmit} onChange={handleChange} className="card">
       {title ? (
         <div className="flex flex-col gap-[2px] border-b border-line px-[18px] py-[13px]">
           <h2 className="m-0 text-[14px] font-semibold">{title}</h2>
@@ -290,13 +347,18 @@ export function SettingsCard({
             <span className="inline-flex h-[15px] w-[15px] items-center justify-center rounded-full bg-danger text-[9px] text-white">!</span>
             {error}
           </span>
+        ) : dirty ? (
+          <span className="flex items-center gap-[7px] text-meta font-medium text-warn">
+            <span className="inline-flex h-[15px] w-[15px] items-center justify-center rounded-full bg-warn text-[9px] text-white">•</span>
+            Unsaved changes
+          </span>
         ) : savedAt ? (
           <span className="alert-success">
             <span className="inline-flex h-[15px] w-[15px] items-center justify-center rounded-full bg-ok text-[9px] text-white">✓</span>
             Saved {savedAt}
           </span>
         ) : <span />}
-        <button className="btn-pri">{saveLabel}</button>
+        <button className="btn-pri">{dirty ? `${saveLabel} •` : saveLabel}</button>
       </div>
     </form>
   );

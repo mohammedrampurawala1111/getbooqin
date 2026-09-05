@@ -19,6 +19,7 @@ export default [
   route("dashboard/:connectionId", "routes/dashboard.$connectionId.tsx", [
     index("routes/dashboard.$connectionId._index.tsx"),
     route("bookings", "routes/dashboard.$connectionId.bookings.tsx"),
+    route("bookings/calendar", "routes/dashboard.$connectionId.bookings.calendar.tsx"),
     route("bookings/:bookingId", "routes/dashboard.$connectionId.bookings.$bookingId.tsx"),
     // Visit Summary (Clinic preset only — see
     // docs/patient-summary-cloud-integration-plan.md). Nested under the

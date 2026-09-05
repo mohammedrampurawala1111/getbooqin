@@ -13,6 +13,7 @@
  * `CatalogService` shaped exactly like shopify-openslot's compatibility
  * accessor of the same name, so UI code reads identically either side.
  */
+import { randomUUID } from "node:crypto";
 import prisma from "../db.js";
 import type { Resource, ServiceConfig, ProductCache } from "@prisma/client";
 import type { ServiceConfigFields } from "./serviceMetafields.js";
@@ -40,6 +41,9 @@ export interface CatalogService {
   status: boolean;
   productId: string;
   productHandle: string;
+  // See ServiceConfig.requiresRoom's own schema comment (GetBooqin clinic
+  // audit's RS-01 finding).
+  requiresRoom: boolean;
 }
 
 function mergeCatalog(config: ServiceConfig, product: ProductCache | null): CatalogService {
@@ -63,6 +67,7 @@ function mergeCatalog(config: ServiceConfig, product: ProductCache | null): Cata
     status: config.status,
     productId: config.productId,
     productHandle: config.productHandle,
+    requiresRoom: config.requiresRoom,
   };
 }
 
@@ -120,7 +125,12 @@ export interface ServiceConfigInput {
   color?: string;
   position?: number;
   status?: boolean;
+  // resource_ids carries both kinds together — a service's practitioner and
+  // room assignments live in the same ServiceResource join table, so the
+  // route combines both checkbox groups into one array before calling this
+  // (see dashboard.$connectionId.services.$serviceId.tsx's action).
   resource_ids?: number[];
+  requires_room?: boolean;
   addon_ids?: number[];
 }
 
@@ -168,6 +178,7 @@ export async function saveServiceConfig(shop: string, platform: string, data: Se
       : {}),
     position: data.position ?? 0,
     status: data.status ?? true,
+    requiresRoom: !!data.requires_room,
   };
 
   const saved = id
@@ -326,9 +337,20 @@ export async function attachServiceNames<T extends { service: { productId: strin
 
 /* ------------------------------------------------------------ Resources */
 
-export function resources(shop: string, platform: string, onlyActive = true) {
+export type ResourceKind = "practitioner" | "room";
+
+// `kind` filters to one dimension when a caller only ever meant
+// "practitioners" (the public booking page's resource picker, the
+// Add-booking dialog, the Business template's auto-assign-new-services
+// step, Overview's utilisation chart, ...) — every one of those existed
+// before rooms did and would otherwise start mixing rooms into a list that
+// used to mean "who can deliver this" (GetBooqin clinic audit's RS-01
+// finding). Omitted (the default) returns both kinds, for the Resources
+// list page and Time off's resource picker, which both deliberately show
+// everything.
+export function resources(shop: string, platform: string, onlyActive = true, kind?: ResourceKind) {
   return prisma.resource.findMany({
-    where: { shop, platform, ...(onlyActive ? { status: true } : {}) },
+    where: { shop, platform, ...(onlyActive ? { status: true } : {}), ...(kind ? { kind } : {}) },
     orderBy: [{ position: "asc" }, { name: "asc" }],
   });
 }
@@ -355,6 +377,10 @@ export async function bookableResourceCount(shop: string, resourceIds: number[])
 
 export interface ResourceInput {
   name: string;
+  // Defaults to "practitioner" — every caller that predates rooms (the
+  // onboarding wizard's first-resource step, any script) never sets this
+  // and keeps creating exactly what it always created.
+  kind?: ResourceKind;
   title?: string;
   email?: string;
   phone?: string;
@@ -372,6 +398,7 @@ export async function saveResource(shop: string, platform: string, data: Resourc
   const row = {
     shop,
     platform,
+    kind: data.kind === "room" ? "room" : "practitioner",
     name: data.name,
     title: data.title ?? "",
     email: data.email ?? "",
@@ -461,6 +488,33 @@ export async function resourcesForService(shop: string, platform: string, servic
       shop,
       platform,
       status: true,
+      // Excludes a kind: "room" row linked to this same service via the
+      // shared ServiceResource table (see roomsForService() below) — every
+      // caller of this function predates rooms and means "who can deliver
+      // this," a question a room was never a valid answer to (GetBooqin
+      // clinic audit's RS-01 finding).
+      kind: "practitioner",
+      serviceLinks: { some: { shop, serviceId } },
+    },
+    orderBy: [{ position: "asc" }, { name: "asc" }],
+  });
+}
+
+/**
+ * Rooms assigned to a service — the RS-01 half of resourcesForService()
+ * above. Reuses the exact same ServiceResource join table (it only ever
+ * meant "this resource, whatever kind, is linked to this service"); only
+ * the `kind` filter differs. Callers only ever need this when the service
+ * itself has requiresRoom on — see availability.ts's room-gate logic and
+ * Bookings.create()'s room selection.
+ */
+export async function roomsForService(shop: string, platform: string, serviceId: number): Promise<Resource[]> {
+  return prisma.resource.findMany({
+    where: {
+      shop,
+      platform,
+      status: true,
+      kind: "room",
       serviceLinks: { some: { shop, serviceId } },
     },
     orderBy: [{ position: "asc" }, { name: "asc" }],
@@ -470,21 +524,29 @@ export async function resourcesForService(shop: string, platform: string, servic
 /**
  * Active services that resolve to zero deliverable resources right now —
  * batched version of resourcesForService()'s own "empty means empty" check,
- * for the consultation-types list and Overview's warning count.
+ * for the consultation-types list and Overview's warning count. A service
+ * that requires a room but has none assigned is just as unbookable as one
+ * with no practitioner, so it's flagged the same way (GetBooqin clinic
+ * audit's RS-01 finding).
  */
 export async function unbookableServiceIds(shop: string, platform: string): Promise<Set<number>> {
-  const [services, links] = await Promise.all([
-    prisma.serviceConfig.findMany({ where: { shop, platform, status: true }, select: { id: true } }),
+  const [services, links, roomLinks] = await Promise.all([
+    prisma.serviceConfig.findMany({ where: { shop, platform, status: true }, select: { id: true, requiresRoom: true } }),
     prisma.serviceResource.findMany({
-      where: { shop, resource: { platform, status: true } },
+      where: { shop, resource: { platform, status: true, kind: "practitioner" } },
+      select: { serviceId: true },
+    }),
+    prisma.serviceResource.findMany({
+      where: { shop, resource: { platform, status: true, kind: "room" } },
       select: { serviceId: true },
     }),
   ]);
   const assigned = new Set(links.map((l) => l.serviceId));
+  const roomAssigned = new Set(roomLinks.map((l) => l.serviceId));
 
   const unbookable = new Set<number>();
   for (const s of services) {
-    if (!assigned.has(s.id)) unbookable.add(s.id);
+    if (!assigned.has(s.id) || (s.requiresRoom && !roomAssigned.has(s.id))) unbookable.add(s.id);
   }
   return unbookable;
 }
@@ -609,6 +671,15 @@ export function schedule(shop: string, resourceId: number) {
   });
 }
 
+/** Every visible resource's rows in one query, for the appointments calendar's day columns. */
+export function schedulesForResources(shop: string, resourceIds: number[]) {
+  if (!resourceIds.length) return Promise.resolve([]);
+  return prisma.schedule.findMany({
+    where: { shop, resourceId: { in: resourceIds } },
+    orderBy: [{ resourceId: "asc" }, { dayOfWeek: "asc" }, { startTime: "asc" }],
+  });
+}
+
 /**
  * Whole-business opening hours for the public page's header (Defect
  * Dossier's BQ-33 finding) — hours live per resource, not per shop, and
@@ -672,6 +743,25 @@ export function timeoff(shop: string, limit = 200) {
   return prisma.timeOff.findMany({ where: { shop }, orderBy: { startUtc: "desc" }, take: limit });
 }
 
+/**
+ * Real interval-overlap query (mirrors Bookings.occupyingBetween) across the
+ * given resources plus whole-business blocks (resourceId 0, same OR
+ * convention isBlockedByTimeOff uses) — timeoff()'s recency-capped, shop-wide
+ * list is the wrong tool for "everything blocking this specific date range",
+ * since a busy shop could have a real block sitting past its 200-row cap.
+ */
+export function timeoffBetween(shop: string, resourceIds: number[], start: Date, end: Date) {
+  return prisma.timeOff.findMany({
+    where: {
+      shop,
+      OR: [{ resourceId: { in: resourceIds } }, { resourceId: 0 }],
+      startUtc: { lt: end },
+      endUtc: { gt: start },
+    },
+    orderBy: { startUtc: "asc" },
+  });
+}
+
 export function addTimeoff(shop: string, resourceId: number, startUtc: Date, endUtc: Date, reason = "") {
   return prisma.timeOff.create({ data: { shop, resourceId, startUtc, endUtc, reason } });
 }
@@ -686,13 +776,27 @@ export async function deleteTimeoff(shop: string, id: number) {
 export interface CustomerInput {
   first_name?: string;
   last_name?: string;
-  email: string;
+  // Optional since Settings > Booking rules' "Require an email address" can
+  // be turned off (GetBooqin clinic audit's PB-03 finding: a walk-in
+  // patient with no email address couldn't book online at all before
+  // this). Customer.email stays a required, unique-per-shop column with no
+  // schema change — see the placeholder synthesis below.
+  email?: string;
   phone?: string;
   timezone?: string;
 }
 
 export async function findOrCreateCustomer(shop: string, platform: string, data: CustomerInput) {
-  const email = data.email.toLowerCase().trim();
+  const rawEmail = (data.email ?? "").toLowerCase().trim();
+  // No real email given: synthesize a deterministic placeholder keyed to
+  // the phone number, so repeat bookings from the same number still
+  // resolve to one customer record instead of a fresh duplicate every
+  // time. bookingsShared.ts's isRealEmail() is what keeps mailer.ts from
+  // ever sending to one of these. Falls back to a random placeholder only
+  // when there's no phone either — Bookings.create() itself already
+  // refuses to reach here with neither on record.
+  const phoneDigits = (data.phone ?? "").replace(/\D/g, "");
+  const email = rawEmail || (phoneDigits ? `phone-${phoneDigits}@getbooqin.invalid` : `no-contact-${randomUUID()}@getbooqin.invalid`);
   const existing = await prisma.customer.findUnique({ where: { platform_shop_email: { platform, shop, email } } });
 
   const row = {
@@ -723,11 +827,22 @@ export function customer(shop: string, id: number) {
   return prisma.customer.findFirst({ where: { shop, id } });
 }
 
+// eraseCustomerData()'s own pseudonymization marker — "Deleted"/"client" is
+// never a real name a customer types (unlike a placeholder *.invalid
+// email, which a legitimately contactless-but-real customer can also have
+// via findOrCreateCustomer, so filtering on the email domain alone would
+// hide real customers too). Excluded from both list functions below by
+// default: a tombstone stayed listed, counted toward "N total", and kept
+// offering its own "Delete this client's data" button that did nothing
+// further (GetBooqin clinic audit's PT-01 finding).
+const NOT_ERASED = { NOT: { firstName: "Deleted", lastName: "client" } } as const;
+
 export function customersCount(shop: string, platform: string, search = "") {
   return prisma.customer.count({
     where: {
       shop,
       platform,
+      ...NOT_ERASED,
       ...(search
         ? {
             OR: [
@@ -747,6 +862,7 @@ export function customers(shop: string, platform: string, search = "", limit = 1
     where: {
       shop,
       platform,
+      ...NOT_ERASED,
       ...(search
         ? {
             OR: [
@@ -779,19 +895,90 @@ export function updateCustomerNotes(shop: string, id: number, notes: string) {
 }
 
 /**
- * The GDPR-relevant piece of BQ-31: a client can ask to have their data
- * erased. Booking.customerId is a required, non-cascading foreign key, and
- * a business has a legitimate reason to keep its own booking/revenue
- * history — so this anonymizes the Customer row in place rather than
- * hard-deleting it, leaving historical bookings resolvable ("Deleted
- * client") instead of orphaned or blocked by a FK violation. The erased
- * email still has to be unique per the platform_shop_email constraint.
+ * Lets the Danger zone dialog describe eraseCustomerData()'s actual outcome
+ * (hard delete vs. pseudonymize) *before* the destructive action runs,
+ * rather than promising "permanently erased" unconditionally and only
+ * being honest about it after the fact (GetBooqin clinic audit's PT-01
+ * finding).
  */
-export async function eraseCustomerData(shop: string, id: number) {
+export function customerHasHistory(shop: string, id: number): Promise<boolean> {
+  return Promise.all([
+    prisma.booking.count({ where: { shop, customerId: id } }),
+    prisma.waitlist.count({ where: { shop, customerId: id } }),
+  ]).then(([bookingCount, waitlistCount]) => bookingCount > 0 || waitlistCount > 0);
+}
+
+/**
+ * Lets a receptionist fix a mistyped contact detail without erasing and
+ * re-creating the record (which, per eraseCustomerData() above, would
+ * leave a tombstone behind for anyone with real booking history) — contact
+ * fields were read-only from the moment a customer record was first
+ * created (GetBooqin clinic audit's PT-02 finding). Email re-validates
+ * uniqueness the same way findOrCreateCustomer's own upsert does; the
+ * caller surfaces a Prisma unique-constraint failure as a normal form
+ * error rather than a 500.
+ */
+export interface CustomerUpdateInput {
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  date_of_birth: string | null;
+  medical_alert: string;
+}
+
+export async function updateCustomer(shop: string, id: number, data: CustomerUpdateInput) {
+  return prisma.customer.updateMany({
+    where: { shop, id },
+    data: {
+      firstName: data.first_name,
+      lastName: data.last_name,
+      email: data.email.toLowerCase().trim(),
+      phone: data.phone,
+      dateOfBirth: data.date_of_birth,
+      medicalAlert: data.medical_alert,
+    },
+  });
+}
+
+/**
+ * The GDPR-relevant piece of BQ-31: a client can ask to have their data
+ * erased. Booking.customerId and Waitlist.customerId are required,
+ * non-cascading foreign keys, so a customer with real history can't be
+ * hard-deleted without either orphaning those rows or hitting a FK
+ * violation — for that case this still anonymizes the Customer row in
+ * place, leaving historical bookings resolvable ("Deleted client") instead
+ * of broken.
+ *
+ * But a customer with *no* booking or waitlist history at all has nothing
+ * to keep resolvable, and the confirmation dialog above this promises
+ * "permanently erased... this can't be undone" regardless — pseudonymizing
+ * that case unconditionally left a tombstone (a "Deleted client" row still
+ * counted in the client total, still listed, still offering its own
+ * "Delete this client's data" button that did nothing further) that no
+ * control anywhere could actually remove, for a record that might exist
+ * purely because someone was added by mistake (GetBooqin clinic audit's
+ * PT-01 finding). Checked and hard-deleted here instead whenever it's
+ * genuinely safe to.
+ */
+export async function eraseCustomerData(shop: string, id: number): Promise<{ hardDeleted: boolean }> {
+  const [bookingCount, waitlistCount] = await Promise.all([
+    prisma.booking.count({ where: { shop, customerId: id } }),
+    prisma.waitlist.count({ where: { shop, customerId: id } }),
+  ]);
+
+  if (bookingCount === 0 && waitlistCount === 0) {
+    await prisma.customer.deleteMany({ where: { shop, id } });
+    return { hardDeleted: true };
+  }
+
+  // The erased email still has to be unique per the platform_shop_email
+  // constraint.
   await prisma.customer.updateMany({
     where: { shop, id },
     data: { firstName: "Deleted", lastName: "client", email: `erased-${id}@getbooqin.invalid`, phone: "", notes: "" },
   });
+  return { hardDeleted: false };
 }
 
 /* -------------------------------------------------------------------- FAQs */

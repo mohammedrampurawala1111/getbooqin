@@ -1,0 +1,53 @@
+{
+    "data": [
+        {
+            "name": "appointment_confirmation_1",
+            "parameter_format": "POSITIONAL",
+            "components": [
+                {
+                    "type": "HEADER",
+                    "format": "TEXT",
+                    "text": "Your appointment is booked"
+                },
+                {
+                    "type": "BODY",
+                    "text": "Hello {{1}},\n\nThank you for booking with {{2}}.\n\nYour appointment for {{3}} on {{4}} at {{5}} is confirmed.\n",
+                    "example": {
+                        "body_text": [
+                            [
+                                "John",
+                                "Fashion Styles",
+                                "Men's haircut",
+                                "December 31, 2025",
+                                "1:00 PM"
+                            ]
+                        ]
+                    }
+                },
+                {
+                    "type": "BUTTONS",
+                    "buttons": [
+                        {
+                            "type": "URL",
+                            "text": "View details",
+                            "url": "https://www.example.com/"
+                        }
+                    ]
+                }
+            ],
+            "language": "en_US",
+            "status": "PENDING",
+            "category": "UTILITY",
+            "disable_ios_autofill": false,
+            "is_primary_device_delivery_only": false,
+            "library_template_name": "appointment_confirmation_1",
+            "id": "1025079663912557"
+        }
+    ],
+    "paging": {
+        "cursors": {
+            "before": "QVFIVER1N0hPT1llTFpYX0ZAJYkZAnUmo1LUFzVFE0SmF5TnN5dVpnN0hweEJWV0VCVERjY2JzZAjRUNkVLMVZAMSFI0SEZArM3VNd2laYjIwNTZALSHQ2MGE1bnVB",
+            "after": "QVFIVER1N0hPT1llTFpYX0ZAJYkZAnUmo1LUFzVFE0SmF5TnN5dVpnN0hweEJWV0VCVERjY2JzZAjRUNkVLMVZAMSFI0SEZArM3VNd2laYjIwNTZALSHQ2MGE1bnVB"
+        }
+    }
+}

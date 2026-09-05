@@ -24,6 +24,15 @@ function initials(name: string): string {
     .join("");
 }
 
+// Practitioner/Room — the audit's own literal finding was that this
+// section's nav label ("Practitioners & rooms") promised a resource type
+// the product never actually had (GetBooqin clinic audit's RS-01 finding).
+// Reuses Badge's neutral/ok status coloring rather than adding a new one —
+// this is a category, not a state.
+function KindBadge({ kind }: { kind: string }) {
+  return kind === "room" ? <Badge status="confirmed" label="Room" /> : <Badge status="not_required" label="Practitioner" />;
+}
+
 export default function ResourcesList({ loaderData, params }: Route.ComponentProps) {
   const { resources } = loaderData;
   const base = `/dashboard/${params.connectionId}`;
@@ -34,15 +43,20 @@ export default function ResourcesList({ loaderData, params }: Route.ComponentPro
       <PageHeader
         title={v.resources}
         actions={
-          <a href={`${base}/resources/new`} className="btn-pri">
-            Add
-          </a>
+          <>
+            <a href={`${base}/resources/new`} className="btn-sec no-underline hover:no-underline">
+              + Add {v.resourceOne}
+            </a>
+            <a href={`${base}/resources/new?kind=room`} className="btn-pri no-underline hover:no-underline">
+              + Add room
+            </a>
+          </>
         }
       />
 
       <DataTable
-        cols="1.3fr 1.4fr .9fr .7fr 28px"
-        columns={["Name", "Title", "Email", "Status", ""]}
+        cols="1.1fr .85fr 1.05fr 1.1fr .7fr 28px"
+        columns={["Name", "Type", "Title", "Email", "Status", ""]}
         rows={resources}
         rowKey={(r) => String(r.id)}
         href={(r) => `${base}/resources/${r.id}`}
@@ -53,6 +67,7 @@ export default function ResourcesList({ loaderData, params }: Route.ComponentPro
             </span>
             <span className="min-w-0 truncate font-medium">{r.name}</span>
           </span>,
+          <KindBadge kind={r.kind} />,
           r.title,
           r.email,
           <Badge status={r.status ? "confirmed" : "cancelled"} label={r.status ? "Active" : "Inactive"} />,
@@ -73,7 +88,10 @@ export default function ResourcesList({ loaderData, params }: Route.ComponentPro
                 </span>
                 <span className="min-w-0 truncate font-medium">{r.name}</span>
               </span>
-              <Badge status={r.status ? "confirmed" : "cancelled"} label={r.status ? "Active" : "Inactive"} />
+              <div className="flex shrink-0 items-center gap-2">
+                <KindBadge kind={r.kind} />
+                <Badge status={r.status ? "confirmed" : "cancelled"} label={r.status ? "Active" : "Inactive"} />
+              </div>
             </div>
             {(r.title || r.email) && (
               <div className="flex min-w-0 items-center justify-between gap-3 text-muted">
@@ -95,7 +113,7 @@ export default function ResourcesList({ loaderData, params }: Route.ComponentPro
             body={`Add ${v.resources.toLowerCase()} to start scheduling ${v.bookingMany}.`}
             action={
               <a href={`${base}/resources/new`} className="btn-pri no-underline hover:no-underline">
-                + Add
+                + Add {v.resourceOne}
               </a>
             }
           />
