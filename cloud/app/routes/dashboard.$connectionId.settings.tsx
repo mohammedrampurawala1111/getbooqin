@@ -161,6 +161,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       currentPeriodEnd: entitlements.currentPeriodEnd ? entitlements.currentPeriodEnd.toISOString() : null,
       cancelAtPeriodEnd: entitlements.cancelAtPeriodEnd,
       currency: billingCurrency,
+      sellable: Checkout.sellablePrices(billingCurrency),
       billingCycle: entitlements.billingCycle,
       inGrace: entitlements.inGrace,
       features: [...entitlements.features],

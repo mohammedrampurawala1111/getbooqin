@@ -1,17 +1,18 @@
 /**
  * Settings → Billing.
  *
- * **Read-only in Phase 2a, deliberately.** The plan, the trial counter,
- * what's included and what's being used are all real and all enforced
- * server-side today; what doesn't exist yet is a way to pay. An "Upgrade"
- * button that 404s is worse than a plan you can see but not yet change,
- * so this states the position plainly instead.
+ * Neither Razorpay nor PayPal offers a hosted customer portal the way
+ * Stripe does, so plan comparison, upgrade, cancel and (later) payment
+ * history are all real UI here rather than a link out.
  *
- * Neither PayPal nor Razorpay offers a hosted customer portal the way
- * Stripe does, so when 2c lands, the upgrade/downgrade/cancel controls
- * and a payment-history table all get built into this same screen. It is
- * shaped for that now — the plan comparison and the usage meters are the
- * halves that don't change.
+ * **`sellable` is not the same question as "does this price exist".**
+ * plans.ts carries a price for every tier in all three currencies, but a
+ * price can only be charged if a matching plan exists at the provider
+ * for the current mode. The server answers that (Checkout.sellablePrices)
+ * and this renders from the answer. Conflating the two shipped an
+ * Upgrade button whose only possible outcome was "We couldn't start that
+ * subscription" — the refusal server-side was right; offering the button
+ * was the bug.
  */
 import { useState } from "react";
 import { Form, useNavigation } from "react-router";
@@ -35,6 +36,8 @@ export interface BillingView {
   /** null means unlimited — Infinity doesn't survive JSON. */
   limits: Record<string, number | null>;
   usage: Record<string, number>;
+  /** "{plan}:{cycle}" -> can it actually be charged in this currency right now. */
+  sellable: Record<string, boolean>;
   overrides: { key: string; value: string; reason: string; expiresAt: string | null }[];
 }
 
@@ -209,6 +212,12 @@ export function BillingPage({ billing, error }: { billing: BillingView; error?: 
             </p>
           </div>
         </div>
+        {!PLAN_ORDER.some((id) => billing.sellable[`${id}:${cycle}`]) && (
+          <p className="m-0 mx-[18px] mt-[14px] rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+            We can't take payment in {billing.currency} yet, so there's nothing to upgrade to from here. Your plan
+            and limits below are still live. Get in touch and we'll sort it out directly.
+          </p>
+        )}
         <div className="flex items-center gap-2 px-[18px] pt-[14px]">
           {(["monthly", "yearly"] as const).map((option) => (
             <button
@@ -229,7 +238,11 @@ export function BillingPage({ billing, error }: { billing: BillingView; error?: 
             const isCurrent = id === billing.plan && billing.billingCycle === cycle;
             // A plan with no id at the provider for this mode can't be
             // sold — providerPlanId() would refuse, so don't offer it.
-            const purchasable = !!chosen?.razorpay && !isCurrent && id !== "free";
+            // Not "does a price exist" — does a plan exist at the
+            // provider that can actually charge it. Those are different
+            // questions and conflating them is what produced an Upgrade
+            // button whose only possible outcome was an error.
+            const purchasable = !!billing.sellable[`${id}:${cycle}`] && !isCurrent && id !== "free";
             const isUpgrade = planRank(id) > planRank(billing.plan);
             return (
               <div

@@ -16,7 +16,7 @@
 import prisma from "../db.js";
 import { GetBooqinError } from "../booking/errors.js";
 import { entitlementsFor } from "./entitlements.js";
-import { createSubscription, cancelSubscription } from "./providers/razorpay.js";
+import { createSubscription, cancelSubscription, providerPlanId } from "./providers/razorpay.js";
 import { ensureSubscription } from "./subscriptions.js";
 import { getSettings } from "../booking/settings.js";
 import {
@@ -195,4 +195,25 @@ export async function cancelAtPeriodEnd(connectionId: string): Promise<void> {
     throw new GetBooqinError("getbooqin_no_subscription", "There's no active subscription to cancel.", 400);
   }
   await cancelSubscription(row.providerSubscriptionId, { immediately: false });
+}
+
+/**
+ * Which (plan, cycle) pairs can actually be sold in this currency right
+ * now — i.e. have a plan id at the provider for the current mode.
+ *
+ * The Billing screen renders from this rather than from the price table,
+ * because a price existing in plans.ts says nothing about whether
+ * anyone can be charged it. Without this the page offered an Upgrade
+ * button for a currency with no plans behind it, and the only feedback
+ * was a generic "we couldn't start that subscription" after the click.
+ * Refusing server-side was correct; offering the button at all was not.
+ */
+export function sellablePrices(currency: Currency): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const plan of ["starter", "growth", "business"] as const) {
+    for (const cycle of ["monthly", "yearly"] as const) {
+      out[`${plan}:${cycle}`] = providerPlanId(plan, currency, cycle) !== null;
+    }
+  }
+  return out;
 }
