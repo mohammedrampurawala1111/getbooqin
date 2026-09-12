@@ -11,7 +11,7 @@ import { getAppUrl } from "~/lib/env.server";
 import { Data, Settings, Team, createManualConnection, getUserConnection, listUserConnections, isGetBooqinError } from "getbooqin-core";
 
 // Two ways to leave this wizard with a working account: connect a real
-// Shopify store (ShopifyConnectForm below — answers ride through the OAuth
+// Shopify store (answers used to ride through the OAuth
 // state to connect.shopify.callback.tsx, since there's no Connection row to
 // attach them to until that store exists), or "Go live without Shopify"
 // (handleGoLive below), which applies everything to a manual, non-Shopify
@@ -475,45 +475,6 @@ const SHOP_DOMAIN_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
    finding) — now it never leaves this screen. `cid`, when set, is the
    manual draft Connection step 1 already created — carried through so the
    callback can delete it once a real Shopify Connection exists instead. */
-function ShopifyConnectForm({ state, cid, submitLabel }: { state: OnboardingState; cid: string; submitLabel: string }) {
-  const [shop, setShop] = useState("");
-  const [touched, setTouched] = useState(false);
-  const invalid = touched && shop.length > 0 && !SHOP_DOMAIN_RE.test(shop);
-
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    if (!SHOP_DOMAIN_RE.test(shop)) {
-      e.preventDefault();
-      setTouched(true);
-    }
-  }
-
-  return (
-    <form method="post" action="/connect/shopify" className="flex flex-col gap-3" onSubmit={handleSubmit}>
-      <input type="hidden" name="ob_preset" value={state.preset} />
-      {state.businessName && <input type="hidden" name="ob_business_name" value={state.businessName} />}
-      {state.email && <input type="hidden" name="ob_business_email" value={state.email} />}
-      {state.phone && <input type="hidden" name="ob_business_phone" value={state.phone} />}
-      {state.timezone && <input type="hidden" name="ob_timezone" value={state.timezone} />}
-      {state.resourceName && <input type="hidden" name="ob_resource_name" value={state.resourceName} />}
-      <input type="hidden" name="ob_reminders_on" value={state.remindersOn ? "on" : ""} />
-      {cid && <input type="hidden" name="ob_draft_connection_id" value={cid} />}
-      <Field label="Shopify store domain" error={invalid ? "Enter a valid *.myshopify.com domain." : undefined}>
-        <Input
-          name="shop"
-          placeholder="your-store.myshopify.com"
-          required
-          value={shop}
-          onChange={(e) => setShop(e.target.value)}
-          onBlur={() => setTouched(true)}
-        />
-      </Field>
-      <button type="submit" className="btn-pri w-full justify-center">{submitLabel}</button>
-    </form>
-  );
-}
-
-/* The non-Shopify exit: posts to this route's own action (intent=golive),
-   which finalizes the manual Connection step 1 already created. */
 function GoLiveWithoutShopifyForm({
   state, cid, submitLabel,
 }: { state: OnboardingState; cid: string; submitLabel: string }) {
@@ -672,19 +633,12 @@ function StepIntegrations({
         Connecting your store below finishes setup in one step. Everything else can wait.
       </p>
       <div className="flex flex-col gap-[10px]">
-        {INTEGRATIONS.map((integ) =>
-          integ.id === "shopify" ? (
-            <div key={integ.id} className="rounded-card border border-brand-200 bg-surface px-[18px] py-4 shadow-card">
-              <div className="mb-3 flex items-center gap-[14px]">
-                <span className="integ-logo h-[38px] w-[38px] text-[15px]" style={{ background: integ.tint }}>{integ.initial}</span>
-                <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-                  <span className="text-[14px] font-semibold tracking-[-0.01em]">{integ.name}</span>
-                  <span className="text-meta text-muted text-pretty">{integ.blurb}</span>
-                </div>
-              </div>
-              <ShopifyConnectForm state={state} cid={cid} submitLabel="Connect Shopify" />
-            </div>
-          ) : (
+        {/* Shopify is shipped dark (no plan grants it — see core's
+            plans.ts), so onboarding does not offer it. Every remaining
+            row is a genuine "coming soon", which is the honest thing for
+            a step that used to lead with a connect flow most accounts
+            cannot use. */}
+        {INTEGRATIONS.filter((integ) => integ.id !== "shopify").map((integ) => (
             <IntegrationRow
               key={integ.id}
               id={integ.id}
@@ -696,8 +650,7 @@ function StepIntegrations({
               connected={false}
               disabled
             />
-          )
-        )}
+        ))}
       </div>
       <div className="flex justify-between">
         <button type="button" className="btn-sec" onClick={onBack}>Back</button>
@@ -728,19 +681,20 @@ function StepGoLive({
           </div>
         </div>
       </div>
+      {/* Going live is now the single action. This step used to lead
+          with "Connect your store & go live", with going live on its own
+          framed as the fallback — which was already backwards for a
+          product most of whose accounts have no Shopify store, and is
+          simply broken now that Shopify is shipped dark: the primary
+          button led straight to a 402. An account that has been granted
+          Shopify connects it from Settings → Integrations. */}
       <div className="card p-[18px]">
         <h2 className="card-title mb-3">Finish setup</h2>
         <p className="mb-3 -mt-1 text-meta text-muted">
-          Connect Shopify to sync your product catalogue as {v.services.toLowerCase()}, or go live now and connect a
-          store later from Settings.
+          Your booking link is ready. Go live and share it — you can add {v.services.toLowerCase()}, hours and
+          integrations any time from Settings.
         </p>
-        <ShopifyConnectForm state={state} cid={cid} submitLabel="Connect your store & go live" />
-        <div className="my-4 flex items-center gap-3 text-meta text-muted">
-          <span className="h-px flex-1 bg-line" />
-          or
-          <span className="h-px flex-1 bg-line" />
-        </div>
-        <GoLiveWithoutShopifyForm state={state} cid={cid} submitLabel="Go live without Shopify" />
+        <GoLiveWithoutShopifyForm state={state} cid={cid} submitLabel="Go live" />
       </div>
       <div className="flex justify-start">
         <button type="button" className="btn-sec" onClick={onBack}>Back</button>

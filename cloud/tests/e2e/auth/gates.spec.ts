@@ -142,3 +142,27 @@ test.describe("a refused gate is explained, never a 500", () => {
     expect(response.status(), "a plan gate must never surface as a server error").toBe(402);
   });
 });
+
+test.describe("Shopify is shipped dark", () => {
+  // No plan grants it. An admin turns it on per account from /admin when
+  // there is a decision to release it — that is the entire point of
+  // entitlements being per-account rather than per-deploy.
+  test("no plan offers it in Settings → Integrations", async ({ page }) => {
+    await setPlan(tenant, "growth"); // the richest visible plan
+    await signInAs(page, tenant);
+    await page.goto(`/dashboard/${tenant.connectionId}/settings?page=integrations`);
+
+    await expect(page.getByText("WhatsApp Business")).toBeVisible();
+    // Hidden outright, not shown disabled: a "coming soon" tile for
+    // something already built invites questions nobody wants yet.
+    await expect(page.getByText("Shopify", { exact: true })).toHaveCount(0);
+  });
+
+  test("an admin grant makes it appear, on the same plan", async ({ page }) => {
+    await setPlan(tenant, "growth");
+    await grantFeature(tenant, "shopify");
+    await signInAs(page, tenant);
+    await page.goto(`/dashboard/${tenant.connectionId}/settings?page=integrations`);
+    await expect(page.getByText("Shopify", { exact: true }).first()).toBeVisible();
+  });
+});

@@ -104,6 +104,13 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   waitlist: "Waitlist with automatic offer cascade",
   team_roles: "Team roles (admin / write / read)",
   email_templates: "Editable email templates",
+  // Deliberately granted by **no plan**. Shopify is shipped dark until
+  // there is a decision to release it generally (the plan's gate G3 —
+  // whether an App Store listing is in scope — is still open, and the
+  // embedded admin is being collapsed to one screen in Phase 4). An
+  // admin grants this per account from /admin to let someone in early;
+  // that is the whole point of entitlements existing per-account rather
+  // than per-deploy.
   shopify: "Connect a Shopify store",
   export: "CSV export",
   priority_support: "Priority support",
@@ -167,7 +174,7 @@ export const PLANS: Record<PlanId, Plan> = {
     blurb: "A team with roles, and your own email wording.",
     visible: true,
     limits: { resources: 10, services: Infinity, teamMembers: 6, bookingsPerMonth: Infinity, businesses: 1 },
-    features: ["no_badge", "waitlist", "team_roles", "email_templates", "shopify", "export"],
+    features: ["no_badge", "waitlist", "team_roles", "email_templates", "export"],
   },
   business: {
     id: "business",
@@ -180,7 +187,7 @@ export const PLANS: Record<PlanId, Plan> = {
     },
     features: [
       "no_badge", "waitlist", "team_roles", "email_templates",
-      "shopify", "export", "priority_support", "early_access",
+      "export", "priority_support", "early_access",
     ],
   },
 };

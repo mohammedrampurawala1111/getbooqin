@@ -451,6 +451,12 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
   // finding) — are simply not settings pages any more, so isSettingsPage()
   // rejects them on its own.
   const page = isSettingsPage(rawPage) ? rawPage : "general";
+  // Shopify is shipped dark: no plan grants it, so the row is hidden
+  // outright rather than shown disabled. A "coming soon" tile for
+  // something already built, that an admin can switch on per account,
+  // would invite questions nobody wants to answer yet — and an account
+  // that *has* been granted it sees the real thing.
+  const canUseShopify = billing.features.includes("shopify") || !isManual;
   const savedAt = actionData?.saved ? "just now" : undefined;
   const base = `/dashboard/${currentConnectionId}`;
 
@@ -646,7 +652,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
       {page === "integrations" && (
         <>
           <div className="card">
-            {INTEGRATIONS.map((integ) => {
+            {INTEGRATIONS.filter((integ) => integ.id !== "shopify" || canUseShopify).map((integ) => {
               if (integ.id === "shopify") {
                 return (
                   <IntegrationRow

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import prisma from "./db.js";
 import { encryptCredentials } from "./auth/encryption.js";
-import { assertCanAddBusiness, assertFeature } from "./billing/enforcement.js";
+import { assertCanAddBusiness, userHasFeature } from "./billing/enforcement.js";
+import { GetBooqinError } from "./booking/errors.js";
 import { ensureSubscription } from "./billing/subscriptions.js";
 
 // Thrown when a shop is already linked to a *different* User — the connect
@@ -73,17 +74,23 @@ export async function connectShopifyStore({
   // their cap could never get back in.
   await assertCanAddBusiness(userId);
 
-  // Shopify is also a plan *feature*, and it is checked against the
-  // account's existing business rather than the one being created (which
-  // does not exist yet). A user with no business at all is signing up
-  // through Shopify, which every plan allows — the gate is on adding
-  // Shopify to an account that is already on a plan without it.
-  const existingBusiness = await prisma.connection.findFirst({
-    where: { userId, status: "active" },
-    select: { shop: true, platform: true },
-  });
-  if (existingBusiness) {
-    await assertFeature(existingBusiness.shop, existingBusiness.platform, "shopify");
+  // Shopify is a plan feature that **no plan currently grants** — it is
+  // shipped dark until there is a decision to release it generally, and
+  // an admin turns it on per account from /admin. So this gate applies
+  // to a brand-new user installing from the App Store as much as to an
+  // existing merchant: "I don't have an account yet" must not be a way
+  // around a feature that is off for everyone.
+  //
+  // Re-authorising a connection that already exists is handled above and
+  // deliberately ungated — locking a merchant out of data they already
+  // have, because a feature was switched off after they connected, would
+  // be punishing them for our decision.
+  if (!(await userHasFeature(userId, "shopify"))) {
+    throw new GetBooqinError(
+      "getbooqin_plan_feature",
+      "Shopify connections aren't available on your account yet. Get in touch if you'd like early access.",
+      402
+    );
   }
 
   const connection = await prisma.connection.create({

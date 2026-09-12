@@ -232,3 +232,28 @@ export async function usageSnapshot(
   ]);
   return { resources, services, teamMembers, bookingsPerMonth, businesses };
 }
+
+/**
+ * Whether a *person* has a feature, across every business they own.
+ *
+ * Needed for the one gate that fires before a business exists:
+ * connecting Shopify from the App Store, where there is no (shop,
+ * platform) to resolve entitlements against yet.
+ *
+ * Unlike `entitlementsForShop`, this **falls closed** for a user with no
+ * businesses at all. That inversion is deliberate and specific to this
+ * case: "no account yet" must not be a way around a feature that is
+ * switched off for everyone, and the alternative — letting a brand-new
+ * Shopify install through while every existing merchant is blocked — is
+ * exactly backwards.
+ */
+export async function userHasFeature(userId: string, feature: FeatureKey): Promise<boolean> {
+  const connections = await prisma.connection.findMany({
+    where: { userId, status: "active" },
+    select: { id: true },
+  });
+  if (connections.length === 0) return false;
+
+  const all = await Promise.all(connections.map((c) => entitlementsFor(c.id)));
+  return all.some((e) => e.features.has(feature));
+}
