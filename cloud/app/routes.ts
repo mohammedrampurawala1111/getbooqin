@@ -43,6 +43,17 @@ export default [
     // this keeps the intent obvious.
     route("*", "routes/dashboard.$connectionId.$.tsx"),
   ]),
+  // Platform admin console (§W8) — deliberately outside the tenant
+  // layout and the tenant middleware: it has no connectionId, is not
+  // scoped to a business, and must inherit none of requireTenant's
+  // assumptions. Its guard 404s (never 403s) for everyone else. Keep in
+  // sync with server/combined.js's CLOUD_PREFIXES.
+  route("admin", "routes/admin.tsx", [
+    index("routes/admin._index.tsx"),
+    route("accounts/:id", "routes/admin.accounts.$id.tsx"),
+    route("features", "routes/admin.features.tsx"),
+    route("audit", "routes/admin.audit.tsx"),
+  ]),
   route("connect/shopify", "routes/connect.shopify.tsx"),
   route("connect/shopify/callback", "routes/connect.shopify.callback.tsx"),
   // Public, unauthenticated — the customer-facing booking page a merchant

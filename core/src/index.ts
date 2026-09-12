@@ -49,6 +49,13 @@ export * as Subscriptions from "./billing/subscriptions.js";
 export * as Billing from "./billing/enforcement.js";
 export * as BillingWebhooks from "./billing/webhooks.js";
 export * as Checkout from "./billing/checkout.js";
+
+// Platform admin console (§W8) — internal-only, above all accounts.
+// Never renders tenant booking data; see admin/accounts.ts.
+export * as AdminAccounts from "./admin/accounts.js";
+export * as AdminActions from "./admin/actions.js";
+export * as AdminAudit from "./admin/audit.js";
+export * as AdminAccess from "./admin/access.js";
 export { RazorpayProvider, providerPlanId } from "./billing/providers/razorpay.js";
 export type { BillingProvider, NormalisedEvent, BillingEventType } from "./billing/providers/provider.js";
 export * as ShopifyAdmin from "./platforms/shopifyAdmin.js";

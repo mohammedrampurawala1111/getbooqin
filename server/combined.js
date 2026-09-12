@@ -60,6 +60,9 @@ const CLOUD_PREFIXES = [
   // Team invite accept screen — cloud/app/routes/invite.$token.tsx. Keep in
   // sync with cloud/app/routes.ts.
   "/invite",
+  // Platform admin console (cloud/app/routes/admin.tsx). Its own guard
+  // 404s for anyone who isn't a platform admin.
+  "/admin",
   "/webhooks/clerk",
   // Razorpay subscription events (cloud/app/routes/webhooks.razorpay.tsx).
   // Listed individually rather than as "/webhooks" because

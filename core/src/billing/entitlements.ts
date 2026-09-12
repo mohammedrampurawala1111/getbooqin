@@ -100,7 +100,13 @@ function daysRemaining(from: Date, to: Date): number {
  * having written to the database.
  */
 function effectivePlan(
-  row: { plan: string; status: string; trialEndsAt: Date | null; currentPeriodEnd: Date | null },
+  row: {
+    plan: string;
+    status: string;
+    trialEndsAt: Date | null;
+    currentPeriodEnd: Date | null;
+    billingProvider: string;
+  },
   now: Date
 ): { plan: PlanId; status: SubscriptionStatus; inGrace: boolean } {
   const declared = planOrDefault(row.plan).id;
@@ -135,7 +141,26 @@ function effectivePlan(
     return { plan: "free", status: "free", inGrace: false };
   }
 
-  if (row.status === "active") return { plan: declared, status: "active", inGrace: false };
+  if (row.status === "active") {
+    // `currentPeriodEnd` means two different things depending on who put
+    // the account on this plan, and conflating them is a real bug.
+    //
+    // On a provider-backed subscription it is *informational* — the date
+    // the current paid period runs to. A past one only means the renewal
+    // webhook hasn't arrived yet (a delayed delivery, a retry), and
+    // dropping someone to Free over that would cut off a paying customer
+    // for a timing artefact.
+    //
+    // On a **manual** grant there is no webhook coming and nothing else
+    // will ever end it. "Growth, free, until 31 Dec" has to actually
+    // stop on 31 Dec, or every time-boxed comp is permanent — which is
+    // precisely the "why is this account free?" problem the audit log
+    // exists to prevent.
+    if (row.billingProvider === "manual" && row.currentPeriodEnd && row.currentPeriodEnd.getTime() <= now.getTime()) {
+      return { plan: "free", status: "free", inGrace: false };
+    }
+    return { plan: declared, status: "active", inGrace: false };
+  }
 
   return { plan: "free", status: "free", inGrace: false };
 }

@@ -282,3 +282,56 @@ describe("checkLimit()", () => {
     expect(checkLimit(growth, "bookingsPerMonth", 10_000).over).toBe(false);
   });
 });
+
+describe("manual comps vs provider subscriptions", () => {
+  it("a time-boxed manual comp stops on its own date", async () => {
+    // "Growth, free, until 31 Dec" has to actually end, or every
+    // time-boxed comp is permanent and nobody can explain six months
+    // later why an account is free.
+    const id = await connection("comp-expired");
+    await prisma.subscription.create({
+      data: {
+        connectionId: id, plan: "growth", status: "active",
+        billingProvider: "manual", currentPeriodEnd: new Date(Date.now() - DAY),
+      },
+    });
+    expect((await entitlementsFor(id)).plan).toBe("free");
+  });
+
+  it("a manual comp still inside its window is honoured", async () => {
+    const id = await connection("comp-live");
+    await prisma.subscription.create({
+      data: {
+        connectionId: id, plan: "growth", status: "active",
+        billingProvider: "manual", currentPeriodEnd: new Date(Date.now() + 10 * DAY),
+      },
+    });
+    expect((await entitlementsFor(id)).plan).toBe("growth");
+  });
+
+  it("an open-ended manual comp never expires", async () => {
+    const id = await connection("comp-forever");
+    await prisma.subscription.create({
+      data: { connectionId: id, plan: "growth", status: "active", billingProvider: "manual", currentPeriodEnd: null },
+    });
+    expect((await entitlementsFor(id)).plan).toBe("growth");
+  });
+
+  it("a PAID subscription is NOT cut off by a stale period end", async () => {
+    // The other half of the same distinction: on a provider-backed
+    // subscription a past currentPeriodEnd only means the renewal
+    // webhook hasn't landed yet. Dropping a paying customer to Free over
+    // a delayed delivery would be far worse than waiting.
+    const id = await connection("paid-stale-period");
+    await prisma.subscription.create({
+      data: {
+        connectionId: id, plan: "growth", status: "active",
+        billingProvider: "razorpay", providerSubscriptionId: `sub_stale_${RUN}`,
+        currentPeriodEnd: new Date(Date.now() - 3 * DAY),
+      },
+    });
+    const ent = await entitlementsFor(id);
+    expect(ent.plan).toBe("growth");
+    expect(ent.status).toBe("active");
+  });
+});
