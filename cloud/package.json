@@ -10,7 +10,8 @@
     "start": "react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc --noEmit",
     "test:a11y": "playwright test -c playwright.config.ts",
-    "test:e2e": "playwright test -c playwright.e2e.config.ts"
+    "test:e2e": "playwright test -c playwright.e2e.config.ts",
+    "test:e2e:auth": "playwright test -c playwright.auth.config.ts"
   },
   "dependencies": {
     "@clerk/react-router": "^3.6.17",
@@ -24,6 +25,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.10.1",
+    "@clerk/testing": "^2.2.34",
     "@playwright/test": "^1.48.0",
     "@react-router/dev": "^7.1.1",
     "@react-router/serve": "^7.1.1",
