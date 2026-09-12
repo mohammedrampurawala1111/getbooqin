@@ -240,12 +240,12 @@ export const PRICES: Record<PaidPlanId, Record<Currency, Record<BillingCycle, Pr
       yearly: { amount: 399_000, razorpay: { test: "plan_TbDcfyTcaaGoaG", live: "plan_TbDRyOPpAbW8PW" } },
     },
     USD: {
-      monthly: { amount: 500, razorpay: { test: "", live: "" } },
-      yearly: { amount: 5_000, razorpay: { test: "", live: "" } },
+      monthly: { amount: 500, razorpay: { test: "plan_TbEJl53SjngQhB", live: "" } },
+      yearly: { amount: 5_000, razorpay: { test: "plan_TbEJlXlTVjNx2o", live: "" } },
     },
     EUR: {
-      monthly: { amount: 500, razorpay: { test: "", live: "" } },
-      yearly: { amount: 5_000, razorpay: { test: "", live: "" } },
+      monthly: { amount: 500, razorpay: { test: "plan_TbEJildXewGMHz", live: "" } },
+      yearly: { amount: 5_000, razorpay: { test: "plan_TbEJjamIDOP9q3", live: "" } },
     },
   },
   growth: {
@@ -262,12 +262,12 @@ export const PRICES: Record<PaidPlanId, Record<Currency, Record<BillingCycle, Pr
       yearly: { amount: 799_000, razorpay: { test: "plan_TbDdFi79xihffD", live: "" } },
     },
     USD: {
-      monthly: { amount: 1_000, razorpay: { test: "", live: "" } },
-      yearly: { amount: 10_000, razorpay: { test: "", live: "" } },
+      monthly: { amount: 1_000, razorpay: { test: "plan_TbEJm05s3QoX7Z", live: "" } },
+      yearly: { amount: 10_000, razorpay: { test: "plan_TbEJmSjhRMH2yJ", live: "" } },
     },
     EUR: {
-      monthly: { amount: 1_000, razorpay: { test: "", live: "" } },
-      yearly: { amount: 10_000, razorpay: { test: "", live: "" } },
+      monthly: { amount: 1_000, razorpay: { test: "plan_TbEJk5hXqnTEYh", live: "" } },
+      yearly: { amount: 10_000, razorpay: { test: "plan_TbEJkbTWSa1VNN", live: "" } },
     },
   },
   business: {

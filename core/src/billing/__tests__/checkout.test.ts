@@ -129,13 +129,24 @@ describe("startCheckout() refusals", () => {
 });
 
 describe("plan ids", () => {
-  it("every INR price the checkout can sell has a test id configured", () => {
-    // These are the four created in Razorpay test mode and verified
-    // against their API. A missing one means checkout refuses that
-    // price, which is safe but invisible until someone tries to buy it.
+  it("every visible price has a test id in all three currencies", () => {
+    // All twelve were created in Razorpay test mode and read back
+    // against their API before being committed. A missing one means
+    // checkout refuses that price — safe, but invisible until someone
+    // tries to buy it, which is how the first two attempts failed.
     for (const plan of ["starter", "growth"] as const) {
+      for (const currency of ["INR", "USD", "EUR"] as const) {
+        for (const cycle of ["monthly", "yearly"] as const) {
+          expect(PRICES[plan][currency][cycle].razorpay.test, `${plan}/${currency}/${cycle}`).toMatch(/^plan_/);
+        }
+      }
+    }
+  });
+
+  it("the hidden business tier has no ids — it is not for sale yet", () => {
+    for (const currency of ["INR", "USD", "EUR"] as const) {
       for (const cycle of ["monthly", "yearly"] as const) {
-        expect(PRICES[plan].INR[cycle].razorpay.test, `${plan}/${cycle}`).toMatch(/^plan_/);
+        expect(PRICES.business[currency][cycle].razorpay.test, `${currency}/${cycle}`).toBe("");
       }
     }
   });
