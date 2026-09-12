@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { Form, redirect, useNavigate, useNavigation, useSearchParams } from "react-router";
 import { useClerk, useReverification, useSession, useUser } from "@clerk/react-router";
 import { isClerkAPIResponseError, isReverificationCancelledError } from "@clerk/react-router/errors";
 import type { Route } from "./+types/dashboard.$connectionId.account";
-import { prisma, Settings } from "getbooqin-core";
+import { prisma, Settings, AccountDeletion, isGetBooqinError } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Badge, Field, Input, Toggle } from "~/components/ui";
 import { AuthMethodRow, GoogleGlyph, PasswordField, SessionRow } from "~/components/account";
@@ -40,10 +40,50 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   return {
     phone: dbUser?.phone ?? "",
     vocabulary: { terms: settings.terms, href: `/dashboard/${connection.id}/settings?page=general#vocabulary` },
+    // Exactly what deleting this account destroys, counted. A
+    // confirmation that says "1,240 bookings and 380 customers" is a
+    // different decision from one that says "some data".
+    deletion: await AccountDeletion.preview(connection.id),
   };
 }
 
-export default function Account({ loaderData, params }: Route.ComponentProps) {
+/**
+ * Account deletion — the right-to-erasure flow (B5).
+ *
+ * Irreversible, and confirmed by typing the business name rather than
+ * clicking a red button. The two-step is not friction for its own sake:
+ * this destroys a merchant's customer records as well as their own data,
+ * and a misclick has no undo.
+ */
+export async function action({ request, params }: Route.ActionArgs) {
+  const { userId, connection } = await requireTenant(request, params.connectionId, "admin");
+  const form = await request.formData();
+  if (String(form.get("_intent") ?? "") !== "delete_account") return { error: "Unknown action." };
+
+  // Only the owner may do this. An admin teammate can configure a
+  // business; erasing it is a different thing entirely.
+  if (connection.userId !== userId) {
+    return { error: "Only the account owner can delete this account." };
+  }
+
+  const target = await AccountDeletion.preview(connection.id);
+  const typed = String(form.get("confirm") ?? "").trim();
+  if (!target || typed !== target.businessName) {
+    return { error: "That didn't match the business name — nothing has been deleted." };
+  }
+
+  try {
+    await AccountDeletion.deleteUserAccount(userId);
+  } catch (err) {
+    if (isGetBooqinError(err)) return { error: err.message };
+    throw err;
+  }
+
+  // Everything is gone, including the session's own user row.
+  throw redirect("/logout");
+}
+
+export default function Account({ loaderData, actionData, params }: Route.ComponentProps) {
   const [searchParams] = useSearchParams();
   const tab = searchParams.get("tab") === "security" ? "security" : "profile";
   const base = `/dashboard/${params.connectionId}`;
@@ -53,7 +93,10 @@ export default function Account({ loaderData, params }: Route.ComponentProps) {
       {tab === "profile" ? (
         <ProfileTab phone={loaderData.phone} vocabulary={loaderData.vocabulary} />
       ) : (
-        <SecurityTab />
+        <>
+          <SecurityTab />
+          <DangerZone deletion={loaderData.deletion} error={actionData?.error} />
+        </>
       )}
     </SettingsShell>
   );
@@ -632,6 +675,78 @@ function SessionsCard({
           {signingOutAll ? "Signing out…" : "Sign out everywhere"}
         </button>
       </div>
+    </div>
+  );
+}
+
+/* ==================================================================
+   Danger zone — deleting the account for good.
+   ================================================================== */
+type DeletionPreview = NonNullable<Awaited<ReturnType<typeof AccountDeletion.preview>>>;
+
+function DangerZone({ deletion, error }: { deletion: DeletionPreview | null; error?: string }) {
+  const navigation = useNavigation();
+  const busy = navigation.state !== "idle";
+  if (!deletion) return null;
+
+  // Counted, not adjectival. "1,240 bookings and 380 customers" is a
+  // different decision from "your data".
+  const counts = [
+    [deletion.bookings, "booking"],
+    [deletion.customers, "customer record"],
+    [deletion.services, "service"],
+    [deletion.resources, "staff member or room"],
+  ] as const;
+
+  return (
+    <div className="card mt-[14px] border-danger-line">
+      <div className="card-header">
+        <div className="flex flex-col gap-[3px]">
+          <h2 className="card-title text-danger">Delete your account</h2>
+          <p className="m-0 text-meta text-muted">
+            Permanent. There is no undo and we keep no copy for you to restore.
+          </p>
+        </div>
+      </div>
+      <Form method="post" className="card-body flex flex-col gap-3">
+        <input type="hidden" name="_intent" value="delete_account" />
+
+        {error && (
+          <p className="m-0 rounded-[8px] bg-danger-bg px-3 py-2 text-[12.5px] font-medium text-danger">{error}</p>
+        )}
+
+        <div className="text-[13px]">
+          <p className="m-0 mb-1">This will permanently delete <strong>{deletion.businessName}</strong>, including:</p>
+          <ul className="m-0 flex list-disc flex-col gap-[2px] pl-5 text-muted">
+            {counts.map(([n, noun]) => (
+              <li key={noun}>
+                <span className="num">{n}</span> {noun}{n === 1 ? "" : "s"}
+              </li>
+            ))}
+          </ul>
+          {deletion.liveSubscription && (
+            <p className="m-0 mt-2 rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+              Your {deletion.liveSubscription.plan} subscription will be cancelled first, so you won't be charged
+              again. If we can't cancel it, nothing is deleted.
+            </p>
+          )}
+          <p className="m-0 mt-2 text-[12px] text-subtle">
+            Records of payments we've already taken are kept for tax and dispute purposes, and no longer identify
+            you. See our <a href="/legal/terms">terms</a>.
+          </p>
+        </div>
+
+        {/* Type the name, don't just click. This destroys a merchant's
+            customers' records as well as their own. */}
+        <label className="flex flex-col gap-1 text-[12px] text-muted">
+          Type <strong className="text-ink">{deletion.businessName}</strong> to confirm
+          <input name="confirm" required autoComplete="off" className="input w-full max-w-[360px]" />
+        </label>
+
+        <button type="submit" disabled={busy} className="btn-del w-fit">
+          {busy ? "Deleting…" : "Delete my account permanently"}
+        </button>
+      </Form>
     </div>
   );
 }

@@ -56,6 +56,11 @@ export * as AdminAccounts from "./admin/accounts.js";
 export * as AdminActions from "./admin/actions.js";
 export * as AdminAudit from "./admin/audit.js";
 export * as AdminAccess from "./admin/access.js";
+
+// Account and business deletion (right to erasure, B5). Irreversible by
+// design — see account/deletion.ts on why a soft delete would not be
+// erasure at all.
+export * as AccountDeletion from "./account/deletion.js";
 export { RazorpayProvider, providerPlanId } from "./billing/providers/razorpay.js";
 export type { BillingProvider, NormalisedEvent, BillingEventType } from "./billing/providers/provider.js";
 export * as ShopifyAdmin from "./platforms/shopifyAdmin.js";
