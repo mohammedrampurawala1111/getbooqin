@@ -340,6 +340,42 @@ export function providerForCountry(country: string | null | undefined): Exclude<
   return providerForCurrency(currencyForCountry(country));
 }
 
+/**
+ * The currency an account should be billed in, worked out from what the
+ * shop already tells us about itself.
+ *
+ * There is no country field anywhere in the product — asking for one at
+ * signup to serve a billing screen nobody has reached yet would be the
+ * wrong trade. These two signals are already collected on Settings →
+ * General for real reasons, and between them they're right far more
+ * often than a default is:
+ *
+ * 1. **The business's own currency.** A merchant pricing their services
+ *    in ₹ is in India. This is the strongest signal we have, and it is
+ *    wrong only for the rare business that prices in a currency it
+ *    doesn't live in.
+ * 2. **Timezone**, when the currency isn't one we can bill in — a UK
+ *    salon prices in GBP, which is not a billing currency here, but
+ *    Europe/London is still enough to know EUR beats USD.
+ *
+ * USD is the last resort, not the default: it is what "we genuinely
+ * can't tell" looks like.
+ *
+ * Only ever consulted before the first mandate exists. Once a
+ * subscription is live its currency is frozen on the row, because
+ * re-deriving it would silently re-price an existing mandate.
+ */
+export function billingCurrencyFor(shop: { currency?: string | null; timezone?: string | null }): Currency {
+  const declared = (shop.currency ?? "").trim().toUpperCase();
+  if (isCurrency(declared)) return declared;
+
+  const zone = (shop.timezone ?? "").trim();
+  if (zone === "Asia/Kolkata" || zone === "Asia/Calcutta") return "INR";
+  if (zone.startsWith("Europe/")) return "EUR";
+
+  return "USD";
+}
+
 export function isCurrency(value: unknown): value is Currency {
   return value === "INR" || value === "USD" || value === "EUR";
 }

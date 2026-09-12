@@ -144,6 +144,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // upgrade path until the payment rails go in (2c), and a button that
   // 404s is worse than a plan you can see but not yet change.
   const entitlements = await Entitlements.entitlementsFor(connection.id);
+  // What the merchant would actually be billed in, not what the row
+  // happens to say — a subscription that has never paid has a currency
+  // nobody has decided yet, and showing USD prices to a shop that will
+  // be charged in ₹ is a lie the checkout then refuses to honour.
+  const billingCurrency = await Checkout.resolveBillingCurrency(connection.id, entitlements.currency);
   const usage = await Billing.usageSnapshot(shop, platform, connection.id, userId);
 
   return {
@@ -155,7 +160,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       trialDaysLeft: entitlements.trialDaysLeft,
       currentPeriodEnd: entitlements.currentPeriodEnd ? entitlements.currentPeriodEnd.toISOString() : null,
       cancelAtPeriodEnd: entitlements.cancelAtPeriodEnd,
-      currency: entitlements.currency,
+      currency: billingCurrency,
       billingCycle: entitlements.billingCycle,
       inGrace: entitlements.inGrace,
       features: [...entitlements.features],

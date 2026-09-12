@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PLANS, PLAN_ORDER, PRICES, FEATURE_KEYS, LIMIT_KEYS,
-  currencyForCountry, providerForCountry, priceFor, formatPrice,
+  currencyForCountry, providerForCountry, priceFor, formatPrice, billingCurrencyFor,
   formatLimit, limitToString, limitFromString, planRank, visiblePlans,
   type Currency, type PlanId, type LimitKey,
 } from "../plans.js";
@@ -230,5 +230,44 @@ describe("formatting", () => {
     expect(planRank("free")).toBeLessThan(planRank("starter"));
     expect(planRank("starter")).toBeLessThan(planRank("growth"));
     expect(planRank("growth")).toBeLessThan(planRank("business"));
+  });
+});
+
+describe("billingCurrencyFor()", () => {
+  it("trusts the business's own currency when we can bill in it", () => {
+    // A merchant pricing their services in ₹ is in India. This is the
+    // strongest signal available and beats every fallback.
+    expect(billingCurrencyFor({ currency: "INR", timezone: "America/New_York" })).toBe("INR");
+    expect(billingCurrencyFor({ currency: "EUR", timezone: "Asia/Kolkata" })).toBe("EUR");
+    expect(billingCurrencyFor({ currency: "USD", timezone: "Europe/Paris" })).toBe("USD");
+  });
+
+  it("is case- and whitespace-insensitive", () => {
+    expect(billingCurrencyFor({ currency: " inr " })).toBe("INR");
+  });
+
+  it("falls back to timezone for a currency we can't bill in", () => {
+    // A UK salon prices in GBP, which isn't a billing currency here —
+    // but Europe/London still says EUR beats USD.
+    expect(billingCurrencyFor({ currency: "GBP", timezone: "Europe/London" })).toBe("EUR");
+    expect(billingCurrencyFor({ currency: "AUD", timezone: "Asia/Kolkata" })).toBe("INR");
+    expect(billingCurrencyFor({ currency: "GBP", timezone: "Asia/Calcutta" })).toBe("INR");
+  });
+
+  it("falls back to USD only when nothing tells us otherwise", () => {
+    // USD is what "we genuinely can't tell" looks like — not a default
+    // anyone was assigned. Assigning it at signup is what broke the
+    // first real checkout.
+    expect(billingCurrencyFor({})).toBe("USD");
+    expect(billingCurrencyFor({ currency: "", timezone: "" })).toBe("USD");
+    expect(billingCurrencyFor({ currency: "AUD", timezone: "Australia/Sydney" })).toBe("USD");
+  });
+
+  it("resolves an INR shop to a currency that actually has plans", () => {
+    // The regression this file exists for: starter/USD/monthly had no
+    // Razorpay plan, so checkout refused for every account.
+    const currency = billingCurrencyFor({ currency: "INR", timezone: "Asia/Kolkata" });
+    expect(PRICES.starter[currency].monthly.razorpay.test).toMatch(/^plan_/);
+    expect(PRICES.growth[currency].yearly.razorpay.test).toMatch(/^plan_/);
   });
 });

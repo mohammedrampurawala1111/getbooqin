@@ -18,11 +18,13 @@ import { GetBooqinError } from "../booking/errors.js";
 import { entitlementsFor } from "./entitlements.js";
 import { createSubscription, cancelSubscription } from "./providers/razorpay.js";
 import { ensureSubscription } from "./subscriptions.js";
+import { getSettings } from "../booking/settings.js";
 import {
   PLANS,
   planRank,
   priceFor,
   providerForCurrency,
+  billingCurrencyFor,
   isBillingCycle,
   isPlanId,
   type BillingCycle,
@@ -37,6 +39,31 @@ export interface CheckoutStart {
   plan: PlanId;
   currency: Currency;
   cycle: BillingCycle;
+}
+
+/**
+ * Works the billing currency out from the shop's own settings, and
+ * persists it so the Billing screen and the checkout agree.
+ */
+export async function resolveBillingCurrency(connectionId: string, fallback: Currency): Promise<Currency> {
+  const connection = await prisma.connection.findUnique({
+    where: { id: connectionId },
+    select: { shop: true, platform: true },
+  });
+  if (!connection) return fallback;
+
+  const settings = await getSettings(connection.shop, connection.platform);
+  const resolved = billingCurrencyFor(settings);
+
+  if (resolved !== fallback) {
+    await prisma.subscription.updateMany({
+      // Guarded on there being no mandate yet, so a concurrent webhook
+      // that has just frozen the currency wins over this.
+      where: { connectionId, providerSubscriptionId: null },
+      data: { currency: resolved },
+    });
+  }
+  return resolved;
 }
 
 export function parsePlanSelection(plan: unknown, cycle: unknown): { plan: PlanId; cycle: BillingCycle } {
@@ -65,8 +92,18 @@ export async function startCheckout(args: {
   const { connectionId } = args;
 
   const existing = await ensureSubscription(connectionId);
-  const currency = existing.currency as Currency;
   const entitlements = await entitlementsFor(connectionId);
+
+  // Currency is decided at the *first mandate*, not when the row was
+  // created. A subscription row exists from signup, long before anyone
+  // knows where the business is or whether it will ever pay, so guessing
+  // then and freezing it produced accounts stuck on a currency we have
+  // no plans for — which is exactly how this failed the first time it
+  // was used. Once a mandate exists it really is frozen: re-deriving
+  // would silently re-price a live subscription.
+  const currency = existing.providerSubscriptionId
+    ? (existing.currency as Currency)
+    : await resolveBillingCurrency(connectionId, existing.currency as Currency);
 
   if (!priceFor(args.plan, currency, args.cycle)) {
     throw new GetBooqinError("getbooqin_invalid_plan", "That plan isn't available.", 400);
