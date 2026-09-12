@@ -13,9 +13,11 @@
  * shaped for that now — the plan comparison and the usage meters are the
  * halves that don't change.
  */
+import { useState } from "react";
+import { Form, useNavigation } from "react-router";
 import {
   PLANS, PLAN_ORDER, LIMIT_KEYS, LIMIT_LABELS, FEATURE_LABELS,
-  priceFor, formatPrice, formatLimit, monthlyEquivalent,
+  priceFor, formatPrice, formatLimit, monthlyEquivalent, planRank,
   type Currency, type BillingCycle, type FeatureKey, type LimitKey, type PlanId,
 } from "getbooqin-core/billing/plans";
 
@@ -126,8 +128,13 @@ function UsageMeters({ billing }: { billing: BillingView }) {
   );
 }
 
-export function BillingPage({ billing }: { billing: BillingView }) {
+export function BillingPage({ billing, error }: { billing: BillingView; error?: string }) {
   const current = PLANS[billing.plan];
+  // Yearly first, deliberately. It is two months free and it is the
+  // option a merchant is least likely to go looking for.
+  const [cycle, setCycle] = useState<BillingCycle>(billing.billingCycle === "monthly" ? "monthly" : "yearly");
+  const navigation = useNavigation();
+  const busy = navigation.state !== "idle";
   const features = new Set(billing.features as FeatureKey[]);
   const overCaps = LIMIT_KEYS.filter((key) => {
     const cap = billing.limits[key];
@@ -141,6 +148,7 @@ export function BillingPage({ billing }: { billing: BillingView }) {
           <h2 className="card-title">Your plan</h2>
         </div>
         <div className="card-body flex flex-col gap-3">
+          {error && <p className="m-0 rounded-[8px] bg-danger-bg px-3 py-2 text-[12.5px] font-medium text-danger">{error}</p>}
           <StatusBanner billing={billing} />
 
           {/* A downgrade is never destructive — nothing is deleted, and
@@ -201,12 +209,28 @@ export function BillingPage({ billing }: { billing: BillingView }) {
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2 px-[18px] pt-[14px]">
+          {(["monthly", "yearly"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => setCycle(option)}
+              className={`rounded-full border px-[12px] py-[4px] text-meta ${cycle === option ? "border-brand-500 bg-brand-50 text-brand-600" : "border-line bg-surface text-muted"}`}
+            >
+              {option === "monthly" ? "Monthly" : "Yearly — 2 months free"}
+            </button>
+          ))}
+        </div>
         <div className="grid grid-cols-1 gap-[10px] px-[18px] py-[14px] md:grid-cols-3">
           {PLAN_ORDER.filter((id) => PLANS[id].visible || id === billing.plan).map((id) => {
             const plan = PLANS[id];
-            const monthly = priceFor(id, billing.currency, "monthly");
+            const chosen = priceFor(id, billing.currency, cycle);
             const yearly = priceFor(id, billing.currency, "yearly");
-            const isCurrent = id === billing.plan;
+            const isCurrent = id === billing.plan && billing.billingCycle === cycle;
+            // A plan with no id at the provider for this mode can't be
+            // sold — providerPlanId() would refuse, so don't offer it.
+            const purchasable = !!chosen?.razorpay && !isCurrent && id !== "free";
+            const isUpgrade = planRank(id) > planRank(billing.plan);
             return (
               <div
                 key={id}
@@ -218,13 +242,17 @@ export function BillingPage({ billing }: { billing: BillingView }) {
                 </div>
                 <div className="flex flex-col gap-px">
                   <span className="num text-[18px] font-medium tracking-[-0.02em]">
-                    {monthly ? formatPrice(monthly.amount, billing.currency) : formatPrice(0, billing.currency)}
-                    <span className="text-[12px] font-normal text-muted">/mo</span>
+                    {chosen ? formatPrice(chosen.amount, billing.currency) : formatPrice(0, billing.currency)}
+                    <span className="text-[12px] font-normal text-muted">/{cycle === "monthly" ? "mo" : "yr"}</span>
                   </span>
-                  {yearly && (
+                  {cycle === "yearly" && yearly && (
                     <span className="text-[11.5px] text-subtle">
-                      or {formatPrice(yearly.amount, billing.currency)}/yr — works out at{" "}
-                      {formatPrice(monthlyEquivalent(yearly.amount), billing.currency)}/mo
+                      works out at {formatPrice(monthlyEquivalent(yearly.amount), billing.currency)}/mo
+                    </span>
+                  )}
+                  {cycle === "monthly" && yearly && (
+                    <span className="text-[11.5px] text-subtle">
+                      or {formatPrice(yearly.amount, billing.currency)}/yr — 2 months free
                     </span>
                   )}
                 </div>
@@ -246,17 +274,35 @@ export function BillingPage({ billing }: { billing: BillingView }) {
                     ))}
                   </ul>
                 )}
+                {purchasable && (
+                  <Form method="post" className="mt-auto pt-2">
+                    <input type="hidden" name="_section" value="billing_upgrade" />
+                    <input type="hidden" name="plan" value={id} />
+                    <input type="hidden" name="cycle" value={cycle} />
+                    <button type="submit" disabled={busy} className={`w-full ${isUpgrade ? "btn-pri" : "btn-sec"}`}>
+                      {busy ? "Starting…" : isUpgrade ? `Upgrade to ${plan.name}` : `Switch to ${plan.name}`}
+                    </button>
+                  </Form>
+                )}
               </div>
             );
           })}
         </div>
-        {/* Stated plainly rather than shipping a button that goes
-            nowhere. The rails land in Phase 2c; until then this screen
-            is honest about being a mirror, not a control panel. */}
-        <div className="card-footer">
+        <div className="card-footer flex-col items-start gap-2">
           <span className="text-meta text-muted">
-            Changing plan isn't self-serve yet — get in touch and we'll move you. Every limit above is already live.
+            You'll be taken to Razorpay to authorise the payment. Your plan changes once the first payment clears,
+            not before.
           </span>
+          {/* Cancelling is "don't renew", never "cut me off now" — the
+              paid-for period is honoured either way. */}
+          {(billing.status === "active" || billing.status === "past_due") && !billing.cancelAtPeriodEnd && (
+            <Form method="post">
+              <input type="hidden" name="_section" value="billing_cancel" />
+              <button type="submit" disabled={busy} className="btn-link text-danger">
+                Cancel subscription
+              </button>
+            </Form>
+          )}
         </div>
       </div>
     </div>

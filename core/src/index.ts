@@ -48,6 +48,7 @@ export * as Entitlements from "./billing/entitlements.js";
 export * as Subscriptions from "./billing/subscriptions.js";
 export * as Billing from "./billing/enforcement.js";
 export * as BillingWebhooks from "./billing/webhooks.js";
+export * as Checkout from "./billing/checkout.js";
 export { RazorpayProvider, providerPlanId } from "./billing/providers/razorpay.js";
 export type { BillingProvider, NormalisedEvent, BillingEventType } from "./billing/providers/provider.js";
 export * as ShopifyAdmin from "./platforms/shopifyAdmin.js";

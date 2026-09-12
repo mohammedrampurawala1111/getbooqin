@@ -202,3 +202,124 @@ export function __resetPlanIndexForTests(): void {
   planIndex = null;
   planIndexMode = null;
 }
+
+/* ------------------------------------------------------------------ */
+/* Subscription creation                                               */
+/* ------------------------------------------------------------------ */
+
+const API_BASE = "https://api.razorpay.com/v1";
+
+/**
+ * How many cycles a subscription runs for. Razorpay requires a finite
+ * `total_count` — there is no "until cancelled" — so this is the
+ * practical equivalent: ten years of either cadence. A subscription that
+ * actually reaches the end emits `subscription.completed`, which we
+ * handle like any other ending.
+ */
+const TOTAL_COUNT: Record<BillingCycle, number> = { monthly: 120, yearly: 10 };
+
+function auth(): string | null {
+  const id = process.env.RAZORPAY_KEY_ID;
+  const secret = process.env.RAZORPAY_KEY_SECRET;
+  if (!id || !secret) return null;
+  return `Basic ${Buffer.from(`${id}:${secret}`).toString("base64")}`;
+}
+
+export interface CreatedSubscription {
+  providerSubscriptionId: string;
+  /** Razorpay's own hosted authorisation page. Where the merchant is sent to approve the mandate. */
+  approvalUrl: string;
+}
+
+/**
+ * Creates the subscription at Razorpay and returns where to send the
+ * merchant to authorise it.
+ *
+ * Nothing here grants a plan. The row this eventually produces is
+ * written by the webhook and only once money has actually moved — a
+ * mandate can be authenticated and then fail its first charge, and a
+ * merchant can close the tab on the hosted page at any point. This
+ * function's only lasting effect is at Razorpay.
+ *
+ * `notes.connection_id` is the thread back: every webhook for this
+ * subscription carries it, which is how an event that arrives months
+ * later with no session attached still finds the right account.
+ */
+export async function createSubscription(args: {
+  connectionId: string;
+  plan: PlanId;
+  currency: Currency;
+  cycle: BillingCycle;
+  customerNotify?: boolean;
+}): Promise<CreatedSubscription> {
+  const authorization = auth();
+  if (!authorization) {
+    throw new Error("RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not configured.");
+  }
+
+  const planId = providerPlanId(args.plan, args.currency, args.cycle);
+  if (!planId) {
+    // A price that exists in our table but has no id at Razorpay for
+    // this mode. Refusing is the point: the alternative is subscribing
+    // someone to whatever plan id happens to be lying around.
+    throw new Error(
+      `No Razorpay ${razorpayMode()} plan is configured for ${args.plan}/${args.currency}/${args.cycle}.`
+    );
+  }
+
+  const response = await fetch(`${API_BASE}/subscriptions`, {
+    method: "POST",
+    headers: { Authorization: authorization, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      plan_id: planId,
+      total_count: TOTAL_COUNT[args.cycle],
+      quantity: 1,
+      // Razorpay emails its own mandate confirmations. Left on: a
+      // merchant authorising a recurring debit should get a record of it
+      // from the party taking the money, not only from us.
+      customer_notify: args.customerNotify === false ? 0 : 1,
+      notes: { connection_id: args.connectionId },
+    }),
+  });
+
+  const body = (await response.json()) as {
+    id?: string;
+    short_url?: string;
+    error?: { description?: string; code?: string };
+  };
+
+  if (!response.ok || !body.id || !body.short_url) {
+    throw new Error(
+      `Razorpay refused the subscription (${response.status}): ${body.error?.description ?? "no detail"}`
+    );
+  }
+
+  return { providerSubscriptionId: body.id, approvalUrl: body.short_url };
+}
+
+/**
+ * Cancels at the provider. `cancel_at_cycle_end` is the default because
+ * paid-for time is paid for — an immediate cancel would take away
+ * something the merchant has already bought, and generate a refund
+ * conversation nobody wanted.
+ */
+export async function cancelSubscription(
+  providerSubscriptionId: string,
+  opts: { immediately?: boolean } = {}
+): Promise<void> {
+  const authorization = auth();
+  if (!authorization) throw new Error("RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not configured.");
+
+  const response = await fetch(`${API_BASE}/subscriptions/${providerSubscriptionId}/cancel`, {
+    method: "POST",
+    headers: { Authorization: authorization, "Content-Type": "application/json" },
+    body: JSON.stringify({ cancel_at_cycle_end: opts.immediately ? 0 : 1 }),
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: { description?: string } };
+    throw new Error(`Razorpay refused the cancellation (${response.status}): ${body.error?.description ?? "no detail"}`);
+  }
+  // Deliberately no local write. The webhook is the only thing that
+  // moves subscription state — see billing/webhooks.ts.
+}

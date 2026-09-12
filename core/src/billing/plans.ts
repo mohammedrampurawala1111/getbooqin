@@ -236,8 +236,8 @@ export interface Price {
 export const PRICES: Record<PaidPlanId, Record<Currency, Record<BillingCycle, Price>>> = {
   starter: {
     INR: {
-      monthly: { amount: 39_900, razorpay: { test: "", live: "" } },
-      yearly: { amount: 399_000, razorpay: { test: "", live: "" } },
+      monthly: { amount: 39_900, razorpay: { test: "plan_TbDcKTKQfPNJdh", live: "plan_TbDREf2wPpTCaT" } },
+      yearly: { amount: 399_000, razorpay: { test: "plan_TbDcfyTcaaGoaG", live: "plan_TbDRyOPpAbW8PW" } },
     },
     USD: {
       monthly: { amount: 500, razorpay: { test: "", live: "" } },
@@ -250,8 +250,16 @@ export const PRICES: Record<PaidPlanId, Record<Currency, Record<BillingCycle, Pr
   },
   growth: {
     INR: {
-      monthly: { amount: 79_900, razorpay: { test: "", live: "" } },
-      yearly: { amount: 799_000, razorpay: { test: "", live: "" } },
+      monthly: { amount: 79_900, razorpay: { test: "plan_TbDcxhXUpvhTxO", live: "plan_TbDSJLkyiCyNC5" } },
+      // live is deliberately empty. The first live "GetBooqin Growth
+      // Yearly" (plan_TbDSgwJW8j7O0t) was created at Razorpay with
+      // period=monthly — it would have billed ₹7,990 every month instead
+      // of every year, a 12x overcharge. Razorpay plans are immutable, so
+      // it needs replacing with a real period=yearly plan before this can
+      // go live. An empty slot makes providerPlanId() return null and the
+      // checkout refuse, which is the right outcome for a price that
+      // would charge wrongly.
+      yearly: { amount: 799_000, razorpay: { test: "plan_TbDdFi79xihffD", live: "" } },
     },
     USD: {
       monthly: { amount: 1_000, razorpay: { test: "", live: "" } },

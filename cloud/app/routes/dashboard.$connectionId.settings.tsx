@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Form, redirect, useFetcher, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.settings";
-import { Settings, Data, Mailer, Team, Entitlements, Billing, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
+import { Settings, Data, Mailer, Team, Entitlements, Billing, Checkout, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
 // Client-safe subpath for the two rule-checks the component below calls at
 // render time — importing these off the main `Settings` namespace instead
 // would pull core's *entire* barrel (nodemailer, the Razorpay/Shopify HMAC
@@ -297,6 +297,29 @@ export async function action({ request, params }: Route.ActionArgs) {
       waitlist_enabled: form.get("waitlist_enabled") === "on",
     });
     return { saved: true };
+  } else if (section === "billing_upgrade") {
+    // Creates the mandate at Razorpay and bounces the merchant to their
+    // hosted authorisation page. Nothing is granted here — the plan is
+    // written by the webhook, and only once money has actually moved
+    // (see core/src/billing/checkout.ts).
+    try {
+      const { plan, cycle } = Checkout.parsePlanSelection(form.get("plan"), form.get("cycle"));
+      const started = await Checkout.startCheckout({ connectionId: params.connectionId!, plan, cycle });
+      // A 303 so the browser re-issues as GET — a POST redirected to
+      // Razorpay's page would be re-submitted on back-navigation.
+      throw redirect(started.approvalUrl, 303);
+    } catch (err) {
+      if (isGetBooqinError(err)) return { error: err.message };
+      throw err;
+    }
+  } else if (section === "billing_cancel") {
+    try {
+      await Checkout.cancelAtPeriodEnd(params.connectionId!);
+      return { saved: true, billingCancelled: true };
+    } catch (err) {
+      if (isGetBooqinError(err)) return { error: err.message };
+      throw err;
+    }
   } else if (section === "vocabulary") {
     // Free text, straight through. There is no "apply a template to this
     // shop" path any more, so nothing here can overwrite a booking rule,
@@ -598,7 +621,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
         </div>
       )}
 
-      {page === "billing" && <BillingPage billing={billing} />}
+      {page === "billing" && <BillingPage billing={billing} error={actionData && "error" in actionData ? actionData.error : undefined} />}
 
       {page === "integrations" && (
         <>
