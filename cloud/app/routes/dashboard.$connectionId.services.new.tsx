@@ -1,6 +1,6 @@
 import { Form, redirect } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.services.new";
-import { Data, Settings } from "getbooqin-core";
+import { Data, Settings, isGetBooqinError } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Field, Input } from "~/components/ui";
 import { useVocabulary, vocabFor, starterTemplate } from "~/lib/presets";
@@ -50,11 +50,22 @@ export async function action({ request, params }: Route.ActionArgs) {
     price: Number(form.get("price") ?? 0),
   });
 
-  const saved = await Data.saveServiceConfig(shop, platform, {
-    product_id: productId,
-    product_handle: productHandle,
-    duration_min: Number(form.get("duration_min") ?? 30),
-  });
+  // A plan limit throws a GetBooqinError carrying a 402 and a message
+  // naming the plan that would clear it. Without this catch React Router
+  // turns that into a generic 500 page — "something went wrong" for a
+  // merchant whose actual problem is "you're at your plan's service
+  // limit", which is both unhelpful and makes the ladder look broken.
+  let saved;
+  try {
+    saved = await Data.saveServiceConfig(shop, platform, {
+      product_id: productId,
+      product_handle: productHandle,
+      duration_min: Number(form.get("duration_min") ?? 30),
+    });
+  } catch (err) {
+    if (isGetBooqinError(err)) return { error: err.message };
+    throw err;
+  }
 
   throw redirect(`/dashboard/${params.connectionId}/services/${saved.id}`);
 }

@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { Form, redirect, useNavigate, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.waitlist";
-import { Waitlist, Data, Settings } from "getbooqin-core";
+import { Waitlist, Data, Settings, Entitlements } from "getbooqin-core";
+import { UpgradePrompt } from "~/components/upgrade";
 import { formatInZone } from "getbooqin-core/booking/tz";
 import { waitlistStatusLabels, formatWaitlistWindow } from "getbooqin-core/booking/waitlistShared";
 import { requireTenant } from "~/tenant.server";
@@ -11,7 +12,17 @@ import { useVocabulary } from "~/lib/presets";
 export const meta: Route.MetaFunction = () => [{ title: "Waitlist · GetBooqin" }];
 
 export async function loader({ request, params }: Route.LoaderArgs) {
-  const { shop, platform } = await requireTenant(request, params.connectionId);
+  const { shop, platform, connection } = await requireTenant(request, params.connectionId);
+
+  // Locked rather than 404. The nav shows this item with a padlock, so
+  // arriving here is a deliberate click — answering "not found" would be
+  // a lie, and answering with the plan that unlocks it is the whole
+  // point of showing the item at all. The gate itself lives in
+  // Waitlist.join(); this only decides what the page says.
+  const entitlements = await Entitlements.entitlementsFor(connection.id);
+  if (!entitlements.features.has("waitlist")) {
+    return { locked: true as const, plan: entitlements.plan, connectionId: connection.id };
+  }
   const [entries, services, resources, settings] = await Promise.all([
     Waitlist.list(shop, platform),
     Data.catalogServices(shop, platform, true),
@@ -65,6 +76,11 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function WaitlistPage({ loaderData, actionData, params }: Route.ComponentProps) {
+  if ("locked" in loaderData && loaderData.locked) {
+    return (
+      <UpgradePrompt feature="waitlist" currentPlan={loaderData.plan} connectionId={loaderData.connectionId} />
+    );
+  }
   const { entries, services, resources, timezone, requirePhone, waitlistEnabled, offerWindowHours } = loaderData;
   const v = useVocabulary();
   const labels = waitlistStatusLabels();

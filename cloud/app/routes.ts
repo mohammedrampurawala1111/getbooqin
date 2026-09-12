@@ -21,6 +21,7 @@ export default [
     route("bookings", "routes/dashboard.$connectionId.bookings.tsx"),
     route("bookings/calendar", "routes/dashboard.$connectionId.bookings.calendar.tsx"),
     route("bookings/:bookingId", "routes/dashboard.$connectionId.bookings.$bookingId.tsx"),
+    route("bookings/export.csv", "routes/dashboard.$connectionId.bookings.export.tsx"),
     route("waitlist", "routes/dashboard.$connectionId.waitlist.tsx"),
     route("resources", "routes/dashboard.$connectionId.resources.tsx"),
     route("resources/:resourceId", "routes/dashboard.$connectionId.resources.$resourceId.tsx"),

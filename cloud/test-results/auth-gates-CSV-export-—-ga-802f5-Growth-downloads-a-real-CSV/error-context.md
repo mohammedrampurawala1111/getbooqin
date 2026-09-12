@@ -6,8 +6,8 @@
 
 # Test info
 
-- Name: auth/billing.spec.ts >> shows the trial, the usage meters and prices in the shop's own currency
-- Location: tests/e2e/auth/billing.spec.ts:26:1
+- Name: auth/gates.spec.ts >> CSV export — gated at the URL, not just the button >> Growth downloads a real CSV
+- Location: tests/e2e/auth/gates.spec.ts:76:3
 
 # Error details
 

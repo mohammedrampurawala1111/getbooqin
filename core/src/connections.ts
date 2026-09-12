@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import prisma from "./db.js";
 import { encryptCredentials } from "./auth/encryption.js";
-import { assertCanAddBusiness } from "./billing/enforcement.js";
+import { assertCanAddBusiness, assertFeature } from "./billing/enforcement.js";
 import { ensureSubscription } from "./billing/subscriptions.js";
 
 // Thrown when a shop is already linked to a *different* User — the connect
@@ -72,6 +72,19 @@ export async function connectShopifyStore({
   // blocked, or a merchant whose token expired while they were over
   // their cap could never get back in.
   await assertCanAddBusiness(userId);
+
+  // Shopify is also a plan *feature*, and it is checked against the
+  // account's existing business rather than the one being created (which
+  // does not exist yet). A user with no business at all is signing up
+  // through Shopify, which every plan allows — the gate is on adding
+  // Shopify to an account that is already on a plan without it.
+  const existingBusiness = await prisma.connection.findFirst({
+    where: { userId, status: "active" },
+    select: { shop: true, platform: true },
+  });
+  if (existingBusiness) {
+    await assertFeature(existingBusiness.shop, existingBusiness.platform, "shopify");
+  }
 
   const connection = await prisma.connection.create({
     data: { userId, platform, shop, credentials, status: "active" },

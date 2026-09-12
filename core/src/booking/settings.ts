@@ -11,6 +11,7 @@
 import prisma from "../db.js";
 import { defaultTerms, withDefaultTerms } from "./presets.js";
 import type { Settings } from "./settingsShared.js";
+import { assertFeature } from "../billing/enforcement.js";
 
 export type { Settings, BookingRuleField, BookingRuleInput } from "./settingsShared.js";
 export {
@@ -106,6 +107,16 @@ export async function setSettings(
   platform: string,
   values: Partial<Settings>
 ): Promise<Settings> {
+  // Editing the *wording* of a notification is a plan feature; turning
+  // one on or off is not. `template_enabled` is therefore ungated — a
+  // merchant on any plan must be able to stop a message going out —
+  // while `templates`, which holds their own subject/body overrides, is
+  // gated. Checked here rather than in the route because the Shopify
+  // admin writes the same field through its own settings screen.
+  if (values.templates !== undefined) {
+    await assertFeature(shop, platform, "email_templates");
+  }
+
   const current = await getSettings(shop, platform);
   const merged: Settings = { ...current, ...values };
 

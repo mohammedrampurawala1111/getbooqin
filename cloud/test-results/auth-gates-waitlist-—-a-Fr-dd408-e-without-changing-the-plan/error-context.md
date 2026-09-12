@@ -6,8 +6,8 @@
 
 # Test info
 
-- Name: auth/billing.spec.ts >> shows the trial, the usage meters and prices in the shop's own currency
-- Location: tests/e2e/auth/billing.spec.ts:26:1
+- Name: auth/gates.spec.ts >> waitlist — a Free-plan feature gate >> an admin grant unlocks it on Free, without changing the plan
+- Location: tests/e2e/auth/gates.spec.ts:53:3
 
 # Error details
 

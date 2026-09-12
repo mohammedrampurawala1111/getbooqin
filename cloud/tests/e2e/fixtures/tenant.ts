@@ -213,3 +213,43 @@ export async function seedPlatformAdmin(): Promise<SeededTenant> {
   await makePlatformAdmin(tenant);
   return tenant;
 }
+
+/** Puts a seeded tenant on a plan, so a test can assert what that plan gates. */
+export async function setPlan(tenant: SeededTenant, plan: string): Promise<void> {
+  await prisma.subscription.upsert({
+    where: { connectionId: tenant.connectionId },
+    create: { connectionId: tenant.connectionId, plan, status: "active", currency: "INR" },
+    update: { plan, status: "active", trialEndsAt: null },
+  });
+}
+
+/** Grants one entitlement key, the way the admin console would. */
+export async function grantFeature(tenant: SeededTenant, key: string, value = "on"): Promise<void> {
+  await prisma.entitlement.upsert({
+    where: { connectionId_key: { connectionId: tenant.connectionId, key } },
+    create: {
+      connectionId: tenant.connectionId, key, value,
+      grantedByUserId: tenant.clerkUserId, reason: "e2e fixture",
+    },
+    update: { value },
+  });
+}
+
+/** A bookable service + practitioner with hours, for gates that need real data behind them. */
+export async function seedBookable(tenant: SeededTenant): Promise<{ serviceId: number; resourceId: number }> {
+  const { shop, platform } = tenant;
+  const resource = await prisma.resource.create({ data: { shop, platform, name: "Alex", status: true } });
+  await prisma.schedule.createMany({
+    data: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({
+      shop, platform, resourceId: resource.id, dayOfWeek, startTime: "09:00", endTime: "18:00",
+    })),
+  });
+  await prisma.productCache.create({
+    data: { shop, platform, productId: `p-${shop}`, productHandle: `p-${shop}`, title: "Cut", price: 30 },
+  });
+  const service = await prisma.serviceConfig.create({
+    data: { shop, platform, productId: `p-${shop}`, productHandle: `p-${shop}`, durationMin: 30, status: true },
+  });
+  await prisma.serviceResource.create({ data: { shop, platform, serviceId: service.id, resourceId: resource.id } });
+  return { serviceId: service.id, resourceId: resource.id };
+}

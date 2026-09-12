@@ -12,7 +12,7 @@
  * implements.
  */
 import type { ConnectionMember, ConnectionInvite } from "@prisma/client";
-import { assertCanInviteMember } from "./billing/enforcement.js";
+import { assertCanInviteMember, entitlementsForShop, assertFeature } from "./billing/enforcement.js";
 import prisma from "./db.js";
 import { signPayload } from "./auth/session.js";
 import { isEmail } from "./booking/bookingsShared.js";
@@ -163,6 +163,21 @@ export async function inviteMember({
   // worse experience for everyone involved.
   await assertCanInviteMember(connectionId);
 
+  // Roles are a plan feature. Without it an account can still have a
+  // teammate — it just can't choose what they are, so everyone gets
+  // "write": the role a second pair of hands actually needs. Refusing
+  // the *invite* would be the wrong gate; the seat is what the limit
+  // above sells, and the roles are the upgrade.
+  const connection = await prisma.connection.findUnique({
+    where: { id: connectionId },
+    select: { shop: true, platform: true },
+  });
+  let effectiveRole = role;
+  if (connection && role !== "write") {
+    const ent = await entitlementsForShop(connection.shop, connection.platform);
+    if (ent && !ent.features.has("team_roles")) effectiveRole = "write";
+  }
+
   // Case-insensitive: Clerk-side emails aren't guaranteed to already be
   // lower-cased, so an exact-match lookup against a hand-typed invite email
   // could miss a real account (see the orchestrator's normalization
@@ -200,11 +215,11 @@ export async function inviteMember({
   // 3.1).
   const invite = await prisma.connectionInvite.upsert({
     where: { connectionId_email: { connectionId, email: normalizedEmail } },
-    create: { connectionId, email: normalizedEmail, role, invitedByUserId, token, expiresAt },
+    create: { connectionId, email: normalizedEmail, role: effectiveRole, invitedByUserId, token, expiresAt },
     // Re-opens a previously revoked/expired/accepted row back to "pending"
     // — re-inviting the same email always means "I want them to be able to
     // join again," regardless of what became of the last invite.
-    update: { role, invitedByUserId, token, expiresAt, status: "pending", acceptedAt: null },
+    update: { role: effectiveRole, invitedByUserId, token, expiresAt, status: "pending", acceptedAt: null },
   });
 
   const emailSent = await trySendInvite(invite);
@@ -365,6 +380,16 @@ export async function updateMemberRole({
   if (!isInvitableRole(role)) {
     throw new GetBooqinError("getbooqin_invalid_role", "Role must be one of Admin, Write, or Read.", 400);
   }
+
+  // Same gate as inviteMember: without the team_roles feature an account
+  // has teammates but not role *choice*, so changing someone's role is
+  // refused outright rather than silently ignored — a select that
+  // appears to work and doesn't is worse than one that says why.
+  const conn = await prisma.connection.findUnique({
+    where: { id: connectionId },
+    select: { shop: true, platform: true },
+  });
+  if (conn) await assertFeature(conn.shop, conn.platform, "team_roles");
   const target = await prisma.connectionMember.findUnique({ where: { connectionId_userId: { connectionId, userId: targetUserId } } });
   if (!target) {
     throw new GetBooqinError("getbooqin_member_not_found", "That member could not be found.", 404);

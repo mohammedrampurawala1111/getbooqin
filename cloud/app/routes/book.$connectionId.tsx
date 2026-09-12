@@ -4,6 +4,7 @@ import type { Route } from "./+types/book.$connectionId";
 import {
   Data,
   Bookings,
+  Entitlements,
   Settings as CoreSettings,
   Waitlist,
   getPublicConnection,
@@ -100,6 +101,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
   const settings = await CoreSettings.getSettings(connection.shop, connection.platform);
   const vocab = vocabFor(settings.terms);
+  // The `no_badge` entitlement, resolved once for every branch below.
+  const entitlements = await Entitlements.entitlementsFor(connection.id);
+  const showBadge = !entitlements.features.has("no_badge");
 
   // Bookings.manageUrl() builds exactly this query param — this is the link
   // a (now-fixed) confirmation/cancel email points customers back to.
@@ -113,6 +117,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     ]);
     return {
       mode: "manage" as const,
+      showBadge,
       businessName: settings.business_name,
       businessPhone: settings.business_phone,
       vocab,
@@ -145,6 +150,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
   return {
     mode: "book" as const,
+    showBadge,
     connectionId: connection.id,
     businessName: settings.business_name,
     businessHours: formatBusinessHours(hours),
@@ -353,7 +359,21 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 /* ================================================================== */
 
-function Shell({ businessName, children }: { businessName: string; children: React.ReactNode }) {
+/**
+ * `showBadge` is the `no_badge` entitlement, inverted.
+ *
+ * This is the thing Starter is actually sold on — "$5 takes the badge
+ * off" — and until now the badge rendered for everyone regardless of
+ * plan, which made the cheapest paid tier's headline benefit a promise
+ * the product didn't keep.
+ *
+ * Defaults to showing it: a page that can't work out the plan (a
+ * connection mid-setup, a failed lookup) should look like the free
+ * product, not silently hand out a paid one.
+ */
+function Shell({
+  businessName, showBadge = true, children,
+}: { businessName: string; showBadge?: boolean; children: React.ReactNode }) {
   return (
     <div className="flex min-h-dvh flex-col items-center bg-canvas px-4 py-8 sm:px-8">
       <div className="flex w-full max-w-[480px] flex-col gap-5">
@@ -362,7 +382,9 @@ function Shell({ businessName, children }: { businessName: string; children: Rea
           <span className="min-w-0 truncate text-[15px] font-semibold">{businessName}</span>
         </div>
         {children}
-        <p className="mt-2 text-center text-[11.5px] text-subtle">Booking powered by GetBooqin</p>
+        {showBadge && (
+          <p className="mt-2 text-center text-[11.5px] text-subtle">Booking powered by GetBooqin</p>
+        )}
       </div>
     </div>
   );
@@ -375,6 +397,7 @@ export default function BookingPage({ loaderData, params }: Route.ComponentProps
         connectionId={params.connectionId!}
         businessName={loaderData.businessName}
         businessPhone={loaderData.businessPhone}
+        showBadge={loaderData.showBadge}
         vocab={loaderData.vocab}
         initial={loaderData.booking}
         canCancelInitial={loaderData.canCancel}
@@ -388,10 +411,11 @@ export default function BookingPage({ loaderData, params }: Route.ComponentProps
 /* ---------------------------------------------------------- Manage view */
 
 function ManageBooking({
-  connectionId, businessName, businessPhone, vocab, initial, canCancelInitial, cancelUnavailableReason,
+  connectionId, businessName, businessPhone, showBadge, vocab, initial, canCancelInitial, cancelUnavailableReason,
 }: {
   connectionId: string;
   businessName: string;
+  showBadge: boolean;
   businessPhone: string;
   vocab: ReturnType<typeof vocabFor>;
   initial: { uid: string; status: string; serviceName: string; resourceName: string; when: string; priceLabel: string };
@@ -403,7 +427,7 @@ function ManageBooking({
   const canCancel = canCancelInitial && !cancelled;
 
   return (
-    <Shell businessName={businessName}>
+    <Shell businessName={businessName} showBadge={showBadge}>
       <div className="card p-[18px]">
         <h1 className="ob-h1 mb-1">Your {vocab.bookingOne}</h1>
         {fetcher.data?.error && <AlertError className="mb-3">{fetcher.data.error}</AlertError>}
@@ -632,7 +656,7 @@ function WaitlistJoinPrompt({
 }
 
 function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
-  const { connectionId, businessName, businessHours, vocab, settings, services, resources } = loaderData;
+  const { connectionId, businessName, businessHours, showBadge, vocab, settings, services, resources } = loaderData;
   const [step, setStep] = useState<Step>("service");
   const [serviceId, setServiceId] = useState<number | null>(null);
   const [resourceId, setResourceId] = useState<number>(0);
@@ -733,6 +757,7 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
         connectionId={connectionId}
         businessName={businessName}
         businessAddress={settings.businessAddress}
+        showBadge={showBadge}
         vocab={vocab}
         booking={bookFetcher.data.booking}
       />
@@ -740,7 +765,7 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
   }
 
   return (
-    <Shell businessName={businessName}>
+    <Shell businessName={businessName} showBadge={showBadge}>
       {step === "service" && (
         <div className="card p-[18px]">
           {/* Business header — name, one-line description, address, phone,
@@ -1104,11 +1129,12 @@ function icsDataUrl(booking: { uid: string; serviceName: string; resourceName: s
 }
 
 function Confirmation({
-  connectionId, businessName, businessAddress, vocab, booking,
+  connectionId, businessName, businessAddress, showBadge, vocab, booking,
 }: {
   connectionId: string;
   businessName: string;
   businessAddress: string;
+  showBadge: boolean;
   vocab: ReturnType<typeof vocabFor>;
   booking: {
     uid: string;
@@ -1127,7 +1153,7 @@ function Confirmation({
   const bookingRef = booking.uid.slice(-6).toUpperCase();
   const manageUrl = `/book/${connectionId}?getbooqin_booking=${booking.uid}`;
   return (
-    <Shell businessName={businessName}>
+    <Shell businessName={businessName} showBadge={showBadge}>
       <div className="card p-[18px] text-center">
         <span className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-ok-bg text-[20px] text-ok">✓</span>
         <h1 className="ob-h1 mb-1">

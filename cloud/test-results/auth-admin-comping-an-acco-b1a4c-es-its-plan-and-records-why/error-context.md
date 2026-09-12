@@ -207,4 +207,21 @@ TypeError: Cannot read properties of undefined (reading 'shop')
   214 |   return tenant;
   215 | }
   216 | 
+  217 | /** Puts a seeded tenant on a plan, so a test can assert what that plan gates. */
+  218 | export async function setPlan(tenant: SeededTenant, plan: string): Promise<void> {
+  219 |   await prisma.subscription.upsert({
+  220 |     where: { connectionId: tenant.connectionId },
+  221 |     create: { connectionId: tenant.connectionId, plan, status: "active", currency: "INR" },
+  222 |     update: { plan, status: "active", trialEndsAt: null },
+  223 |   });
+  224 | }
+  225 | 
+  226 | /** Grants one entitlement key, the way the admin console would. */
+  227 | export async function grantFeature(tenant: SeededTenant, key: string, value = "on"): Promise<void> {
+  228 |   await prisma.entitlement.upsert({
+  229 |     where: { connectionId_key: { connectionId: tenant.connectionId, key } },
+  230 |     create: {
+  231 |       connectionId: tenant.connectionId, key, value,
+  232 |       grantedByUserId: tenant.clerkUserId, reason: "e2e fixture",
+  233 |     },
 ```

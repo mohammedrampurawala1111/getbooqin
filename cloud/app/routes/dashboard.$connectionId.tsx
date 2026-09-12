@@ -7,6 +7,7 @@ import { tenantSelectHeaders, getClerkClient } from "~/session.server";
 import { UserMenu } from "~/components/account";
 import { ThemeToggle, ToastProvider } from "~/components/ui";
 import { vocabFor, type Vocabulary } from "~/lib/presets";
+import { LockGlyph } from "~/components/upgrade";
 import { getAppUrl } from "~/lib/env.server";
 
 // Tenant-scoped dashboard layout. Mints the TenantSession cookie for this
@@ -134,7 +135,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       // Billing screen. A failed payment that is only visible somewhere
       // a merchant has no reason to visit is not a notification — and
       // the whole point of the grace period is that they act inside it.
-      billingNotice: await billingNotice(connection.id), canViewSettings: role === "owner" || role === "admin", user: { name, email, initials, role: jobTitle } },
+      billingNotice: await billingNotice(connection.id),
+      // Which nav items render locked. Resolved once here, not per item.
+      features: [...(await Entitlements.entitlementsFor(connection.id)).features],
+      canViewSettings: role === "owner" || role === "admin",
+      user: { name, email, initials, role: jobTitle } },
     { headers: tenantSelectHeaders(tenantSession) }
   );
 }
@@ -219,18 +224,27 @@ const NAV_ICONS = {
 // would just be an always-broken link to click. Small, targeted hide,
 // not a nav restructure: everything else here is unaffected, since only
 // Settings gained the stricter loader-level gate.
-function navItems(vocab: Vocabulary, pendingCount: number, canViewSettings: boolean) {
+function navItems(vocab: Vocabulary, pendingCount: number, canViewSettings: boolean, features: Set<string>) {
   const v = vocab;
   return [
     { to: "", end: true, label: "Overview", icon: NAV_ICONS.overview },
     { to: "/bookings", label: v.bookingTitle, icon: NAV_ICONS.bookings, badge: pendingCount > 0 ? pendingCount : undefined },
-    { to: "/waitlist", label: "Waitlist", icon: NAV_ICONS.waitlist },
+    // Rendered locked rather than hidden. A merchant who can't see a
+    // feature at all can't discover it exists, which is the difference
+    // between a plan ladder that sells and one that just restricts.
+    { to: "/waitlist", label: "Waitlist", icon: NAV_ICONS.waitlist, feature: "waitlist" as const },
     { to: "/resources", label: v.resources, icon: NAV_ICONS.resources },
     { to: "/timeoff", label: "Time off", icon: NAV_ICONS.timeoff },
     { to: "/services", label: v.services, icon: NAV_ICONS.services },
     { to: "/customers", label: v.customers, icon: NAV_ICONS.customers },
     ...(canViewSettings ? [{ to: "/settings", label: "Settings", icon: NAV_ICONS.settings }] : []),
-  ];
+  ].map((item) => ({
+    ...item,
+    // The padlock is presentational only — the route and the underlying
+    // core function both refuse independently. A nav state is never a
+    // security boundary.
+    locked: "feature" in item && !!item.feature && !features.has(item.feature),
+  }));
 }
 
 function navItemClass({ isActive }: { isActive: boolean }): string {
@@ -301,7 +315,7 @@ function DashboardShell({
   // carry billing state — so read it defensively rather than destructure.
   const notice = (loaderData as { billingNotice?: { tone: "danger" | "warn"; text: string; cta: string } | null }).billingNotice ?? null;
   const v = vocabFor(terms);
-  const NAV_ITEMS = navItems(v, pendingCount, canViewSettings);
+  const NAV_ITEMS = navItems(v, pendingCount, canViewSettings, new Set(loaderData.features ?? []));
   const base = `/dashboard/${params.connectionId}`;
 
   // Below md: <aside> is an off-canvas drawer toggled by the topbar button
@@ -397,6 +411,7 @@ function DashboardShell({
                   {item.badge}
                 </span>
               ) : null}
+              {item.locked ? <LockGlyph /> : null}
             </NavLink>
           ))}
           <NavLink to={`${base}/support`} className={navItemClass}>

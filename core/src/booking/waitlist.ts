@@ -28,6 +28,7 @@ import { getSettings, type Settings } from "./settings.js";
 import { isEmail, validDate, validTime } from "./bookingsShared.js";
 import { uid, now } from "./ids.js";
 import { GetBooqinError } from "./errors.js";
+import { assertFeature } from "../billing/enforcement.js";
 import events, { type FreedSlot } from "./events.js";
 
 export interface JoinWaitlistArgs {
@@ -124,6 +125,11 @@ function isUniqueConstraintViolation(err: unknown): boolean {
 }
 
 export async function join(shop: string, platform: string, shopTimezone: string, args: JoinWaitlistArgs): Promise<Waitlist> {
+  // Plan gate. Checked here rather than only in the dashboard, because
+  // the *public* booking page joins the waitlist too — a gate that only
+  // hides a nav item is not a gate.
+  await assertFeature(shop, platform, "waitlist");
+
   const service = await Data.catalogService(shop, args.service_id);
   if (!service || !service.status) throw new GetBooqinError("getbooqin_invalid_service", "That service is not available.", 400);
   if (!args.first_name) throw new GetBooqinError("getbooqin_missing_name", "Please provide the customer's name.", 400);

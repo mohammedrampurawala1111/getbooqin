@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Form, data, redirect } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.resources.$resourceId";
-import { Data, Settings } from "getbooqin-core";
+import { Data, Settings, isGetBooqinError } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { Field, Input, Toggle, CheckCard, TimezoneSelect, ConfirmDialog } from "~/components/ui";
 import { templateCard, useVocabulary, vocabFor } from "~/lib/presets";
@@ -121,7 +121,12 @@ export async function action({ request, params }: Route.ActionArgs) {
 
   const serviceIds = form.getAll("service_ids").map(Number);
 
-  const saved = await Data.saveResource(
+  // A plan limit throws a GetBooqinError carrying a 402 and a message
+  // naming the plan that would clear it; uncaught, React Router renders
+  // a generic 500 instead. See services.new.tsx for the same guard.
+  let saved;
+  try {
+  saved = await Data.saveResource(
     shop,
     platform,
     {
@@ -149,6 +154,11 @@ export async function action({ request, params }: Route.ActionArgs) {
   // happened at all (UX audit's #14 finding); returning saved:true instead
   // renders the same "Saved." feedback the rest of the app already uses
   // (SettingsCard's savedAt, PasswordCard) without a pointless navigation.
+  } catch (err) {
+    if (isGetBooqinError(err)) return { error: err.message };
+    throw err;
+  }
+
   if (isNew) {
     return redirect(`/dashboard/${params.connectionId}/resources/${saved.id}`);
   }
@@ -416,7 +426,12 @@ export default function ResourceDetail({ loaderData, actionData, params }: Route
             <button type="submit" className="btn-pri">
               Save
             </button>
-            {actionData?.saved && <span className="alert-success">Saved.</span>}
+            {actionData && "error" in actionData && actionData.error && (
+              <span className="alert-error">{actionData.error}</span>
+            )}
+            {actionData && "saved" in actionData && actionData.saved && (
+              <span className="alert-success">Saved.</span>
+            )}
           </div>
           {!isNew && (
             <button
