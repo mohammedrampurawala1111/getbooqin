@@ -6,7 +6,7 @@ import { requireTenant } from "~/tenant.server";
 import { tenantSelectHeaders, getClerkClient } from "~/session.server";
 import { UserMenu } from "~/components/account";
 import { ThemeToggle, ToastProvider } from "~/components/ui";
-import { vocabFor } from "~/lib/presets";
+import { vocabFor, type Vocabulary } from "~/lib/presets";
 import { getAppUrl } from "~/lib/env.server";
 
 // Tenant-scoped dashboard layout. Mints the TenantSession cookie for this
@@ -18,9 +18,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const settings = await Settings.getSettings(shop, platform);
 
   // A manual connection has no external channel behind it (see
-  // core/src/connections.ts's createManualConnection) — only count Shopify
-  // and Stripe, the two integrations with a real backend.
-  const channelCount = (platform === "shopify" ? 1 : 0) + (settings.enabled_gateways.includes("stripe") ? 1 : 0);
+  // core/src/connections.ts's createManualConnection) — Shopify is the
+  // only integration with a real backend.
+  const channelCount = platform === "shopify" ? 1 : 0;
   const pendingCount = await Bookings.count(shop, platform, { status: "pending" });
 
   // "0 channels connected" under the business name is a permanent nag for
@@ -100,7 +100,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     // nav link is hidden for them here so it doesn't dead-end (orchestrator
     // decision on Settings access, §2). Named distinctly from `role` inside
     // `user` below, which is the unrelated Account-page "job title" label.
-    { connection, channelCount, pendingCount, label, preset: settings.preset, bookingHandle, bookingUrl, canViewSettings: role === "owner" || role === "admin", user: { name, email, initials, role: jobTitle } },
+    { connection, channelCount, pendingCount, label, terms: settings.terms, bookingHandle, bookingUrl, canViewSettings: role === "owner" || role === "admin", user: { name, email, initials, role: jobTitle } },
     { headers: tenantSelectHeaders(tenantSession) }
   );
 }
@@ -185,8 +185,8 @@ const NAV_ICONS = {
 // would just be an always-broken link to click. Small, targeted hide,
 // not a nav restructure: everything else here is unaffected, since only
 // Settings gained the stricter loader-level gate.
-function navItems(preset: string | null, pendingCount: number, canViewSettings: boolean) {
-  const v = vocabFor(preset);
+function navItems(vocab: Vocabulary, pendingCount: number, canViewSettings: boolean) {
+  const v = vocab;
   return [
     { to: "", end: true, label: "Overview", icon: NAV_ICONS.overview },
     { to: "/bookings", label: v.bookingTitle, icon: NAV_ICONS.bookings, badge: pendingCount > 0 ? pendingCount : undefined },
@@ -262,9 +262,9 @@ function BookingLinkRow({ bookingHandle, bookingUrl }: { bookingHandle: string |
 function DashboardShell({
   loaderData, params, children,
 }: { loaderData: Route.ComponentProps["loaderData"]; params: { connectionId: string }; children: ReactNode }) {
-  const { channelCount, pendingCount, label, preset, bookingHandle, bookingUrl, canViewSettings, user } = loaderData;
-  const v = vocabFor(preset);
-  const NAV_ITEMS = navItems(preset, pendingCount, canViewSettings);
+  const { channelCount, pendingCount, label, terms, bookingHandle, bookingUrl, canViewSettings, user } = loaderData;
+  const v = vocabFor(terms);
+  const NAV_ITEMS = navItems(v, pendingCount, canViewSettings);
   const base = `/dashboard/${params.connectionId}`;
 
   // Below md: <aside> is an off-canvas drawer toggled by the topbar button
@@ -414,7 +414,7 @@ function DashboardShell({
 }
 
 export default function ConnectionDashboard({ loaderData, params }: Route.ComponentProps) {
-  const v = vocabFor(loaderData.preset);
+  const v = vocabFor(loaderData.terms);
   return (
     <DashboardShell loaderData={loaderData} params={params}>
       <Outlet context={{ vocab: v }} />

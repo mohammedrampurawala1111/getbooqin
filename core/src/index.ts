@@ -27,22 +27,27 @@ export * as Availability from "./booking/availability.js";
 export * as Waitlist from "./booking/waitlist.js";
 // DB-free subset of waitlist.js — see waitlistShared.ts's header comment.
 export * as WaitlistShared from "./booking/waitlistShared.js";
-export * as PaymentManager from "./booking/paymentManager.js";
-export * as MeetingManager from "./booking/meetingManager.js";
 export * as Mailer from "./booking/mailer.js";
-export * as WhatsApp from "./booking/whatsapp.js";
-export * as ChatFlow from "./booking/chatFlow.js";
 export * as Settings from "./booking/settings.js";
 export * as TZ from "./booking/tz.js";
 export * as Metrics from "./booking/metrics.js";
 export * as ServiceMetafields from "./booking/serviceMetafields.js";
 export * as Presets from "./booking/presets.js";
-export * as FeatureFlags from "./booking/featureFlags.js";
 export { GetBooqinError, isGetBooqinError } from "./booking/errors.js";
 export { boot } from "./booking/boot.js";
-export * as ShopifyAdmin from "./platforms/shopifyAdmin.js";
+// Scheduled-job bookkeeping — see src/jobs.ts on why a cron that never
+// runs has to be observable rather than assumed (Phase 0's B1).
+export * as Jobs from "./jobs.js";
 
-// Visit Summary (Clinic preset only) — see
-// docs/patient-summary-cloud-integration-plan.md.
-export * as ConsultationSummary from "./booking/consultationSummary.js";
-export * as PatientSummary from "./ai/patientSummary.js";
+// Billing (§W7). `Plans` is a pure data table with zero imports and is
+// also exposed at the ./billing/plans subpath, so the pricing page and
+// the Billing screen can render from the exact table the server
+// enforces without pulling Prisma into a client bundle.
+export * as Plans from "./billing/plans.js";
+export * as Entitlements from "./billing/entitlements.js";
+export * as Subscriptions from "./billing/subscriptions.js";
+export * as Billing from "./billing/enforcement.js";
+export * as BillingWebhooks from "./billing/webhooks.js";
+export { RazorpayProvider, providerPlanId } from "./billing/providers/razorpay.js";
+export type { BillingProvider, NormalisedEvent, BillingEventType } from "./billing/providers/provider.js";
+export * as ShopifyAdmin from "./platforms/shopifyAdmin.js";

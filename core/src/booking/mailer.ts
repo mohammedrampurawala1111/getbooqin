@@ -8,7 +8,7 @@
  */
 import nodemailer from "nodemailer";
 import { DateTime } from "luxon";
-import type { Booking, ChatConversation, Connection, ConnectionInvite, Waitlist } from "@prisma/client";
+import type { Booking, Connection, ConnectionInvite, Waitlist } from "@prisma/client";
 import prisma from "../db.js";
 import * as Data from "./data.js";
 import * as Bookings from "./bookings.js";
@@ -24,8 +24,6 @@ export { tokens, previewTokens };
  * Canonical list of every customizable notification. Drives the "Email
  * templates" section in Settings → Notifications.
  */
-export type TemplateCapability = "chat" | "payments" | "visit_summary";
-
 export interface TemplateDef {
   key: string;
   group: string;
@@ -33,15 +31,6 @@ export interface TemplateDef {
   description: string;
   subject: string;
   body: string;
-  // Declares the capability this message depends on — the filter in
-  // visibleTemplateDefs() below reads *only* this field, not the group or
-  // key name, so a future message that needs a capability the product
-  // doesn't have yet can't ship listed by mistake the way this one did:
-  // "Awaiting payment" lived in the "Booking received" group, not
-  // "Payment", so a filter keyed on group name silently missed it even
-  // after the sibling "Payment received" message was correctly gated
-  // (Defect Dossier's R3-02 finding).
-  requires?: TemplateCapability;
 }
 
 export const TEMPLATE_DEFS: TemplateDef[] = [
@@ -51,16 +40,7 @@ export const TEMPLATE_DEFS: TemplateDef[] = [
     label: "Confirmed instantly",
     description: "Sent to the customer when their booking is auto-confirmed on request.",
     subject: "Your {{booking_term}} is confirmed — {{date}} at {{time}}",
-    body: "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} is confirmed.\n\nWhen: {{date}} at {{time}} {{timezone}}\nWith: {{resource}}\n\n{{meeting_line}}\n{{payment_line}}\n{{summary_consent_line}}\n\nNeed to change it? Use this link:\n{{manage_url}}\n\nThanks,\n{{business_name}}",
-  },
-  {
-    key: "customer_created_awaiting_payment",
-    group: "Booking received",
-    label: "Awaiting payment",
-    description: "Sent instead of the above when the service requires payment before it's confirmed.",
-    subject: "Almost there — your {{booking_term}} on {{date}} needs payment",
-    body: "Hi {{customer_name}},\n\nWe have reserved {{date}} at {{time}} {{timezone}} for your {{booking_term}} ({{service}} with {{resource}}).\n\nIt is not confirmed yet — we are waiting for payment.\n\n{{payment_line}}\n\nManage your {{booking_term}}:\n{{manage_url}}\n\nThanks,\n{{business_name}}",
-    requires: "payments",
+    body: "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} is confirmed.\n\nWhen: {{date}} at {{time}} {{timezone}}\nWith: {{resource}}\n\nNeed to change it? Use this link:\n{{manage_url}}\n\nThanks,\n{{business_name}}",
   },
   {
     key: "customer_created_pending",
@@ -68,7 +48,7 @@ export const TEMPLATE_DEFS: TemplateDef[] = [
     label: "Awaiting manual confirmation",
     description: "Sent instead of the above when new bookings require the business to approve them first.",
     subject: "We received your {{booking_term}} request — {{date}} at {{time}}",
-    body: "Hi {{customer_name}},\n\nThanks — we have your request for {{service}} with {{resource}} on {{date}} at {{time}} {{timezone}}.\n\nIt is not confirmed yet. We will email you again as soon as it is approved.\n\n{{summary_consent_line}}\n\n{{manage_url}}\n\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nThanks — we have your request for {{service}} with {{resource}} on {{date}} at {{time}} {{timezone}}.\n\nIt is not confirmed yet. We will email you again as soon as it is approved.\n\n{{manage_url}}\n\n{{business_name}}",
   },
   {
     key: "admin_created",
@@ -84,7 +64,7 @@ export const TEMPLATE_DEFS: TemplateDef[] = [
     label: "Booking confirmed",
     description: "Sent to the customer when a pending request is approved by the business.",
     subject: "Confirmed: your {{booking_term}} on {{date}} at {{time}}",
-    body: "Hi {{customer_name}},\n\nGood news — your {{booking_term}} is now confirmed.\n\n{{service}} with {{resource}}\n{{date}} at {{time}} {{timezone}}\n\n{{meeting_line}}\n{{payment_line}}\n\n{{manage_url}}\n\nSee you then,\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nGood news — your {{booking_term}} is now confirmed.\n\n{{service}} with {{resource}}\n{{date}} at {{time}} {{timezone}}\n\n{{manage_url}}\n\nSee you then,\n{{business_name}}",
   },
   {
     key: "customer_declined",
@@ -111,15 +91,6 @@ export const TEMPLATE_DEFS: TemplateDef[] = [
     body: "{{customer_name}} cancelled their {{booking_term}} for {{service}} on {{date}} at {{time}} {{timezone}}.",
   },
   {
-    key: "customer_paid",
-    group: "Payment",
-    label: "Payment received",
-    description: "Sent to the customer once their payment for a booking is confirmed.",
-    subject: "Payment received for {{date}} at {{time}}",
-    body: "Hi {{customer_name}},\n\nThanks — we have received {{amount_due}} for your {{booking_term}} on {{date}} at {{time}} {{timezone}}.\n\n{{meeting_line}}\n\n{{manage_url}}\n\n{{business_name}}",
-    requires: "payments",
-  },
-  {
     key: "customer_moved",
     group: "Rescheduled",
     label: "Time changed",
@@ -133,7 +104,7 @@ export const TEMPLATE_DEFS: TemplateDef[] = [
     label: "Upcoming booking reminder",
     description: "Sent to customers ahead of their appointment — see the reminder timing setting above.",
     subject: "Reminder: {{service}} on {{date}} at {{time}}",
-    body: "Hi {{customer_name}},\n\nThis is a reminder for your {{booking_term}}:\n\n{{service}} with {{resource}}\n{{date}} at {{time}} {{timezone}}\n\n{{meeting_line}}\n\n{{manage_url}}\n\nSee you soon,\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nThis is a reminder for your {{booking_term}}:\n\n{{service}} with {{resource}}\n{{date}} at {{time}} {{timezone}}\n\n{{manage_url}}\n\nSee you soon,\n{{business_name}}",
   },
   {
     key: "waitlist_joined",
@@ -159,44 +130,7 @@ export const TEMPLATE_DEFS: TemplateDef[] = [
     subject: "Your offer for {{date}} at {{time}} has expired",
     body: "Hi {{customer_name}},\n\nYour offer for {{service}} on {{date}} at {{time}} {{timezone}} wasn't claimed in time, so we've offered it to the next person on our list.\n\nYou're still on the waitlist — we'll let you know if another time opens up.\n\n{{business_name}}",
   },
-  {
-    key: "admin_chat_lead",
-    group: "Chat widget",
-    label: "New lead from chat",
-    description: "Sent to the business when a visitor leaves a message through the storefront chat widget.",
-    subject: "New chat message from {{lead_name}}",
-    body: "You received a new message through the website chat.\n\nName: {{lead_name}}\nEmail: {{lead_email}}\n\nMessage:\n{{lead_message}}\n\nPage: {{lead_page}}",
-    requires: "chat",
-  },
-  {
-    key: "customer_visit_summary",
-    group: "Visit summary",
-    label: "Visit summary ready",
-    description: "Sent to the patient once their visit summary has been reviewed, approved, and sent by the clinician. Clinic preset only — the email itself carries no clinical detail, only a link to the summary.",
-    subject: "Your visit summary from {{business_name}} is ready",
-    body: "Hi {{customer_name}},\n\nThe summary from your {{booking_term}} on {{date}} is ready for you to view.\n\n{{summary_url}}\n\nIf you have any questions about it, please contact us directly.\n\n{{business_name}}",
-    requires: "visit_summary",
-  },
 ];
-
-/**
- * The subset of TEMPLATE_DEFS whose required capability (see `requires`
- * above) is actually available right now. This is the single place that
- * decides visibility — Settings > Notifications renders exactly this list,
- * so a message for an unbuilt or unconnected capability (payments not
- * connected, no chat widget, visit summaries off) can't be listed by
- * mistake the way "Awaiting payment" and the chat-widget section both were
- * (Defect Dossier's R3-02 finding — the previous filter checked template
- * keys and group names by hand and missed one).
- */
-export function visibleTemplateDefs(caps: { chat: boolean; payments: boolean; visitSummary: boolean }): TemplateDef[] {
-  return TEMPLATE_DEFS.filter((def) => {
-    if (def.requires === "chat") return caps.chat;
-    if (def.requires === "payments") return caps.payments;
-    if (def.requires === "visit_summary") return caps.visitSummary;
-    return true;
-  });
-}
 
 /** Per-template on/off switch, separate from the blanket notify_customer/notify_admin toggles. */
 function templateEnabled(settings: Settings, key: string): boolean {
@@ -211,6 +145,15 @@ function getTransporter(): nodemailer.Transporter | null {
     transporter = null;
     return transporter;
   }
+  // Warned once, when the transport is first built rather than on every
+  // send. Without MAIL_FROM_EMAIL the fallback below sends as the
+  // merchant's own address over our SMTP relay, which is the exact
+  // spoof signature Gmail and Outlook filter on (see fromHeaders).
+  if (!process.env.MAIL_FROM_EMAIL) {
+    console.warn(
+      "[getbooqin mailer] MAIL_FROM_EMAIL is not set — every message will be sent as the merchant's own address over this SMTP relay, which has no SPF/DKIM alignment for their domain and will be spam-foldered or rejected. Set MAIL_FROM_EMAIL to an address on a domain you control and have authenticated."
+    );
+  }
   transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 587),
@@ -220,16 +163,69 @@ function getTransporter(): nodemailer.Transporter | null {
   return transporter;
 }
 
+/**
+ * A display name safe to drop inside a quoted string in a header.
+ * `business_name` is merchant-supplied free text: a stray quote would
+ * break the header, and a stray newline would let a merchant append
+ * headers of their own (a Bcc, say) to every message the product sends
+ * on their behalf.
+ */
+function quotedDisplayName(name: string): string {
+  return name.replace(/[\r\n]+/g, " ").replace(/["\\]/g, "").trim();
+}
+
+/**
+ * Phase 0 / B3 — who these messages actually come from.
+ *
+ * They used to go out as `"Business Name" <the merchant's own address>`
+ * over our SMTP relay. Our relay is not authorised to send for a domain
+ * we do not control, so every confirmation, reminder and cancellation
+ * failed SPF and DKIM alignment at the receiving end — textbook spoof
+ * signals, and the reason those messages land in spam or get rejected
+ * outright. There was no Reply-To either, so a customer hitting reply
+ * answered an address we were forging.
+ *
+ * The fix is the standard "sent on behalf of" shape: send from one
+ * address on a domain we control and have authenticated (SPF + DKIM +
+ * DMARC), keep the merchant's identity in the display name so the
+ * customer still sees who it's from, and point replies back at the
+ * merchant.
+ *
+ * When MAIL_FROM_EMAIL isn't configured there is nothing to send *as*, so
+ * this falls back to the old behaviour rather than dropping the mail —
+ * wrong in exactly the way it was before, loudly warned about at startup,
+ * and harmless in local development where SMTP usually isn't set at all.
+ */
+export function fromHeaders(settings: Settings): { from: string; replyTo?: string } {
+  const platformAddress = process.env.MAIL_FROM_EMAIL;
+  const merchantAddress = Bookings.isRealEmail(settings.business_email) ? settings.business_email : "";
+  const businessName = quotedDisplayName(settings.business_name) || "GetBooqin";
+
+  if (!platformAddress) {
+    return { from: `"${businessName}" <${merchantAddress}>` };
+  }
+
+  const platformName = quotedDisplayName(process.env.MAIL_FROM_NAME || "GetBooqin");
+
+  return {
+    from: `"${businessName} via ${platformName}" <${platformAddress}>`,
+    // Only when it is actually somewhere else to reply to. Setting
+    // Reply-To equal to From is noise, and a missing/garbage
+    // business_email would otherwise produce a header that bounces.
+    ...(merchantAddress && merchantAddress !== platformAddress ? { replyTo: merchantAddress } : {}),
+  };
+}
+
 async function mail(to: string, subject: string, body: string, settings: Settings): Promise<void> {
   const t = getTransporter();
   if (!t) {
     console.warn(`[getbooqin mailer] SMTP not configured — dropping email to ${to}: ${subject}`);
     return;
   }
-  const from = `"${settings.business_name}" <${process.env.MAIL_FROM_EMAIL || settings.business_email}>`;
-  const info = await t.sendMail({ to, from, subject, text: body });
+  const { from, replyTo } = fromHeaders(settings);
+  const info = await t.sendMail({ to, from, ...(replyTo ? { replyTo } : {}), subject, text: body });
   console.log(
-    `[getbooqin mailer] sent "${subject}" to ${to} from ${from} — messageId=${info.messageId} accepted=${JSON.stringify(info.accepted)} rejected=${JSON.stringify(info.rejected)} response=${info.response}`
+    `[getbooqin mailer] sent "${subject}" to ${to} from ${from}${replyTo ? ` (reply-to ${replyTo})` : ""} — messageId=${info.messageId} accepted=${JSON.stringify(info.accepted)} rejected=${JSON.stringify(info.rejected)} response=${info.response}`
   );
 }
 
@@ -271,20 +267,13 @@ function createdCopy(booking: Booking) {
     return {
       key: "customer_created",
       subject: "Your {{booking_term}} is confirmed — {{date}} at {{time}}",
-      body: "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} is confirmed.\n\nWhen: {{date}} at {{time}} {{timezone}}\nWith: {{resource}}\n\n{{meeting_line}}\n{{payment_line}}\n{{summary_consent_line}}\n\nNeed to change it? Use this link:\n{{manage_url}}\n\nThanks,\n{{business_name}}",
-    };
-  }
-  if (Bookings.needsPayment(booking)) {
-    return {
-      key: "customer_created_awaiting_payment",
-      subject: "Almost there — your {{booking_term}} on {{date}} needs payment",
-      body: "Hi {{customer_name}},\n\nWe have reserved {{date}} at {{time}} {{timezone}} for your {{booking_term}} ({{service}} with {{resource}}).\n\nIt is not confirmed yet — we are waiting for payment.\n\n{{payment_line}}\n\nManage your {{booking_term}}:\n{{manage_url}}\n\nThanks,\n{{business_name}}",
+      body: "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} is confirmed.\n\nWhen: {{date}} at {{time}} {{timezone}}\nWith: {{resource}}\n\nNeed to change it? Use this link:\n{{manage_url}}\n\nThanks,\n{{business_name}}",
     };
   }
   return {
     key: "customer_created_pending",
     subject: "We received your {{booking_term}} request — {{date}} at {{time}}",
-    body: "Hi {{customer_name}},\n\nThanks — we have your request for {{service}} with {{resource}} on {{date}} at {{time}} {{timezone}}.\n\nIt is not confirmed yet. We will email you again as soon as it is approved.\n\n{{summary_consent_line}}\n\n{{manage_url}}\n\n{{business_name}}",
+    body: "Hi {{customer_name}},\n\nThanks — we have your request for {{service}} with {{resource}} on {{date}} at {{time}} {{timezone}}.\n\nIt is not confirmed yet. We will email you again as soon as it is approved.\n\n{{manage_url}}\n\n{{business_name}}",
   };
 }
 
@@ -304,46 +293,10 @@ export async function resendConfirmation(shop: string, platform: string, booking
   );
 }
 
-/**
- * Sends the "your visit summary is ready" notification (Clinic preset only
- * — see the integration plan's Part 3 §5). The email itself is a
- * notification, not the content — it links to the tokened patient-facing
- * page (`{{summary_url}}`, built from the booking's uid, same trust model
- * as `{{manage_url}}`) rather than rendering any summary field here.
- *
- * Called explicitly from ConsultationSummary.send(), not wired through the
- * booking event bus — this is a one-off clinician action ("Send to
- * patient"), not an automatic booking-lifecycle notification, so — like
- * resendConfirmation above — it ignores the blanket notify_customer
- * toggle and only respects the per-template on/off switch.
- */
-export async function sendVisitSummary(shop: string, platform: string, bookingId: number): Promise<void> {
-  const booking = await Bookings.get(shop, bookingId);
-  if (!booking) throw new GetBooqinError("getbooqin_not_found", "Booking not found.", 404);
-
-  const settings = await getSettings(shop, platform);
-  if (!templateEnabled(settings, "customer_visit_summary")) {
-    console.log(`[getbooqin mailer] visit summary email skipped for booking ${booking.uid} — template "customer_visit_summary" disabled`);
-    return;
-  }
-
-  await sendToCustomer(
-    shop,
-    booking,
-    settings,
-    settingTemplate(settings, "customer_visit_summary_subject", "Your visit summary from {{business_name}} is ready"),
-    settingTemplate(
-      settings,
-      "customer_visit_summary_body",
-      "Hi {{customer_name}},\n\nThe summary from your {{booking_term}} on {{date}} is ready for you to view.\n\n{{summary_url}}\n\nIf you have any questions about it, please contact us directly.\n\n{{business_name}}"
-    )
-  );
-}
-
 async function onCreated(booking: Booking) {
   const shop = booking.shop;
   const settings = await getSettings(shop, booking.platform);
-  // Re-read: MeetingManager may have attached a join link by now.
+  // Re-read: another booking_created listener may have changed the row.
   const fresh = (await Bookings.get(shop, booking.id)) ?? booking;
 
   if (settings.notify_customer) {
@@ -377,11 +330,11 @@ async function onCreated(booking: Booking) {
   }
 }
 
-async function onStatusChanged(booking: Booking, oldStatus: string, newStatus: string, reason: string) {
+async function onStatusChanged(booking: Booking, oldStatus: string, newStatus: string) {
   if (oldStatus === newStatus) return;
   const settings = await getSettings(booking.shop, booking.platform);
   if (!settings.notify_customer) return;
-  if (newStatus === "cancelled" || reason === "payment_received") return; // own listeners
+  if (newStatus === "cancelled") return; // onCancelled has its own listener
 
   if (newStatus === "confirmed" && templateEnabled(settings, "customer_confirmed")) {
     await sendToCustomer(
@@ -392,7 +345,7 @@ async function onStatusChanged(booking: Booking, oldStatus: string, newStatus: s
       settingTemplate(
         settings,
         "customer_confirmed_body",
-        "Hi {{customer_name}},\n\nGood news — your {{booking_term}} is now confirmed.\n\n{{service}} with {{resource}}\n{{date}} at {{time}} {{timezone}}\n\n{{meeting_line}}\n{{payment_line}}\n\n{{manage_url}}\n\nSee you then,\n{{business_name}}"
+        "Hi {{customer_name}},\n\nGood news — your {{booking_term}} is now confirmed.\n\n{{service}} with {{resource}}\n{{date}} at {{time}} {{timezone}}\n\n{{manage_url}}\n\nSee you then,\n{{business_name}}"
       )
     );
   }
@@ -436,22 +389,6 @@ async function onCancelled(booking: Booking, _reason: string) {
       settingTemplate(settings, "admin_cancelled_body", "{{customer_name}} cancelled their {{booking_term}} for {{service}} on {{date}} at {{time}} {{timezone}}.")
     );
   }
-}
-
-async function onPaymentCompleted(booking: Booking) {
-  const settings = await getSettings(booking.shop, booking.platform);
-  if (!settings.notify_customer || !templateEnabled(settings, "customer_paid")) return;
-  await sendToCustomer(
-    booking.shop,
-    booking,
-    settings,
-    settingTemplate(settings, "customer_paid_subject", "Payment received for {{date}} at {{time}}"),
-    settingTemplate(
-      settings,
-      "customer_paid_body",
-      "Hi {{customer_name}},\n\nThanks — we have received {{amount_due}} for your {{booking_term}} on {{date}} at {{time}} {{timezone}}.\n\n{{meeting_line}}\n\n{{manage_url}}\n\n{{business_name}}"
-    )
-  );
 }
 
 async function onRescheduled(booking: Booking) {
@@ -517,7 +454,7 @@ export async function sendReminders(): Promise<{ sent: number }> {
         settingTemplate(
           settings,
           "customer_reminder_body",
-          "Hi {{customer_name}},\n\nThis is a reminder for your {{booking_term}}:\n\n{{service}} with {{resource}}\n{{date}} at {{time}} {{timezone}}\n\n{{meeting_line}}\n\n{{manage_url}}\n\nSee you soon,\n{{business_name}}"
+          "Hi {{customer_name}},\n\nThis is a reminder for your {{booking_term}}:\n\n{{service}} with {{resource}}\n{{date}} at {{time}} {{timezone}}\n\n{{manage_url}}\n\nSee you soon,\n{{business_name}}"
         )
       );
 
@@ -586,34 +523,6 @@ export async function sendTeamInvite(connection: Connection, invite: ConnectionI
     `This link expires in 7 days.\n\n` +
     `${businessName}`;
   await mail(invite.email, `You're invited to join ${businessName} on GetBooqin`, body, settings);
-}
-
-export async function sendChatLead(
-  shop: string,
-  platform: string,
-  data: { name: string; email: string; message: string },
-  conversation: ChatConversation
-): Promise<void> {
-  const settings = await getSettings(shop, platform);
-  if (!templateEnabled(settings, "admin_chat_lead")) return;
-  const to = settings.admin_email || settings.business_email;
-  const replacements = {
-    "{{lead_name}}": data.name,
-    "{{lead_email}}": data.email,
-    "{{lead_message}}": data.message,
-    "{{lead_page}}": conversation.pageUrl,
-  };
-  const subject = settingTemplate(settings, "admin_chat_lead_subject", "New chat message from {{lead_name}}");
-  const body = settingTemplate(
-    settings,
-    "admin_chat_lead_body",
-    "You received a new message through the website chat.\n\nName: {{lead_name}}\nEmail: {{lead_email}}\n\nMessage:\n{{lead_message}}\n\nPage: {{lead_page}}"
-  );
-  try {
-    await mail(to, replace(subject, replacements), replace(body, replacements), settings);
-  } catch (error) {
-    console.error(`[getbooqin mailer] chat lead email failed for shop ${shop} (conversation ${conversation.uid}):`, error);
-  }
 }
 
 function logMailError(context: string, shop: string, uid: string, error: unknown) {
@@ -721,16 +630,13 @@ export function init() {
   events.onEvent("booking_cancelled", (booking, reason) =>
     onCancelled(booking, reason).catch((err) => logMailError("booking_cancelled", booking.shop, booking.uid, err))
   );
-  events.onEvent("booking_status_changed", (booking, oldStatus, newStatus, reason) =>
-    onStatusChanged(booking, oldStatus, newStatus, reason).catch((err) =>
+  events.onEvent("booking_status_changed", (booking, oldStatus, newStatus) =>
+    onStatusChanged(booking, oldStatus, newStatus).catch((err) =>
       logMailError("booking_status_changed", booking.shop, booking.uid, err)
     )
   );
   events.onEvent("booking_rescheduled", (booking) =>
     onRescheduled(booking).catch((err) => logMailError("booking_rescheduled", booking.shop, booking.uid, err))
-  );
-  events.onEvent("payment_completed", (booking) =>
-    onPaymentCompleted(booking).catch((err) => logMailError("payment_completed", booking.shop, booking.uid, err))
   );
   events.onEvent("waitlist_joined", (entry) =>
     onWaitlistJoined(entry).catch((err) => logMailError("waitlist_joined", entry.shop, entry.uid, err))

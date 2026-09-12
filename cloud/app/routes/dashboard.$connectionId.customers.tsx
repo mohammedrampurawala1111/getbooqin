@@ -5,11 +5,11 @@ import { Data, Settings, Bookings } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Field, Input, PageHeader, EmptyState, DataTable, useToast } from "~/components/ui";
 import { useVocabulary, vocabFor } from "~/lib/presets";
-import { dashboardPreset } from "~/lib/dashboardMeta";
+import { dashboardTerms } from "~/lib/dashboardMeta";
 import { contactFieldErrors } from "~/lib/validation";
 
 export const meta: Route.MetaFunction = ({ matches }) => [
-  { title: `${vocabFor(dashboardPreset(matches)).customers} · GetBooqin` },
+  { title: `${vocabFor(dashboardTerms(matches)).customers} · GetBooqin` },
 ];
 
 export async function loader({ request, params }: Route.LoaderArgs) {

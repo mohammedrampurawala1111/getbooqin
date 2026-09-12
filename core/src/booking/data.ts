@@ -14,10 +14,12 @@
  * accessor of the same name, so UI code reads identically either side.
  */
 import { randomUUID } from "node:crypto";
-import prisma from "../db.js";
+import prisma, { type DbClient } from "../db.js";
 import type { Resource, ServiceConfig, ProductCache } from "@prisma/client";
 import type { ServiceConfigFields } from "./serviceMetafields.js";
-import { GetBooqinError } from "./errors.js";
+import { GetBooqinError, isGetBooqinError } from "./errors.js";
+import { assertCanAddResource, assertCanAddService } from "../billing/enforcement.js";
+import { translateOverlapViolation } from "./slotLock.js";
 
 /* ------------------------------------------------------------- Services */
 
@@ -149,6 +151,9 @@ export async function saveServiceConfig(shop: string, platform: string, data: Se
     );
   }
 
+  // Plan limit — creates only, same reasoning as saveResource above.
+  if (!id) await assertCanAddService(shop, platform);
+
   const row = {
     shop,
     platform,
@@ -163,12 +168,20 @@ export async function saveServiceConfig(shop: string, platform: string, data: Se
     )
       ? data.location_type ?? "onsite"
       : "onsite",
-    paymentRequired: !!data.payment_required,
+    // Merchant deposits came out with Phase 1's trim and no form sends
+    // these any more, but the columns stay (no destructive migrations) and
+    // so does the ability to write them, for whatever re-introduces
+    // deposits as an integration later. Omitted rather than defaulted when
+    // not supplied, same as `color` below, so a service edited today
+    // doesn't silently zero a percentage a merchant set before the trim.
+    ...(data.payment_required !== undefined ? { paymentRequired: data.payment_required } : {}),
     // A 100% default on an unset (or 0) price is meaningless and becomes a
     // live billing rule the moment a merchant later sets a price without
     // ever touching this field (Defect Dossier's BQ-22 finding — Legal's
     // seeded services all landed with deposit_percent 100 on a €0 price).
-    depositPercent: Math.max(0, Math.min(100, data.deposit_percent ?? 0)),
+    ...(data.deposit_percent !== undefined
+      ? { depositPercent: Math.max(0, Math.min(100, data.deposit_percent)) }
+      : {}),
     // Omitted (not reset to a default) when not supplied — on update this
     // leaves an existing custom swatch alone rather than clobbering it every
     // time a merchant edits duration/buffers without touching colour; on
@@ -181,9 +194,44 @@ export async function saveServiceConfig(shop: string, platform: string, data: Se
     requiresRoom: !!data.requires_room,
   };
 
-  const saved = id
-    ? await prisma.serviceConfig.update({ where: { id }, data: row })
-    : await prisma.serviceConfig.create({ data: row });
+  // Keep Booking.exclusive in step with the capacity this service is being
+  // saved with, in the same transaction as the save itself. That column is
+  // what the Booking_resource_no_overlap exclusion constraint keys on — a
+  // constraint predicate can't join to ServiceConfig, so "one customer per
+  // slot" has to be denormalised onto each booking row (see the schema
+  // comment). Only future bookings are touched: a past booking's
+  // exclusivity records how it was actually delivered, not a rule to
+  // re-apply.
+  const exclusive = row.capacity <= 1;
+  const saved = await translateOverlapViolation(() =>
+    prisma.$transaction(async (tx) => {
+      const service = id
+        ? await tx.serviceConfig.update({ where: { id }, data: row })
+        : await tx.serviceConfig.create({ data: row });
+
+      await tx.booking.updateMany({
+        where: { shop, serviceId: service.id, startUtc: { gt: new Date() }, exclusive: !exclusive },
+        data: { exclusive },
+      });
+
+      return service;
+    })
+  ).catch((err) => {
+    // Narrowing a class back to capacity 1 while several people are still
+    // booked into the same slot can't be done by editing a number — the
+    // bookings that already share that slot have to go somewhere first.
+    // Without this the merchant would get a raw Postgres error from the
+    // service form; the transaction has already rolled the capacity change
+    // back, so the service is untouched either way.
+    if (isGetBooqinError(err) && err.code === "getbooqin_slot_taken") {
+      throw new GetBooqinError(
+        "getbooqin_capacity_in_use",
+        "Upcoming bookings already share a time slot for this service, so its capacity can't be reduced to 1. Move or cancel those bookings first.",
+        409
+      );
+    }
+    throw err;
+  });
 
   if (data.resource_ids) {
     await setServiceResources(shop, saved.id, data.resource_ids);
@@ -395,6 +443,12 @@ export interface ResourceInput {
 }
 
 export async function saveResource(shop: string, platform: string, data: ResourceInput, id = 0) {
+  // Plan limit — creates only. An edit to an existing resource is never
+  // blocked, including on an account that is already over its cap after
+  // a downgrade: what a limit stops is *adding the next one*, never
+  // touching what's already there (see billing/entitlements.ts).
+  if (!id) await assertCanAddResource(shop, platform);
+
   const row = {
     shop,
     platform,
@@ -508,8 +562,13 @@ export async function resourcesForService(shop: string, platform: string, servic
  * itself has requiresRoom on — see availability.ts's room-gate logic and
  * Bookings.create()'s room selection.
  */
-export async function roomsForService(shop: string, platform: string, serviceId: number): Promise<Resource[]> {
-  return prisma.resource.findMany({
+export async function roomsForService(
+  shop: string,
+  platform: string,
+  serviceId: number,
+  db: DbClient = prisma
+): Promise<Resource[]> {
+  return db.resource.findMany({
     where: {
       shop,
       platform,

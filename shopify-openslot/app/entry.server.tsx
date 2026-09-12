@@ -1,7 +1,8 @@
 import { PassThrough } from "node:stream";
 import type { AppLoadContext, EntryContext } from "react-router";
-import { ServerRouter } from "react-router";
+import { ServerRouter, isRouteErrorResponse } from "react-router";
 import { renderToPipeableStream } from "react-dom/server";
+import * as Sentry from "@sentry/node";
 import { addDocumentResponseHeaders } from "./shopify.server";
 
 export const streamTimeout = 5000;
@@ -52,4 +53,27 @@ export default function handleRequest(
 
     setTimeout(abort, streamTimeout + 1000);
   });
+}
+
+/**
+ * Phase 0 / B4 — error monitoring.
+ *
+ * Every unhandled throw from a loader, action or server render. These
+ * never reach Express: React Router catches them and renders an
+ * ErrorBoundary instead, so `Sentry.setupExpressErrorHandler` in
+ * server/combined.js sees nothing. This hook is the one that does.
+ *
+ * Two things are deliberately not reported. A request the client aborted
+ * (the merchant navigated away mid-load) isn't a defect, and at any
+ * volume it would drown everything else. Neither is a thrown `Response`
+ * — that's React Router's own control flow for redirects and for
+ * deliberate 404/403s, and Shopify's own auth helpers throw redirects
+ * constantly.
+ */
+export function handleError(error: unknown, { request }: { request: Request }) {
+  if (request.signal.aborted) return;
+  if (isRouteErrorResponse(error) || error instanceof Response) return;
+
+  Sentry.captureException(error, { tags: { app: "shopify-openslot" } });
+  console.error(error);
 }

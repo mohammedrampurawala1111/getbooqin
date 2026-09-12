@@ -4,10 +4,10 @@ import { Data, Settings, ShopifyAdmin, decryptCredentials } from "getbooqin-core
 import { requireTenant } from "~/tenant.server";
 import { AlertError, PageHeader, DataTable, EmptyState, Badge } from "~/components/ui";
 import { useVocabulary, vocabFor } from "~/lib/presets";
-import { dashboardPreset } from "~/lib/dashboardMeta";
+import { dashboardTerms } from "~/lib/dashboardMeta";
 
 export const meta: Route.MetaFunction = ({ matches }) => [
-  { title: `${vocabFor(dashboardPreset(matches)).services} · GetBooqin` },
+  { title: `${vocabFor(dashboardTerms(matches)).services} · GetBooqin` },
 ];
 
 export async function loader({ request, params }: Route.LoaderArgs) {

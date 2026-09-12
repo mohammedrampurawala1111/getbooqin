@@ -1,8 +1,8 @@
 /**
- * {{token}} merge-field resolution shared by every outbound notification
- * channel. Split out of mailer.ts so a non-email channel (see whatsapp.ts)
- * can reuse the exact same "{{customer_name}}" substitution and sample
- * preview data without importing "email notifications" to get it.
+ * {{token}} merge-field resolution for outbound notifications. Split out
+ * of mailer.ts so the settings UI's template preview can render the same
+ * "{{customer_name}}" substitution the real send path uses without
+ * importing the mailer itself.
  */
 import { DateTime } from "luxon";
 import type { Booking } from "@prisma/client";
@@ -47,15 +47,6 @@ export async function tokens(shop: string, booking: Booking, settings: Settings)
     "{{customer_email}}": customer?.email ?? "",
     "{{customer_phone}}": customer?.phone ?? "",
     "{{manage_url}}": Bookings.manageUrl(booking, settings),
-    "{{summary_url}}": Bookings.summaryUrl(booking, settings),
-    "{{summary_consent_line}}": settings.visit_summary_consent_line || "",
-    "{{meeting_url}}": booking.meetingUrl,
-    "{{meeting_line}}": booking.meetingUrl ? `Join the video call here: ${booking.meetingUrl}` : "",
-    "{{amount_due}}": booking.amountDue > 0 ? money(settings, booking.amountDue) : "",
-    "{{payment_status}}": booking.paymentStatus,
-    "{{payment_line}}": Bookings.needsPayment(booking)
-      ? `Outstanding: ${money(settings, booking.amountDue)}. You can pay here: ${Bookings.manageUrl(booking, settings)}`
-      : "",
     "{{decline_reason_line}}": customFields._decline_reason ? `Reason: ${customFields._decline_reason}` : "",
     "{{addons_summary}}": addonsSummary,
   };
@@ -65,7 +56,7 @@ export async function tokens(shop: string, booking: Booking, settings: Settings)
  * Sample data for Settings > Notifications' "Preview" (Defect Dossier's
  * BQ-34 finding, item 2) — no real booking exists to render against there,
  * so this fabricates a plausible one instead of touching the database.
- * Covers every token any email or WhatsApp template body uses.
+ * Covers every token any email template body uses.
  */
 export function previewTokens(settings: Settings): Record<string, string> {
   const sampleDate = DateTime.now().setZone(settings.timezone).plus({ days: 2 }).set({ hour: 10, minute: 0 });
@@ -81,28 +72,17 @@ export function previewTokens(settings: Settings): Record<string, string> {
     "{{status}}": "confirmed",
     "{{timezone}}": zoneAbbr(sampleDate.toJSDate(), settings.timezone),
     "{{price}}": money(settings, 45),
-    "{{amount_due}}": money(settings, 45),
     "{{notes}}": "Please arrive 10 minutes early.",
     "{{source}}": "form",
     "{{customer_name}}": "Jordan Lee",
     "{{customer_email}}": "jordan@example.com",
     "{{customer_phone}}": "+1 555 0100",
     "{{manage_url}}": manageUrl,
-    "{{summary_url}}": `${settings.booking_page_url}?getbooqin_summary=sample`,
-    "{{summary_consent_line}}": settings.visit_summary_consent_line || "",
-    "{{meeting_url}}": "https://meet.example.com/sample",
-    "{{meeting_line}}": "Join the video call here: https://meet.example.com/sample",
-    "{{payment_status}}": "unpaid",
-    "{{payment_line}}": `Outstanding: ${money(settings, 45)}. You can pay here: ${manageUrl}`,
     "{{decline_reason_line}}": "Reason: Fully booked that day.",
     "{{addons_summary}}": `Add-ons: Extra 15 minutes (${money(settings, 10)})`,
     "{{expires_at}}": expiresAt.toFormat("HH:mm"),
     "{{claim_url}}": `${settings.booking_page_url}?getbooqin_claim=sample`,
     "{{leave_url}}": `${settings.booking_page_url}?getbooqin_leave=sample`,
-    "{{lead_name}}": "Jordan Lee",
-    "{{lead_email}}": "jordan@example.com",
-    "{{lead_message}}": "Do you have anything available this Friday afternoon?",
-    "{{lead_page}}": settings.booking_page_url,
   };
 }
 

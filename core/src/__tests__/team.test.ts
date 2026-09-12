@@ -11,6 +11,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import prisma from "../db.js";
 import * as Team from "../team.js";
 import * as Mailer from "../booking/mailer.js";
+import { setPlanManually } from "../billing/subscriptions.js";
 import { isGetBooqinError } from "../booking/errors.js";
 
 const RUN = Date.now();
@@ -44,6 +45,11 @@ describe("Team", () => {
       data: { userId: ownerUserId, platform, shop, credentials: "", status: "active" },
     });
     connectionId = connection.id;
+    // Team seats are a plan limit now (§W7) — a connection with no
+    // subscription resolves to Free, which allows the owner and nobody
+    // else. Every fixture here is about inviting people, so the fixture
+    // account has to be one that can: Business, which is unlimited.
+    await setPlanManually(connectionId, "business");
     await prisma.connectionMember.create({ data: { connectionId, userId: ownerUserId, role: "owner" } });
     await prisma.connectionMember.create({ data: { connectionId, userId: existingMemberUserId, role: "write" } });
     expect(connectionId).toBeTruthy();
@@ -96,6 +102,7 @@ describe("Team", () => {
       const otherConn = await prisma.connection.create({
         data: { userId: ownerUserId, platform, shop: `${shop}-other`, credentials: "", status: "active" },
       });
+      await setPlanManually(otherConn.id, "business");
       try {
         await prisma.connectionMember.create({ data: { connectionId: otherConn.id, userId: ownerUserId, role: "owner" } });
         const { invite } = await Team.inviteMember({
@@ -310,6 +317,7 @@ describe("Team", () => {
       const secondConnection = await prisma.connection.create({
         data: { userId: ownerUserId, platform, shop: `team-test-second-${RUN}.myshopify.com`, credentials: "", status: "active" },
       });
+      await setPlanManually(secondConnection.id, "business");
       try {
         const older = await Team.inviteMember({ connectionId, email, role: "read", invitedByUserId: ownerUserId });
         // createdAt has millisecond resolution — force a real ordering gap

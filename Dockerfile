@@ -44,8 +44,24 @@ RUN npm run build -w shopify-openslot
 
 ENV NODE_ENV=production
 EXPOSE 3000
-# The resource-assignment backfill (see core/scripts_backfill_resource_assignments.ts)
-# runs here, after migrations and before the server starts, because this
-# session has no other route to production DB access — it's idempotent and
-# cheap, so running it on every boot is harmless.
-CMD ["sh", "-c", "npx prisma migrate deploy --schema core/prisma/schema.prisma && npx tsx core/scripts_backfill_resource_assignments.ts && npm run start -w server"]
+# Migrations have moved OUT of this CMD and into fly.toml's
+# release_command — see the comment there. Running them here meant a
+# failed migration crash-looped the machine instead of aborting the
+# deploy, which stopped being acceptable once a migration could
+# legitimately refuse to apply (Phase 0's B2 exclusion constraints).
+#
+# The backfills stay: both are idempotent and cheap, and unlike a
+# migration neither has a failure mode worth aborting a deploy over.
+# scripts_backfill_terms.ts is Phase 1's — it writes each shop's
+# vocabulary at rest now that nothing derives it from a preset id (see
+# core/src/booking/presets.ts). It's a no-op once every row is caught up,
+# and can be dropped from this line after one successful deploy.
+#
+# scripts_backfill_subscriptions.ts is Phase 2a's, and its position here
+# matters more than the others': a Connection with no Subscription row
+# resolves to the **Free** plan (see billing/entitlements.ts), so between
+# the new code starting and that row existing, an established merchant
+# would be capped at 1 resource and 50 bookings. Running it in the CMD,
+# before `npm run start`, closes that window entirely — the server does
+# not accept a request until every account has its row.
+CMD ["sh", "-c", "npx tsx core/scripts_backfill_resource_assignments.ts && npx tsx core/scripts_backfill_terms.ts && npx tsx core/scripts_backfill_subscriptions.ts && npm run start -w server"]

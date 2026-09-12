@@ -7,7 +7,7 @@ import { getUserSession } from "~/session.server";
 import { AlertError, Field, Input, GoogleIcon } from "~/components/ui";
 import { PresetSelect } from "~/components/onboarding";
 import { PHONE_PATTERN } from "~/lib/validation";
-import type { PresetId } from "~/lib/presets";
+
 
 export const meta: Route.MetaFunction = () => [
   { title: "Sign up · GetBooqin" },
@@ -28,7 +28,7 @@ const MIN_PASSWORD_LENGTH = 15;
 // needing a storage key that both this route and onboarding.tsx must agree
 // on — a mismatch there used to mean the business name never arrived (UX
 // audit's N1 finding).
-function onboardingHref(seed: { businessName: string; preset: PresetId; phone: string }): string {
+function onboardingHref(seed: { businessName: string; preset: string; phone: string }): string {
   const params = new URLSearchParams({ step: "1" });
   if (seed.businessName) params.set("business_name", seed.businessName);
   if (seed.preset) params.set("preset", seed.preset);
@@ -48,7 +48,7 @@ export default function Signup() {
   const [searchParams] = useSearchParams();
   const [firstName, setFirstName] = useState("");
   const [businessName, setBusinessName] = useState("");
-  const [preset, setPreset] = useState<PresetId>((searchParams.get("preset") as PresetId) || "generic");
+  const [preset, setPreset] = useState(searchParams.get("preset") || "generic");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [phone, setPhone] = useState("");

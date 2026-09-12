@@ -1,7 +1,7 @@
 /**
  * Tiny in-process event bus — the equivalent of WordPress's do_action/add_action.
- * PaymentManager, MeetingManager and Mailer each subscribe from their own
- * `init()`, called once from core/src/booking/boot.ts.
+ * Mailer and Waitlist each subscribe from their own `init()`, called once
+ * from core/src/booking/boot.ts.
  */
 import { EventEmitter } from "node:events";
 import type { Booking, Waitlist } from "@prisma/client";
@@ -27,10 +27,6 @@ export interface GetBooqinEvents {
   // original slot. See Bookings.setStatus()/reschedule() and
   // Waitlist.init()'s listener.
   booking_slot_freed: [freed: FreedSlot];
-  payment_completed: [booking: Booking, paymentId: number];
-  paid_booking_cancelled: [booking: Booking, reason: string];
-  meeting_created: [booking: Booking, meeting: { url: string; id?: string }];
-  meeting_failed: [booking: Booking, error: string];
   waitlist_joined: [entry: Waitlist];
   waitlist_offered: [entry: Waitlist];
   waitlist_expired: [entry: Waitlist];

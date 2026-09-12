@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import prisma from "./db.js";
 import { encryptCredentials } from "./auth/encryption.js";
+import { assertCanAddBusiness } from "./billing/enforcement.js";
+import { ensureSubscription } from "./billing/subscriptions.js";
 
 // Thrown when a shop is already linked to a *different* User — the connect
 // flow must surface this as a rejection (or a future explicit transfer),
@@ -57,13 +59,25 @@ export async function connectShopifyStore({
       data: { credentials, status: "active" },
     });
     await ensureOwnerMembership(connection.id, userId);
+    // Reconnecting a store that was revoked — idempotent, so an account
+    // that already has a subscription keeps it rather than restarting a
+    // trial it has already used.
+    await ensureSubscription(connection.id);
     return connection;
   }
+
+  // Plan limit — connecting a Shopify store is adding a business, the
+  // same as createManualConnection below. Checked only for a genuinely
+  // new connection: re-authorising an existing one above must never be
+  // blocked, or a merchant whose token expired while they were over
+  // their cap could never get back in.
+  await assertCanAddBusiness(userId);
 
   const connection = await prisma.connection.create({
     data: { userId, platform, shop, credentials, status: "active" },
   });
   await ensureOwnerMembership(connection.id, userId);
+  await ensureSubscription(connection.id);
   return connection;
 }
 
@@ -78,11 +92,18 @@ export async function connectShopifyStore({
 // store") creates a second, separate Connection rather than converting
 // this one — same multi-store model the app already supports.
 export async function createManualConnection({ userId }: { userId: string }) {
+  // Plan limit — "businesses / locations". A user's first connection is
+  // always allowed; this only bites on the second and beyond.
+  await assertCanAddBusiness(userId);
+
   const shop = `manual-${randomUUID()}`;
   const connection = await prisma.connection.create({
     data: { userId, platform: "manual", shop, credentials: "", status: "active" },
   });
   await ensureOwnerMembership(connection.id, userId);
+  // Starts the 30-day trial. Idempotent, so the onboarding flow calling
+  // this and a later backfill can't produce two rows.
+  await ensureSubscription(connection.id);
   return connection;
 }
 

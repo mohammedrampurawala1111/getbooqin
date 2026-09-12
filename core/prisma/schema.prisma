@@ -63,8 +63,15 @@ model User {
   phone             String             @default("")
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
+  // Platform-admin flag for the internal /admin console (§W8). Layered,
+  // never clever: this column AND the email appearing in the
+  // PLATFORM_ADMIN_EMAILS env allowlist are both required, so a leaked
+  // session or a bad write to one is not enough on its own, and the env
+  // var is what bootstraps the very first admin.
+  isPlatformAdmin   Boolean            @default(false)
   connections       Connection[]
   connectionMembers ConnectionMember[]
+  adminActions      AdminAuditLog[]
 }
 
 // One store a User has linked. `credentials` holds whatever the platform's
@@ -73,24 +80,27 @@ model User {
 // belong to one User: reconnecting the same store from a different User
 // must be rejected or made an explicit transfer, never a silent duplicate.
 model Connection {
-  id          String             @id @default(cuid())
-  userId      String
-  platform    String             @default("shopify")
-  shop        String
-  credentials String
-  status      String             @default("active") // active|revoked|error
-  connectedAt DateTime           @default(now())
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+  id            String             @id @default(cuid())
+  userId        String
+  platform      String             @default("shopify")
+  shop          String
+  credentials   String
+  status        String             @default("active") // active|revoked|error
+  connectedAt   DateTime           @default(now())
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
   // Human-readable alias for the public /book/:connectionId link (UX
   // audit's #13 finding — a raw cuid is unfriendly in a social bio). Null
   // until Connections.ensureSlug() generates one lazily; the cuid `id`
   // keeps resolving permanently either way, so an already-shared link never
   // breaks.
-  slug        String?            @unique
-  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  members     ConnectionMember[]
-  invites     ConnectionInvite[]
+  slug          String?            @unique
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  members       ConnectionMember[]
+  invites       ConnectionInvite[]
+  subscription  Subscription?
+  entitlements  Entitlement[]
+  billingEvents BillingEvent[]
 
   @@unique([platform, shop])
   @@index([userId])
@@ -145,6 +155,49 @@ model ConnectionInvite {
 }
 
 // --- Per-shop settings ---
+
+// Phase 0 / B1 — bookkeeping for the scheduled jobs an external scheduler
+// drives (today: the hourly /cron/reminders sweep).
+//
+// Nothing in the repo scheduled that sweep at all, so reminders — a
+// feature listed on every pricing tier — simply never fired in production.
+// A schedule alone doesn't fix that, because a schedule that silently
+// stops looks exactly like a schedule that's working: no reminders is the
+// normal state most hours. This table is what makes the difference
+// observable. One row per job, upserted on every run, whether it succeeded
+// or threw.
+//
+// Read by the platform admin console's "last run" tile (§W8) and by
+// Jobs.staleJobs() for a health check. `name` is the primary key — there
+// is exactly one current state per job, not a log; a run history, if it's
+// ever wanted, is a separate table rather than an unbounded growth of this
+// one.
+model JobRun {
+  name String @id // "reminders"
+
+  // Every attempt updates this, successful or not — it is the "is the
+  // scheduler alive at all" signal, and is deliberately separate from
+  // lastSuccessAt so a job that runs and fails every hour reads as broken
+  // rather than as absent.
+  lastRunAt     DateTime
+  lastSuccessAt DateTime?
+  lastFailureAt DateTime?
+
+  // Truncated message from the most recent failure, cleared on the next
+  // success. Never a stack trace: this is rendered in an admin UI.
+  lastError String?
+
+  // Whatever the job wants to report about its last successful run, as
+  // JSON — `{"reminders_sent":4,"conversations_deleted":0}` for the
+  // reminders sweep. Display only; nothing parses it for control flow.
+  lastResult String?
+
+  runCount     Int @default(0)
+  failureCount Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
 
 model ShopSettings {
   shop      String
@@ -408,6 +461,20 @@ model Booking {
   customFields    String?
   source          String   @default("form") // form|chat|waitlist
   reminderSent    Boolean  @default(false)
+  // Does this booking hold its practitioner for its whole time range, or
+  // share the slot with others? Denormalised from the service's `capacity`
+  // at write time (capacity 1 -> true, group/class/cohort services ->
+  // false) purely so the `Booking_resource_no_overlap` exclusion constraint
+  // can tell the two apart — a constraint predicate can't reach into
+  // ServiceConfig. Kept in step by Data.saveServiceConfig(), which resyncs
+  // future bookings whenever a service's capacity crosses the 1 boundary.
+  //
+  // The two EXCLUDE USING gist constraints this backs are raw SQL (see
+  // migrations/20260912090000_booking_overlap_exclusion) — Prisma has no
+  // schema syntax for exclusion constraints, so they exist in the database
+  // but not in this file. `prisma migrate dev` will not try to drop them;
+  // `prisma db push` would. Don't use db push on this schema.
+  exclusive       Boolean  @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -618,4 +685,156 @@ model ChatMessage {
   conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, id])
+}
+
+// --- Billing (§W7) ---------------------------------------------------
+//
+// One subscription per Connection — a "business", which is the thing a
+// merchant actually pays for, not a User (who may own several) and not a
+// shop (which is a platform's name for the same business).
+//
+// **Written by exactly one code path: the webhook handler.** Checkout
+// success pages never write subscription state; they redirect and let the
+// webhook be the truth. That is the single most common way billing
+// integrations go wrong, and the reason this comment is here rather than
+// in a design doc.
+//
+// Money is stored in **minor units as Int** (paise for INR, cents for
+// USD/EUR) — deliberately not the Float the booking tables use for
+// prices. A rounding error on a merchant's own price list is a cosmetic
+// bug; one on an invoice is a chargeback.
+model Subscription {
+  id           String @id @default(cuid())
+  connectionId String @unique
+
+  // free|starter|growth|business — see core/src/billing/plans.ts. Never an
+  // enum: a plan table that can gain a tier without a migration is the
+  // whole point of keeping plans.ts a plain data file.
+  plan   String @default("free")
+  // trialing|active|past_due|canceled|free
+  status String @default("trialing")
+
+  // Null once the trial has been resolved one way or the other. Expiry is
+  // evaluated lazily inside entitlementsFor() rather than by a nightly
+  // job — there is no scheduler to fail, and an account that nobody looks
+  // at does not need its trial expired in the database to be correct.
+  trialEndsAt DateTime?
+
+  // paypal|razorpay|manual. Set at first upgrade and **never changed for
+  // a live subscription**: migrating a mandate between providers means
+  // cancel-and-re-authorise, which loses people. "manual" is an admin
+  // grant with no money moving.
+  billingProvider String @default("manual")
+
+  // The currency this subscription actually bills in — INR via Razorpay,
+  // USD or EUR via PayPal. Stored rather than re-derived from the
+  // account's country, which can change after the mandate exists.
+  currency     String @default("USD")
+  // monthly|yearly
+  billingCycle String @default("monthly")
+
+  providerCustomerId     String?
+  providerSubscriptionId String? @unique
+
+  currentPeriodEnd  DateTime?
+  cancelAtPeriodEnd Boolean   @default(false)
+
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  connection Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([trialEndsAt])
+}
+
+// Admin overrides — the early-access / comp / beta mechanism (§W8), and
+// what replaces the five ENABLE_* env booleans Phase 1 deleted. Strictly
+// better than those were: per account instead of per deploy, changeable
+// from the admin console without a redeploy.
+//
+// Resolution is: plan defaults ∪ admin grants − admin revokes.
+model Entitlement {
+  id           String @id @default(cuid())
+  connectionId String
+
+  // A feature key ("waitlist") or a limit key ("limit.resources").
+  key   String
+  // "on" | "off" for a feature; a numeric cap (or "unlimited") for a limit.
+  value String
+
+  grantedByUserId String
+  // Required, at the schema level. It costs five seconds to type and it
+  // is the difference between an audit trail and a pile of magic strings
+  // nobody can explain six months later.
+  reason          String
+
+  // Null means permanent.
+  expiresAt DateTime?
+
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  connection Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, key])
+  @@index([connectionId])
+  @@index([expiresAt])
+}
+
+// Raw provider webhook payloads, for replay and for answering "they say
+// they paid". Kept verbatim: whatever normalisation the code does at the
+// edge, the thing a dispute is settled against has to be what the
+// provider actually sent.
+//
+// `providerEventId` is unique, which is what makes webhook delivery
+// idempotent — both providers retry, and a duplicate delivery must not
+// double-apply.
+model BillingEvent {
+  id           String  @id @default(cuid())
+  connectionId String?
+
+  provider        String // paypal|razorpay
+  providerEventId String @unique
+  // Our own normalised event type, never a vendor string — the rest of
+  // the codebase must never see a provider payload shape.
+  type            String
+
+  payload     String // raw JSON as delivered
+  // Null until handled; set when the event has been applied, so a replay
+  // can tell "received but not processed" from "already done".
+  processedAt DateTime?
+  error       String?
+
+  createdAt  DateTime    @default(now())
+  connection Connection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+
+  @@index([connectionId])
+  @@index([provider, type])
+  @@index([processedAt])
+}
+
+// Every platform-admin action, written in the same transaction as the
+// change it describes. Handing out discounts and free plans without an
+// immutable record of who did what is how a small team ends up unable to
+// answer "why is this account free?"
+model AdminAuditLog {
+  id          String @id @default(cuid())
+  actorUserId String
+
+  action     String // "plan.change" | "trial.extend" | "entitlement.grant" | ...
+  targetType String // "connection" | "user"
+  targetId   String
+
+  // JSON snapshots, both nullable — a grant has no `before`.
+  before String?
+  after  String?
+
+  reason String
+  ip     String @default("")
+
+  createdAt DateTime @default(now())
+  actor     User     @relation(fields: [actorUserId], references: [id], onDelete: Cascade)
+
+  @@index([actorUserId])
+  @@index([targetType, targetId])
+  @@index([createdAt])
 }

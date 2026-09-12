@@ -12,6 +12,7 @@
  * implements.
  */
 import type { ConnectionMember, ConnectionInvite } from "@prisma/client";
+import { assertCanInviteMember } from "./billing/enforcement.js";
 import prisma from "./db.js";
 import { signPayload } from "./auth/session.js";
 import { isEmail } from "./booking/bookingsShared.js";
@@ -155,6 +156,12 @@ export async function inviteMember({
   if (!isEmail(normalizedEmail)) {
     throw new GetBooqinError("getbooqin_invalid_email", "Enter a valid email address.", 400);
   }
+
+  // Plan limit. Counts outstanding invites as well as accepted members —
+  // an invite is a seat already spent, and letting a 2-seat account
+  // invite ten people only to turn nine of them away at accept time is a
+  // worse experience for everyone involved.
+  await assertCanInviteMember(connectionId);
 
   // Case-insensitive: Clerk-side emails aren't guaranteed to already be
   // lower-cased, so an exact-match lookup against a hand-typed invite email

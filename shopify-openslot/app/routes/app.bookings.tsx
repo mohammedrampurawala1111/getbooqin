@@ -23,7 +23,6 @@ import { Bookings } from "getbooqin-core";
 import { Data } from "getbooqin-core";
 import { Settings } from "getbooqin-core";
 import { term, money } from "getbooqin-core/booking/settingsShared";
-import { paymentStatusLabels } from "getbooqin-core/booking/bookingsShared";
 import { BookingStatusMenu } from "~/components/BookingStatusMenu";
 
 const RANGES = ["upcoming", "past", "cancelled"] as const;
@@ -269,7 +268,6 @@ export default function BookingsList() {
             { title: "Appointment time" },
             { title: term(settings, "service_single") },
             { title: term(settings, "resource_single") },
-            { title: "Payment" },
             { title: "Status" },
             { title: "" },
           ]}
@@ -288,15 +286,6 @@ export default function BookingsList() {
               </IndexTable.Cell>
               <IndexTable.Cell>{b.service}</IndexTable.Cell>
               <IndexTable.Cell>{b.resource || "—"}</IndexTable.Cell>
-              <IndexTable.Cell>
-                {b.paymentStatus === "not_required" ? (
-                  "—"
-                ) : (
-                  <Badge tone={b.paymentStatus === "paid" ? "success" : b.paymentStatus === "failed" ? "critical" : "attention"}>
-                    {`${paymentStatusLabels()[b.paymentStatus] ?? b.paymentStatus}${b.amountDue ? ` · ${money(settings, b.amountDue)}` : ""}`}
-                  </Badge>
-                )}
-              </IndexTable.Cell>
               <IndexTable.Cell>
                 <BookingStatusMenu bookingId={b.id} current={b.status} onRequestDecline={setDeclineTarget} />
               </IndexTable.Cell>

@@ -21,17 +21,6 @@ export default [
     route("bookings", "routes/dashboard.$connectionId.bookings.tsx"),
     route("bookings/calendar", "routes/dashboard.$connectionId.bookings.calendar.tsx"),
     route("bookings/:bookingId", "routes/dashboard.$connectionId.bookings.$bookingId.tsx"),
-    // Visit Summary (Clinic preset only — see
-    // docs/patient-summary-cloud-integration-plan.md). Nested under the
-    // booking detail route rather than a sibling of "bookings/:bookingId"
-    // so its own loader/action can stay booking-scoped, same convention as
-    // every other bookings/:bookingId/* would follow.
-    route("bookings/:bookingId/summary", "routes/dashboard.$connectionId.bookings.$bookingId.summary.tsx"),
-    // Recording POC — internal test harness only, see
-    // docs/recording-poc-charter.md / docs/recording-poc-ux-spec.md. Not
-    // linked anywhere in the real dashboard; gated inline by its own
-    // ENABLE_RECORDING_POC env var (independent of VISIT_SUMMARIES_ENABLED).
-    route("recording-poc/:bookingId", "routes/dashboard.$connectionId.recording-poc.$bookingId.tsx"),
     route("waitlist", "routes/dashboard.$connectionId.waitlist.tsx"),
     route("resources", "routes/dashboard.$connectionId.resources.tsx"),
     route("resources/:resourceId", "routes/dashboard.$connectionId.resources.$resourceId.tsx"),
@@ -62,6 +51,9 @@ export default [
   route("book/:connectionId", "routes/book.$connectionId.tsx"),
   route("book/:connectionId/slots", "routes/book.$connectionId.slots.tsx"),
   route("webhooks/clerk", "routes/webhooks.clerk.tsx"),
+  // Razorpay subscription events — see the route's own header comment,
+  // and keep in sync with server/combined.js's CLOUD_PREFIXES.
+  route("webhooks/razorpay", "routes/webhooks.razorpay.tsx"),
   // Not /privacy or /terms — shopify-openslot already owns those paths (its
   // Shopify App Store submission) on the combined server. See
   // server/combined.js's CLOUD_PREFIXES, kept in sync with this file.

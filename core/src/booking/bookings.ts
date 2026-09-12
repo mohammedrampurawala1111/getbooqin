@@ -5,20 +5,21 @@
  */
 import { DateTime } from "luxon";
 import type { Booking } from "@prisma/client";
-import prisma from "../db.js";
+import prisma, { type DbClient } from "../db.js";
 import * as Data from "./data.js";
 import type { CatalogService } from "./data.js";
 import * as Availability from "./availability.js";
-import * as PaymentManager from "./paymentManager.js";
 import { getSettings, type Settings } from "./settings.js";
 import { term, money } from "./settingsShared.js";
 import { zoneAbbr } from "./tz.js";
 import { uid, now } from "./ids.js";
 import { GetBooqinError } from "./errors.js";
 import events from "./events.js";
-import { STATUSES, TRANSITIONS, OCCUPYING, type BookingStatus, statusLabels, paymentStatusLabels, isEmail, isRealEmail, isPhone, normalizePhone } from "./bookingsShared.js";
+import { withShopBookingLock, translateOverlapViolation } from "./slotLock.js";
+import { assertCanTakeBooking } from "../billing/enforcement.js";
+import { STATUSES, TRANSITIONS, OCCUPYING, type BookingStatus, statusLabels, isEmail, isRealEmail, isPhone, normalizePhone } from "./bookingsShared.js";
 
-export { STATUSES, TRANSITIONS, OCCUPYING, statusLabels, paymentStatusLabels, isEmail, isRealEmail, isPhone, normalizePhone };
+export { STATUSES, TRANSITIONS, OCCUPYING, statusLabels, isEmail, isRealEmail, isPhone, normalizePhone };
 export type { BookingStatus };
 
 /* ------------------------------------------------------------ Validation */
@@ -80,13 +81,21 @@ export interface CreateBookingArgs {
    * booking defaults to confirmed regardless of that rule, with Pending
    * still available for a genuinely provisional hold (Defect Dossier's
    * BQ-27 finding). Never set from the public form, which must keep going
-   * through the normal needsPayment/auto_confirm decision below.
+   * through the normal auto_confirm decision below.
    */
   force_status?: "pending" | "confirmed";
 }
 
 export async function create(shop: string, platform: string, shopTimezone: string, args: CreateBookingArgs): Promise<Booking> {
   const settings = await getSettings(shop, platform);
+
+  // Monthly booking quota. Only "form" bookings count — a staff member
+  // typing in a walk-in is doing admin, not consuming a quota, and
+  // metering that would push a merchant back to paper for exactly the
+  // bookings this product exists to absorb. Checked before anything is
+  // written so a customer who is going to be turned away is turned away
+  // before a Customer row is created for them.
+  await assertCanTakeBooking(shop, platform, args.source ?? "form");
 
   const service = await Data.catalogService(shop, args.service_id);
   if (!service) throw new GetBooqinError("getbooqin_invalid_service", "That service is not available.", 400);
@@ -137,7 +146,12 @@ export async function create(shop: string, platform: string, shopTimezone: strin
   }
 
   let chosen: (typeof candidates)[number] | null = null;
-  let chosenRoomId: number | null = null;
+  // Business-tz-local, not UTC — assertSlotBookable() needs the resource's
+  // own weekday/HH:mm for the business-hours check, so the second pass
+  // under the shop lock below has to be handed the same pair this loop
+  // used, not a UTC round-trip of it.
+  let localStart: DateTime | null = null;
+  let localEnd: DateTime | null = null;
   let startUtc: DateTime | null = null;
   let endUtc: DateTime | null = null;
   let tzName = shopTimezone;
@@ -149,6 +163,10 @@ export async function create(shop: string, platform: string, shopTimezone: strin
   // (Defect Dossier's BQ-03 finding: Add-consultation and the public form
   // both used to report every non-off-grid rejection as "just taken").
   let lastReason: GetBooqinError | null = null;
+  // The last candidate that passed every bookability check and then
+  // turned out not to be on the published slot grid. Kept so the failure
+  // below can work out *why* it wasn't — see there.
+  let offGridCandidate: { resource: (typeof candidates)[number]; start: DateTime; end: DateTime } | null = null;
 
   for (const resource of candidates) {
     const tz = Availability.businessTz(shopTimezone, resource);
@@ -156,10 +174,8 @@ export async function create(shop: string, platform: string, shopTimezone: strin
     if (!start) continue;
     const end = start.plus({ minutes: service.durationMin + addonDurationMin });
 
-    let roomId: number | null = null;
     try {
-      const result = await assertSlotBookable(shop, platform, settings, { resourceId: resource.id, service, start, end, override: args.override });
-      roomId = result.roomId;
+      await assertSlotBookable(shop, platform, settings, { resourceId: resource.id, service, start, end, override: args.override });
     } catch (err) {
       if (err instanceof GetBooqinError) lastReason = err;
       continue;
@@ -172,11 +188,13 @@ export async function create(shop: string, platform: string, shopTimezone: strin
     // as "not one of the available slots" instead of actually going through.
     if (!args.override && !(await slotIsPublished(shop, platform, shopTimezone, args.service_id, resource.id, args.date, args.time, 0, addonDurationMin))) {
       offGrid = true;
+      offGridCandidate = { resource, start, end };
       continue;
     }
 
     chosen = resource;
-    chosenRoomId = roomId;
+    localStart = start;
+    localEnd = end;
     startUtc = start.toUTC();
     endUtc = end.toUTC();
     tzName = tz;
@@ -184,8 +202,35 @@ export async function create(shop: string, platform: string, shopTimezone: strin
     break;
   }
 
-  if (!chosen || !startUtc || !endUtc) {
-    if (offGrid) {
+  if (!chosen || !startUtc || !endUtc || !localStart || !localEnd) {
+    if (offGrid && offGridCandidate) {
+      // "Not on the published grid" is an ambiguous answer, because the
+      // grid is generated from business hours *minus existing bookings*.
+      // A slot the customer picked off our own list a moment ago, which
+      // passed every bookability check two statements ago and has now
+      // vanished from the grid, almost certainly vanished because
+      // somebody else just booked it — and telling that customer "that
+      // time is not one of the available slots" is both confusing and
+      // the wrong error code: the public booking form re-fetches the day
+      // on getbooqin_slot_taken and does nothing on this one. Ask
+      // directly rather than guessing.
+      try {
+        await assertSlotBookable(shop, platform, settings, {
+          resourceId: offGridCandidate.resource.id,
+          service,
+          start: offGridCandidate.start,
+          end: offGridCandidate.end,
+          override: args.override,
+        });
+      } catch (err) {
+        // Something concrete changed under us — taken, timed off, now
+        // outside hours. That reason beats the generic one.
+        if (err instanceof GetBooqinError) throw err;
+        throw err;
+      }
+
+      // Still bookable, still not on the grid: the time really is one we
+      // never offered (typed by hand, or off the slot_interval lattice).
       throw new GetBooqinError(
         "getbooqin_slot_not_offered",
         "That time is not one of the available slots. Please pick a time from the list.",
@@ -204,57 +249,78 @@ export async function create(shop: string, platform: string, shopTimezone: strin
     timezone: shopTimezone,
   });
 
-  const amountDue = PaymentManager.amountDue(service) + addonPrice;
-  const needsPayment = await PaymentManager.paymentBlocksConfirmation(shop, settings, service);
+  const status: BookingStatus = args.force_status ?? (settings.auto_confirm ? "confirmed" : "pending");
 
-  const paymentStatus =
-    amountDue > 0 && service.paymentRequired && PaymentManager.paymentsAvailable(settings)
-      ? "unpaid"
-      : "not_required";
-
-  const status: BookingStatus = needsPayment
-    ? "pending"
-    : args.force_status ?? (settings.auto_confirm ? "confirmed" : "pending");
-
-  const created = await prisma.booking.create({
-    data: {
+  // Everything above only *chose* a slot. The check and the insert were two
+  // separate statements with nothing holding the slot in between, so two
+  // customers clicking the last 10:00 at the same moment both passed and
+  // both got booked (Phase 0's B2). From here the shop's booking-write lock
+  // is held, the check is re-run on the locked connection, and the insert
+  // happens before anyone else can look — see slotLock.ts for why the lock
+  // is per shop and why a bare transaction would not have been enough.
+  const created = await withShopBookingLock(shop, async (tx) => {
+    const { roomId } = await assertSlotBookable(
       shop,
       platform,
-      uid: uid(),
-      serviceId: service.id,
-      resourceId: chosen.id,
-      roomId: chosenRoomId,
-      customerId,
-      startUtc: startUtc.toJSDate(),
-      endUtc: endUtc.toJSDate(),
-      timezone: tzName,
-      status,
-      price: service.price + addonPrice,
-      amountDue,
-      currency: settings.currency,
-      paymentStatus,
-      notes: args.notes ?? "",
-      customFields: args.custom_fields ? JSON.stringify(args.custom_fields) : null,
-      source: args.source ?? "form",
-      createdAt: now(),
-      updatedAt: now(),
-    },
-  });
+      settings,
+      { resourceId: chosen.id, service, start: localStart, end: localEnd, override: args.override },
+      tx
+    );
 
-  if (resolvedAddons.length) {
-    await prisma.bookingAddon.createMany({
-      data: resolvedAddons.map((a) => ({
+    const booking = await tx.booking.create({
+      data: {
         shop,
         platform,
-        bookingId: created.id,
-        addonId: a.id,
-        name: a.name,
-        price: a.price,
-        durationMin: a.durationMin,
-      })),
+        uid: uid(),
+        serviceId: service.id,
+        resourceId: chosen.id,
+        roomId,
+        customerId,
+        startUtc: startUtc.toJSDate(),
+        endUtc: endUtc.toJSDate(),
+        timezone: tzName,
+        status,
+        price: service.price + addonPrice,
+        // Payment columns stay in the schema (no destructive migrations
+        // in this trim) but nothing writes a live value into them any
+        // more — merchant deposits came out with the rest of the dark
+        // surfaces, so every new booking is simply "nothing to collect".
+        amountDue: 0,
+        currency: settings.currency,
+        paymentStatus: "not_required",
+        notes: args.notes ?? "",
+        customFields: args.custom_fields ? JSON.stringify(args.custom_fields) : null,
+        source: args.source ?? "form",
+        // Denormalised from the service's capacity so the
+        // Booking_resource_no_overlap constraint can tell a one-per-slot
+        // booking from a seat in a class — see the schema comment.
+        exclusive: Math.max(1, service.capacity) <= 1,
+        createdAt: now(),
+        updatedAt: now(),
+      },
     });
-  }
 
+    if (resolvedAddons.length) {
+      await tx.bookingAddon.createMany({
+        data: resolvedAddons.map((a) => ({
+          shop,
+          platform,
+          bookingId: booking.id,
+          addonId: a.id,
+          name: a.name,
+          price: a.price,
+          durationMin: a.durationMin,
+        })),
+      });
+    }
+
+    return booking;
+  });
+
+  // Outside the transaction deliberately: handlers send email, call
+  // payment gateways and offer freed slots to the waitlist. None of that
+  // should hold the shop's booking lock, and none of it should be able to
+  // roll the booking back.
   events.emitEvent("booking_created", created);
 
   return created;
@@ -267,9 +333,15 @@ function withinBookingWindow(startUtc: DateTime, settings: Settings): boolean {
   return startUtc >= earliest && startUtc <= latest;
 }
 
-export async function matchesSchedule(shop: string, resourceId: number, start: DateTime, end: DateTime): Promise<boolean> {
+export async function matchesSchedule(
+  shop: string,
+  resourceId: number,
+  start: DateTime,
+  end: DateTime,
+  db: DbClient = prisma
+): Promise<boolean> {
   const dow = start.weekday % 7;
-  const count = await prisma.schedule.count({
+  const count = await db.schedule.count({
     where: {
       shop,
       resourceId,
@@ -319,7 +391,14 @@ export async function assertSlotBookable(
   shop: string,
   platform: string,
   settings: Settings,
-  args: SlotCheckArgs
+  args: SlotCheckArgs,
+  /**
+   * Pass the transaction client when re-asserting under the shop's
+   * booking-write lock (see slotLock.ts) — every read below has to run on
+   * the same connection as the insert that follows it, or it looks at a
+   * snapshot taken before the lock was granted.
+   */
+  db: DbClient = prisma
 ): Promise<{ roomId: number | null }> {
   const { resourceId, service, start, end, excludeBookingId = 0, override = false } = args;
   const startUtc = start.toUTC();
@@ -343,9 +422,9 @@ export async function assertSlotBookable(
       );
     }
 
-    if (!(await matchesSchedule(shop, resourceId, start, end))) {
+    if (!(await matchesSchedule(shop, resourceId, start, end, db))) {
       const dow = start.weekday % 7;
-      const dayRows = await prisma.schedule.count({ where: { shop, resourceId, dayOfWeek: dow } });
+      const dayRows = await db.schedule.count({ where: { shop, resourceId, dayOfWeek: dow } });
       if (dayRows === 0) {
         throw new GetBooqinError("getbooqin_closed_day", "The business is closed that day.", 400);
       }
@@ -353,16 +432,16 @@ export async function assertSlotBookable(
     }
   }
 
-  if (await Availability.isBlockedByTimeOff(shop, resourceId, startUtc, endUtc, service)) {
+  if (await Availability.isBlockedByTimeOff(shop, resourceId, startUtc, endUtc, service, db)) {
     throw new GetBooqinError("getbooqin_time_off", "That time is blocked off (time off).", 409);
   }
-  if (await Availability.hasBookingConflict(shop, resourceId, startUtc, endUtc, service, excludeBookingId)) {
+  if (await Availability.hasBookingConflict(shop, resourceId, startUtc, endUtc, service, excludeBookingId, db)) {
     throw new GetBooqinError("getbooqin_slot_taken", "That slot is already booked.", 409);
   }
 
   if (!service.requiresRoom) return { roomId: null };
 
-  const rooms = await Data.roomsForService(shop, platform, service.id);
+  const rooms = await Data.roomsForService(shop, platform, service.id, db);
   for (const room of rooms) {
     if (!room.status) continue;
     // Same override semantics as the practitioner check above: "book
@@ -370,9 +449,9 @@ export async function assertSlotBookable(
     // hours cover this time, never whether the room is already occupied or
     // blocked by time off — those aren't policy, they're "this literally
     // can't happen."
-    if (!override && !(await matchesSchedule(shop, room.id, start, end))) continue;
-    if (await Availability.isBlockedByTimeOff(shop, room.id, startUtc, endUtc, service)) continue;
-    if (await Availability.hasRoomConflict(shop, room.id, startUtc, endUtc, service, excludeBookingId)) continue;
+    if (!override && !(await matchesSchedule(shop, room.id, start, end, db))) continue;
+    if (await Availability.isBlockedByTimeOff(shop, room.id, startUtc, endUtc, service, db)) continue;
+    if (await Availability.hasRoomConflict(shop, room.id, startUtc, endUtc, service, excludeBookingId, db)) continue;
     return { roomId: room.id };
   }
   throw new GetBooqinError("getbooqin_no_room", "No room is available for that time.", 409);
@@ -421,19 +500,27 @@ export async function setStatus(shop: string, id: number, newStatus: string, rea
     );
   }
 
-  if (
+  const old = booking.status;
+  // Moving back onto the calendar (un-cancelling, approving a pending
+  // request) re-occupies the slot, so it races the same way a fresh
+  // booking does — and it is the one path that can hit the exclusion
+  // constraint without going through create() or reschedule(). Under the
+  // lock, check and flip together. Every other transition (cancel,
+  // complete, no-show) only ever frees a slot and needs no lock at all.
+  const reoccupying =
     current !== newStatus &&
     OCCUPYING.includes(newStatus as BookingStatus) &&
-    !OCCUPYING.includes(current)
-  ) {
-    await assertNoSlotConflict(shop, booking);
-  }
+    !OCCUPYING.includes(current);
 
-  const old = booking.status;
-  const updated = await prisma.booking.update({
-    where: { id },
-    data: { status: newStatus, updatedAt: now() },
-  });
+  const updated = reoccupying
+    ? await withShopBookingLock(shop, async (tx) => {
+        await assertNoSlotConflict(shop, booking, tx);
+        return tx.booking.update({ where: { id }, data: { status: newStatus, updatedAt: now() } });
+      })
+    : await prisma.booking.update({
+        where: { id },
+        data: { status: newStatus, updatedAt: now() },
+      });
 
   events.emitEvent("booking_status_changed", updated, old, newStatus, reason);
   if (newStatus === "cancelled") {
@@ -479,21 +566,21 @@ export async function decline(shop: string, id: number, reason = ""): Promise<Bo
 }
 
 /** Would putting this booking back on the calendar collide with another? Throws if not. */
-export async function assertNoSlotConflict(shop: string, booking: Booking): Promise<void> {
+export async function assertNoSlotConflict(shop: string, booking: Booking, db: DbClient = prisma): Promise<void> {
   const service = await Data.catalogService(shop, booking.serviceId);
   if (!service) throw new GetBooqinError("getbooqin_invalid_service", "The service for this booking no longer exists.", 400);
 
   const start = DateTime.fromJSDate(booking.startUtc, { zone: "utc" });
   const end = DateTime.fromJSDate(booking.endUtc, { zone: "utc" });
 
-  if (!(await Availability.isFree(shop, booking.resourceId, start, end, service, booking.id))) {
+  if (!(await Availability.isFree(shop, booking.resourceId, start, end, service, booking.id, db))) {
     throw new GetBooqinError(
       "getbooqin_slot_taken",
       "That slot is no longer available — another booking now occupies it. Reschedule this one instead.",
       409
     );
   }
-  if (booking.roomId && !(await Availability.isRoomFree(shop, booking.roomId, start, end, service, booking.id))) {
+  if (booking.roomId && !(await Availability.isRoomFree(shop, booking.roomId, start, end, service, booking.id, db))) {
     throw new GetBooqinError(
       "getbooqin_slot_taken",
       "That slot is no longer available — the room is now occupied. Reschedule this one instead.",
@@ -645,7 +732,11 @@ export async function reschedule(
   const eUtc = end.toUTC();
 
   const settings = await getSettings(shop, platform);
-  const { roomId } = await assertSlotBookable(shop, platform, settings, {
+  // A first, unlocked pass purely so a rejection reports its real reason
+  // (closed day / outside hours / time off / taken) before the slot-grid
+  // check below, exactly as it always did. The pass that actually decides
+  // the write is the locked one further down.
+  await assertSlotBookable(shop, platform, settings, {
     resourceId,
     service,
     start,
@@ -671,17 +762,33 @@ export async function reschedule(
   }
 
   const previous = booking;
-  const updated = await prisma.booking.update({
-    where: { id },
-    data: {
-      resourceId,
-      roomId,
-      startUtc: sUtc.toJSDate(),
-      endUtc: eUtc.toJSDate(),
-      timezone: tz,
-      reminderSent: false,
-      updatedAt: now(),
-    },
+  // Same race, same fix as create(): the checks above and the write below
+  // were separate statements, so a reschedule could land on a slot someone
+  // else took in between. Re-assert on the locked connection and move the
+  // booking before anyone else can look. `roomId` from the pass above is
+  // discarded in favour of whatever the locked pass picks — the room that
+  // looked free a moment ago may not be.
+  const updated = await withShopBookingLock(shop, async (tx) => {
+    const locked = await assertSlotBookable(
+      shop,
+      platform,
+      settings,
+      { resourceId, service, start, end, excludeBookingId: id, override: opts.override },
+      tx
+    );
+
+    return tx.booking.update({
+      where: { id },
+      data: {
+        resourceId,
+        roomId: locked.roomId,
+        startUtc: sUtc.toJSDate(),
+        endUtc: eUtc.toJSDate(),
+        timezone: tz,
+        reminderSent: false,
+        updatedAt: now(),
+      },
+    });
   });
 
   events.emitEvent("booking_rescheduled", updated, previous);
@@ -861,29 +968,10 @@ export function localTzLabel(booking: Booking, shopTimezone: string): string {
   return zoneAbbr(booking.startUtc, displayTz(booking, shopTimezone));
 }
 
-export function needsPayment(booking: Booking): boolean {
-  const status = booking.paymentStatus || "not_required";
-  const due = booking.amountDue || 0;
-  return ["unpaid", "failed"].includes(status) && due > 0;
-}
-
 export function manageUrl(booking: Booking, settings: Settings): string {
   const base = settings.booking_page_url || "/";
   const separator = base.includes("?") ? "&" : "?";
   return `${base}${separator}getbooqin_booking=${booking.uid}`;
-}
-
-/**
- * Same convention as manageUrl, for the Visit Summary patient-facing page
- * (Clinic preset only — see docs/patient-summary-cloud-integration-plan.md
- * Part 3 §5). Same no-login trust model, keyed off the booking's uid rather
- * than a ConsultationSummary id, since the tokened page always renders
- * whatever the latest sent revision for this booking is.
- */
-export function summaryUrl(booking: Booking, settings: Settings): string {
-  const base = settings.booking_page_url || "/";
-  const separator = base.includes("?") ? "&" : "?";
-  return `${base}${separator}getbooqin_summary=${booking.uid}`;
 }
 
 export function bookingTerm(settings: Settings): string {

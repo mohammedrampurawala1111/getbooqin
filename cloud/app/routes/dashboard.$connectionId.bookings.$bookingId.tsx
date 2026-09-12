@@ -1,26 +1,16 @@
 import { useEffect } from "react";
 import { Form, data } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.bookings.$bookingId";
-import { Bookings, Data, Settings, ConsultationSummary, FeatureFlags } from "getbooqin-core";
+import { Bookings, Data, Settings } from "getbooqin-core";
 import { formatInZone } from "getbooqin-core/booking/tz";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Badge, Field, Input, Toggle, ConfirmDialog, useToast } from "~/components/ui";
-import { useVocabulary, vocabFor, isClinicFeaturePreset } from "~/lib/presets";
-import { dashboardPreset } from "~/lib/dashboardMeta";
+import { useVocabulary, vocabFor } from "~/lib/presets";
+import { dashboardTerms } from "~/lib/dashboardMeta";
 
 export const meta: Route.MetaFunction = ({ matches }) => [
-  { title: `${vocabFor(dashboardPreset(matches)).bookingTitle} · GetBooqin` },
+  { title: `${vocabFor(dashboardTerms(matches)).bookingTitle} · GetBooqin` },
 ];
-
-// Visit Summary status pill for the entry card below — separate from
-// ui.tsx's Badge component, whose STATUS map is keyed to booking/payment
-// statuses, not ConsultationSummary's (draft/under_review/approved/sent).
-const SUMMARY_STATUS_META: Record<string, [string, string]> = {
-  draft: ["badge-pending", "Draft"],
-  under_review: ["badge-pending", "Needs review"],
-  approved: ["badge-ok", "Approved"],
-  sent: ["badge-ok", "Sent"],
-};
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId);
@@ -49,50 +39,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // hydration never disagree about "now" (Defect Dossier's BQ-26 finding).
   const hasStarted = booking.startUtc <= new Date();
 
-  // Visit Summary (Clinic preset only — see
-  // docs/patient-summary-cloud-integration-plan.md Part 3 §1). The entry
-  // card below only ever shows for a completed clinic booking with the
-  // feature enabled (both the env flag and the shop's own toggle) — same
-  // gate the new .summary route's loader enforces server-side, so a direct
-  // link can't reach it either when this is off.
-  const visitSummariesAvailable =
-    isClinicFeaturePreset(settings.preset) &&
-    FeatureFlags.VISIT_SUMMARIES_ENABLED &&
-    settings.visit_summaries_enabled &&
-    booking.status === "completed";
-
-  // "Record consultation" — the same feature, entered while the booking is
-  // still `confirmed` instead of `completed` (recording has to start before
-  // the visit is marked done). Same gates as visitSummariesAvailable minus
-  // the status check, which is the opposite status — the two are mutually
-  // exclusive, so only one of these two cards ever renders for a given
-  // booking (docs/recording-poc-ux-spec.md §3.1).
-  const recordConsultationAvailable =
-    isClinicFeaturePreset(settings.preset) &&
-    FeatureFlags.VISIT_SUMMARIES_ENABLED &&
-    settings.visit_summaries_enabled &&
-    booking.status === "confirmed";
-
-  const visitSummaryRow = visitSummariesAvailable
-    ? await ConsultationSummary.getForBooking({ shop, platform, bookingId: id })
-    : null;
-
-  const visitSummary =
-    visitSummaryRow && visitSummaryRow.status !== "discarded"
-      ? {
-          status: visitSummaryRow.status,
-          createdAt: visitSummaryRow.createdAt.toISOString(),
-          approvedAt: visitSummaryRow.approvedAt ? visitSummaryRow.approvedAt.toISOString() : null,
-          sentAt: visitSummaryRow.sentAt ? visitSummaryRow.sentAt.toISOString() : null,
-        }
-      : null;
-
   return {
     booking, service, resource, room, customer, resourceOptions, settings, allowedTransitions, conflict, hasStarted,
     labels: Bookings.statusLabels(),
-    visitSummariesAvailable,
-    recordConsultationAvailable,
-    visitSummary,
   };
 }
 
@@ -152,7 +101,7 @@ const TRANSITION_VERBS: Partial<Record<Bookings.BookingStatus, string>> = {
 };
 
 export default function BookingDetail({ loaderData, actionData, params }: Route.ComponentProps) {
-  const { booking, service, resource, room, customer, resourceOptions, settings, allowedTransitions, labels, visitSummariesAvailable, recordConsultationAvailable, visitSummary, conflict, hasStarted } = loaderData;
+  const { booking, service, resource, room, customer, resourceOptions, settings, allowedTransitions, labels, conflict, hasStarted } = loaderData;
   const v = useVocabulary();
   const base = `/dashboard/${params.connectionId}`;
   const canCancel = ["pending", "confirmed"].includes(booking.status);
@@ -304,66 +253,6 @@ export default function BookingDetail({ loaderData, actionData, params }: Route.
               )}
             </div>
           </div>
-
-          {recordConsultationAvailable && (
-            <div className="card">
-              <div className="card-header">
-                <h2 className="card-title">Record consultation</h2>
-              </div>
-              <div className="card-body flex flex-col gap-3">
-                <p className="m-0 text-body text-muted">
-                  Record today&rsquo;s consultation and have it transcribed automatically — you&rsquo;ll review the
-                  transcript before it becomes a visit summary.
-                </p>
-                <a href={`${base}/bookings/${booking.id}/summary`} className="btn-pri w-fit">
-                  <span aria-hidden="true">●</span> Record consultation
-                </a>
-              </div>
-            </div>
-          )}
-
-          {visitSummariesAvailable && (
-            <div className="card">
-              <div className="card-header">
-                <h2 className="card-title">Visit summary</h2>
-                {visitSummary && (
-                  <span className={SUMMARY_STATUS_META[visitSummary.status]?.[0] ?? "badge-neutral"}>
-                    {SUMMARY_STATUS_META[visitSummary.status]?.[1] ?? visitSummary.status}
-                  </span>
-                )}
-              </div>
-              <div className="card-body flex flex-col gap-3">
-                {!visitSummary ? (
-                  <>
-                    <p className="m-0 text-body text-muted">
-                      Turn today&rsquo;s consultation into a plain-language summary {customer?.firstName || `the ${v.customerOne}`} can
-                      keep — reviewed and approved by you before it&rsquo;s sent.
-                    </p>
-                    <a href={`${base}/bookings/${booking.id}/summary`} className="btn-pri w-fit">
-                      + Create visit summary
-                    </a>
-                  </>
-                ) : (
-                  <>
-                    <p className="m-0 text-body text-muted">
-                      {visitSummary.status === "sent" && visitSummary.sentAt
-                        ? `Sent ${formatInZone(visitSummary.sentAt, settings.timezone)}`
-                        : visitSummary.status === "approved" && visitSummary.approvedAt
-                          ? `Approved by ${resource?.name ?? "—"}, ${formatInZone(visitSummary.approvedAt, settings.timezone)}`
-                          : `Drafted ${formatInZone(visitSummary.createdAt, settings.timezone)}`}
-                    </p>
-                    <a href={`${base}/bookings/${booking.id}/summary`} className="btn-sec w-fit">
-                      {visitSummary.status === "approved"
-                        ? `Send to ${v.customerOne} →`
-                        : visitSummary.status === "sent"
-                          ? "View summary →"
-                          : "Review now →"}
-                    </a>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
 
           {canCancel && (
             <div className="card" id="reschedule">

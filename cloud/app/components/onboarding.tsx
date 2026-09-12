@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { PRESETS, DAY_ABBR, getPreset, summarizeHours, rulesFor, ruleChips, type Preset, type PresetId } from "~/lib/presets";
+import { TEMPLATE_CARDS, DAY_ABBR, templateCard, summarizeHours, vocabFor, type TemplateCard } from "~/lib/presets";
 import { LogoutButton } from "~/components/ui";
 
 /* ==================================================================
@@ -11,22 +11,22 @@ export function PresetSelect({
   name = "preset",
   defaultValue = "generic",
   onChange,
-}: { name?: string; defaultValue?: PresetId; onChange?: (id: PresetId) => void }) {
+}: { name?: string; defaultValue?: string; onChange?: (id: string) => void }) {
   return (
     <label className="field">
       <span className="field-label">What does your business do?</span>
       <select
         name={name}
         defaultValue={defaultValue}
-        onChange={(e) => onChange?.(e.target.value as PresetId)}
+        onChange={(e) => onChange?.(e.target.value as string)}
         className="input cursor-pointer"
       >
-        {PRESETS.map((p) => (
+        {TEMPLATE_CARDS.map((p) => (
           <option key={p.id} value={p.id}>{p.label}</option>
         ))}
       </select>
       <span className="field-hint">
-        Sets your default services, terminology and reminder timing. Editable later.
+        Gives you a starting set of services and a vocabulary to edit. Everything stays changeable later.
       </span>
     </label>
   );
@@ -39,7 +39,7 @@ export function PresetTiles({
   value,
   onPick,
   columns = 2,
-}: { name?: string; value: PresetId; onPick?: (id: PresetId) => void; columns?: 2 | 5 }) {
+}: { name?: string; value: string; onPick?: (id: string) => void; columns?: 2 | 5 }) {
   return (
     // Single column below sm — a 2-up grid left ~150px per tile at a
     // 389px viewport, not enough for a label like "Home Services / Trades"
@@ -47,7 +47,7 @@ export function PresetTiles({
     // audit's text-overflow finding). min-w-0 + truncate is a second,
     // width-independent safety net for any leftover long combination.
     <div className={`grid grid-cols-1 gap-2 sm:grid-cols-2 ${columns === 5 ? "md:grid-cols-5" : ""}`}>
-      {PRESETS.map((p) => (
+      {TEMPLATE_CARDS.map((p) => (
         <label
           key={p.id}
           onClick={() => onPick?.(p.id)}
@@ -150,21 +150,22 @@ export function LogoMark({ size = 30 }: { size?: number }) {
 /* ==================================================================
    3. Onboarding step 2 — preset scaffold preview
    ================================================================== */
-export function PresetScaffold({ presetId }: { presetId: PresetId }) {
-  const preset = getPreset(presetId);
-  const rules = rulesFor(presetId);
+export function PresetScaffold({ presetId }: { presetId: string }) {
+  const preset = templateCard(presetId);
+  const v = vocabFor(preset.terms);
 
   return (
     <>
       <div className="card p-[18px]">
-        <h2 className="card-title mb-3">Starting rules</h2>
+        <h2 className="card-title mb-3">What you'll call things</h2>
         <p className="mb-3 text-meta text-muted">
-          A preset sets policy, not just wording — every one of these stays editable in Settings once you're live.
+          A starting vocabulary, nothing more — every one of these is a free-text field in Settings once
+          you're live, so call a {v.bookingOne} whatever your business calls it.
         </p>
         <div className="flex flex-wrap gap-[8px]">
-          {ruleChips(rules).map((chip) => (
-            <span key={chip} className="rounded-full border border-line bg-surface px-[10px] py-[4px] text-meta text-ink-2">
-              {chip}
+          {[v.bookingTitle, v.services, v.resources, v.customers].map((word) => (
+            <span key={word} className="rounded-full border border-line bg-surface px-[10px] py-[4px] text-meta text-ink-2">
+              {word}
             </span>
           ))}
         </div>
@@ -172,7 +173,7 @@ export function PresetScaffold({ presetId }: { presetId: PresetId }) {
 
       <div className="card">
         <div className="card-header">
-          <h2 className="card-title">{preset.vocab.services}</h2>
+          <h2 className="card-title">{v.services}</h2>
           <span className="text-meta text-subtle">{preset.services.length} included</span>
         </div>
         {/* Read-only — nothing here is actually configurable until there's a
@@ -191,7 +192,7 @@ export function PresetScaffold({ presetId }: { presetId: PresetId }) {
         <div className="card-footer">
           <span className="text-meta text-muted">
             A preview of a typical {preset.label.split(" / ")[0].toLowerCase()} setup — your real{" "}
-            {preset.vocab.services.toLowerCase()} come from your store's product catalogue once it's connected
+            {v.services.toLowerCase()} come from your store's product catalogue once it's connected
             (or from the service editor if you go live without one).
           </span>
         </div>
@@ -389,4 +390,4 @@ export function PlanCard({
   );
 }
 
-export type { Preset, PresetId };
+export type { TemplateCard };

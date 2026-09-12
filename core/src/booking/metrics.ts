@@ -6,11 +6,11 @@
  * this month", and two raw counts for services/resources) — no time-series
  * or breakdown query exists anywhere to port, so this is built fresh.
  *
- * Revenue is aggregated from `Payment` rows (grouped by currency), not by
- * summing `Booking.amountDue` for `paymentStatus === "paid"` bookings the
- * way the embedded admin's stat does — that shortcut silently mixes
- * currencies together and only reflects what a booking *owed*, not what a
- * gateway actually reported as settled.
+ * The revenue and payment-status aggregates came out with merchant
+ * deposits in Phase 1's trim: nothing in the product can settle a payment
+ * any more, so both would only ever report zeroes. The `Payment` table
+ * and `Booking.paymentStatus` stay (no destructive migrations), so
+ * whatever re-introduces deposits can bring the queries back with them.
  */
 import { DateTime } from "luxon";
 import prisma from "../db.js";
@@ -41,16 +41,6 @@ export async function bookingsOverTime(shop: string, platform: string, range: Da
     day = day.plus({ days: 1 });
   }
   return out;
-}
-
-/** Settled revenue, grouped by currency since a shop can take payments in more than one. */
-export async function revenue(shop: string, platform: string, range: DateRange): Promise<Array<{ currency: string; amount: number }>> {
-  const rows = await prisma.payment.groupBy({
-    by: ["currency"],
-    where: { shop, platform, status: "paid", createdAt: { gte: range.from, lte: range.to } },
-    _sum: { amount: true },
-  });
-  return rows.map((r) => ({ currency: r.currency, amount: r._sum.amount ?? 0 }));
 }
 
 export async function topServices(
@@ -197,24 +187,13 @@ export async function noShowRate(shop: string, platform: string, range: DateRang
   return { noShow, total, rate: total > 0 ? noShow / total : 0 };
 }
 
-export async function paymentStatusBreakdown(shop: string, platform: string, range: DateRange): Promise<Array<{ status: string; count: number }>> {
-  const rows = await prisma.booking.groupBy({
-    by: ["paymentStatus"],
-    where: { shop, platform, startUtc: { gte: range.from, lte: range.to } },
-    _count: { paymentStatus: true },
-  });
-  return rows.map((r) => ({ status: r.paymentStatus, count: r._count.paymentStatus }));
-}
-
 /** Everything the dashboard's overview screen needs for one render, so metrics are visible on first login without N separate round trips from the route. */
 export async function overview(shop: string, platform: string, range: DateRange) {
-  const [bookingsSeries, revenueByCurrency, top, utilization, noShow, paymentBreakdown] = await Promise.all([
+  const [bookingsSeries, top, utilization, noShow] = await Promise.all([
     bookingsOverTime(shop, platform, range),
-    revenue(shop, platform, range),
     topServices(shop, platform, range),
     resourceUtilization(shop, platform, range),
     noShowRate(shop, platform, range),
-    paymentStatusBreakdown(shop, platform, range),
   ]);
-  return { bookingsSeries, revenueByCurrency, topServices: top, resourceUtilization: utilization, noShow, paymentBreakdown };
+  return { bookingsSeries, topServices: top, resourceUtilization: utilization, noShow };
 }

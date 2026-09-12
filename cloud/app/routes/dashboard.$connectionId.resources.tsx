@@ -3,10 +3,10 @@ import { Data } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { PageHeader, DataTable, EmptyState, Badge } from "~/components/ui";
 import { useVocabulary, vocabFor } from "~/lib/presets";
-import { dashboardPreset } from "~/lib/dashboardMeta";
+import { dashboardTerms } from "~/lib/dashboardMeta";
 
 export const meta: Route.MetaFunction = ({ matches }) => [
-  { title: `${vocabFor(dashboardPreset(matches)).resources} · GetBooqin` },
+  { title: `${vocabFor(dashboardTerms(matches)).resources} · GetBooqin` },
 ];
 
 export async function loader({ request, params }: Route.LoaderArgs) {

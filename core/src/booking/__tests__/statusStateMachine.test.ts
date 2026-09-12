@@ -17,11 +17,21 @@ let serviceId: number;
 let resourceId: number;
 let customerId: number;
 
+// Every seeded booking gets its own hour on the shared resource. Each
+// case here only cares about one booking's status and start time
+// relative to now, but they all share one resource, and two
+// pending/confirmed bookings cannot physically occupy it at once —
+// Booking_resource_no_overlap now enforces that at the database level
+// (Phase 0's B2), so a fixture that stacked them all on the same instant
+// was writing data the product can no longer produce.
+let seedSlot = 0;
+
 async function seedBooking(status: string, startUtc: Date) {
+  const start = DateTime.fromJSDate(startUtc).plus({ hours: seedSlot++ });
   const booking = await prisma.booking.create({
     data: {
       shop, platform, uid: `seed-${status}-${Date.now()}-${Math.random()}`, serviceId, resourceId, customerId,
-      startUtc, endUtc: DateTime.fromJSDate(startUtc).plus({ minutes: 30 }).toJSDate(),
+      startUtc: start.toJSDate(), endUtc: start.plus({ minutes: 30 }).toJSDate(),
       timezone: "UTC", status, price: 0, amountDue: 0, currency: "USD", paymentStatus: "not_required",
     },
   });

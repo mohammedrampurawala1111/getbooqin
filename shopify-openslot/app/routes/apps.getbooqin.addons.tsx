@@ -4,6 +4,18 @@ import { Data } from "getbooqin-core";
 import { ok, fail } from "~/lib/http.server";
 import { GetBooqinError } from "getbooqin-core";
 
+/**
+ * Add-ons a service offers, for the storefront widget's "anything else?"
+ * step (booking.js's stepAddons).
+ *
+ * Phase 1's trim removed the add-on *admin* screens — nothing can create
+ * an add-on any more — but this read endpoint stays, deliberately. The
+ * widget's step already auto-advances when the list comes back empty,
+ * which is now every time; deleting the route instead makes that same
+ * fetch reject and puts an error screen in front of a customer trying to
+ * book. The wizard's dead branch comes out with the rest of the Shopify
+ * surface in Phase 4, which is the point at which it can be tested.
+ */
 export async function loader({ request }: LoaderFunctionArgs) {
   try {
     const shop = await proxyShop(request);

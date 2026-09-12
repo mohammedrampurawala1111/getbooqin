@@ -8,7 +8,6 @@ import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import polarisTranslations from "@shopify/polaris/locales/en.json";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "~/shopify.server";
-import { FeatureFlags } from "getbooqin-core";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
@@ -16,7 +15,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   await authenticate.admin(request);
   return {
     apiKey: process.env.SHOPIFY_API_KEY || "",
-    chatEnabled: FeatureFlags.CHAT_ENABLED,
     supportEmail: process.env.SUPPORT_EMAIL || process.env.MAIL_FROM_EMAIL || "",
   };
 }
@@ -40,7 +38,7 @@ function PolarisLink({ url, children, ...rest }: { url: string; children?: React
 }
 
 export default function AppLayout() {
-  const { apiKey, chatEnabled, supportEmail } = useLoaderData<typeof loader>();
+  const { apiKey, supportEmail } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider apiKey={apiKey}>
@@ -53,11 +51,9 @@ export default function AppLayout() {
           <Link to="/app/waitlist">Waitlist</Link>
           <Link to="/app/calendar">Calendar</Link>
           <Link to="/app/services">Services</Link>
-          <Link to="/app/addons">Add-ons</Link>
           <Link to="/app/resources">Staff</Link>
           <Link to="/app/timeoff">Time Off</Link>
           <Link to="/app/customers">Customers</Link>
-          {chatEnabled && <Link to="/app/chat">Chat</Link>}
           <Link to="/app/settings">Settings</Link>
         </NavMenu>
         <Frame>

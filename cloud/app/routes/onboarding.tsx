@@ -4,11 +4,11 @@ import type { Route } from "./+types/onboarding";
 import { getClerkClient, requireUserSession, ensureUserRow } from "~/session.server";
 import { AlertError, Field, Input, Toggle, TimezoneSelect } from "~/components/ui";
 import { OnboardingShell, PresetTiles, PresetScaffold, IntegrationRow } from "~/components/onboarding";
-import { INTEGRATIONS, getPreset, vocabFor, SERVICE_SWATCHES, type PresetId } from "~/lib/presets";
+import { INTEGRATIONS, starterTemplate, templateCard, vocabFor, SERVICE_SWATCHES } from "~/lib/presets";
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 import { CURRENCIES, guessCurrency } from "~/lib/currency";
 import { getAppUrl } from "~/lib/env.server";
-import { Data, Settings, FeatureFlags, Team, createManualConnection, getUserConnection, listUserConnections } from "getbooqin-core";
+import { Data, Settings, Team, createManualConnection, getUserConnection, listUserConnections } from "getbooqin-core";
 
 // Two ways to leave this wizard with a working account: connect a real
 // Shopify store (ShopifyConnectForm below — answers ride through the OAuth
@@ -97,7 +97,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const seed = {
     businessName: url.searchParams.get("business_name") || "",
-    preset: (url.searchParams.get("preset") as PresetId) || undefined,
+    preset: url.searchParams.get("preset") || undefined,
     phone: url.searchParams.get("phone") || "",
     // The account already has this — retyping it two screens after signing
     // up was a regression from an earlier version that did prefill it (UX
@@ -105,7 +105,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     // address is often not the login email.
     email,
   };
-  return { userId: session.userId, seed, paymentsEnabled: FeatureFlags.PAYMENTS_ENABLED };
+  return { userId: session.userId, seed };
 }
 
 function slugify(title: string): string {
@@ -143,17 +143,27 @@ async function handleStep1(userId: string, form: FormData): Promise<ActionResult
   }
 
   if (presetId) {
-    await Settings.applyPreset(shop, platform, presetId);
+    // The one and only time a starter template is read on this account:
+    // its vocabulary and slot interval are copied onto the shop as
+    // ordinary settings the merchant can then edit freely, and `preset`
+    // is kept as a plain label for analytics (see core's presets.ts).
+    const template = starterTemplate(presetId);
+    await Settings.setSettings(shop, platform, {
+      preset: template.id,
+      terms: template.terms,
+      slot_interval: template.slotInterval,
+    });
 
-    // Materialize the preset's sample services for real. Previously step 2
-    // showed "4 of 4 selected" for these and the dashboard still reported
-    // "0 added" — applying a preset only ever wrote vocabulary/scheduling
-    // defaults, nothing actually created a bookable service from it (UX
-    // audit's N4 finding). Guarded to run once: re-submitting step 1 (e.g.
-    // after going Back) shouldn't duplicate services that already exist.
+    // Materialize the template's sample services for real. Previously
+    // step 2 showed "4 of 4 selected" for these and the dashboard still
+    // reported "0 added" — applying a preset only ever wrote
+    // vocabulary/scheduling defaults, nothing actually created a bookable
+    // service from it (UX audit's N4 finding). Guarded to run once:
+    // re-submitting step 1 (e.g. after going Back) shouldn't duplicate
+    // services that already exist.
     const existingServices = await Data.catalogServices(shop, platform, false);
     if (existingServices.length === 0) {
-      const services = getPreset(presetId).services;
+      const services = template.services;
       for (let i = 0; i < services.length; i++) {
         const svc = services[i];
         // Web Crypto's global `crypto`, not `node:crypto` — see
@@ -204,13 +214,13 @@ async function handleStep2(userId: string, form: FormData): Promise<ActionResult
     // needs the identical seeding, not a shared helper worth extracting for
     // two call sites this small.
     const settings = await Settings.getSettings(connection.shop, connection.platform);
-    const preset = getPreset(settings.preset);
-    const [start, end] = preset.range.split("–");
+    const template = templateCard(settings.preset);
+    const [start, end] = template.range.split("–");
     const schedule: Array<{ day: number; start: string; end: string }> = [];
     for (let day = 0; day < 7; day++) {
-      // Schedule.day is Sunday-first (0=Sunday); preset.open is Monday-first.
-      const presetDay = day === 0 ? 6 : day - 1;
-      if (preset.open[presetDay]) schedule.push({ day, start, end });
+      // Schedule.day is Sunday-first (0=Sunday); template.open is Monday-first.
+      const templateDay = day === 0 ? 6 : day - 1;
+      if (template.open[templateDay]) schedule.push({ day, start, end });
     }
 
     // Every preset-seeded service from step 1 has no resource assigned yet
@@ -286,7 +296,7 @@ export async function action({ request }: Route.ActionArgs) {
 
 type OnboardingState = {
   businessName: string;
-  preset: PresetId;
+  preset: string;
   email: string;
   phone: string;
   timezone: string;
@@ -298,7 +308,7 @@ type OnboardingState = {
 };
 
 export default function Onboarding({ loaderData }: Route.ComponentProps) {
-  const { seed, paymentsEnabled } = loaderData;
+  const { seed } = loaderData;
   const [searchParams, setSearchParams] = useSearchParams();
   const step = Math.min(4, Math.max(1, Number(searchParams.get("step")) || 1));
   const cid = searchParams.get("cid") || "";
@@ -343,11 +353,11 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
   // picked on step 1/2 (business name, preset, timezone, currency,
   // practitioner name) that hadn't already gone through a "Continue" click
   // was silently dropped: nothing had submitStep1/submitStep2's form yet,
-  // so Settings.applyPreset() never ran, and the connection was left on
-  // whatever defaultSettings() gave it — "generic" — no matter what the
-  // wizard visually showed selected. Reported as "business template
-  // doesn't persist... resets to generic," reproducible specifically via
-  // Finish later, not via Continue.
+  // so the starter template's vocabulary was never written, and the
+  // connection was left on whatever defaultSettings() gave it — "generic"
+  // — no matter what the wizard visually showed selected. Reported as
+  // "business template doesn't persist... resets to generic,"
+  // reproducible specifically via Finish later, not via Continue.
   const pendingOutcomeRef = useRef<{ kind: "advance"; step: number } | { kind: "finish" } | null>(null);
 
   useEffect(() => {
@@ -433,7 +443,7 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
         />
       )}
       {step === 3 && (
-        <StepIntegrations state={state} cid={cid} paymentsEnabled={paymentsEnabled} onNext={() => goToStep(4)} onBack={() => goToStep(2)} />
+        <StepIntegrations state={state} cid={cid} onNext={() => goToStep(4)} onBack={() => goToStep(2)} />
       )}
       {step === 4 && <StepGoLive state={state} cid={cid} update={update} onBack={() => goToStep(3)} />}
     </OnboardingShell>
@@ -595,7 +605,7 @@ function StepSetup({
 }) {
   const [touched, setTouched] = useState(false);
   const nameMissing = touched && !state.resourceName.trim();
-  const v = vocabFor(state.preset);
+  const v = vocabFor(starterTemplate(state.preset).terms);
 
   function handleNext() {
     if (!state.resourceName.trim()) {
@@ -642,8 +652,8 @@ function StepSetup({
 }
 
 function StepIntegrations({
-  state, cid, paymentsEnabled, onNext, onBack,
-}: { state: OnboardingState; cid: string; paymentsEnabled: boolean; onNext: () => void; onBack: () => void }) {
+  state, cid, onNext, onBack,
+}: { state: OnboardingState; cid: string; onNext: () => void; onBack: () => void }) {
   return (
     <>
       <h1 className="ob-h1">Connect your channels</h1>
@@ -663,35 +673,6 @@ function StepIntegrations({
               </div>
               <ShopifyConnectForm state={state} cid={cid} submitLabel="Connect Shopify" />
             </div>
-          ) : integ.id === "stripe" ? (
-            // Stripe's real gate is FeatureFlags.PAYMENTS_ENABLED, same as
-            // Settings > Integrations — not a Shopify connection. This row
-            // used to say "Connect your store first" unconditionally, which
-            // contradicted the whole point of "Go live without Shopify" (UX
-            // audit's S3 finding): a manual shop can take payments via
-            // Stripe on its own. Actually setting up the gateway is a real
-            // OAuth-style flow that only exists on the Payments settings
-            // page today, not worth rebuilding here — this just stops
-            // lying about why it's unavailable, and points at that page
-            // once the shop (created back in step 1) actually exists.
-            <IntegrationRow
-              key={integ.id}
-              id={integ.id}
-              name={integ.name}
-              initial={integ.initial}
-              tint={integ.tint}
-              tag={paymentsEnabled ? integ.tag : "Coming soon"}
-              blurb={integ.blurb}
-              connected={false}
-              disabled={!paymentsEnabled}
-              action={
-                paymentsEnabled ? (
-                  <a href={`/dashboard/${cid}/settings?page=payments`} className="btn-sec no-underline hover:no-underline">
-                    Configure
-                  </a>
-                ) : undefined
-              }
-            />
           ) : (
             <IntegrationRow
               key={integ.id}
@@ -718,7 +699,7 @@ function StepIntegrations({
 function StepGoLive({
   state, cid, update, onBack,
 }: { state: OnboardingState; cid: string; update: (p: Partial<OnboardingState>) => void; onBack: () => void }) {
-  const v = vocabFor(state.preset);
+  const v = vocabFor(starterTemplate(state.preset).terms);
   return (
     <>
       <h1 className="ob-h1">Go live</h1>

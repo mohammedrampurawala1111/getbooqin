@@ -1,9 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Route } from "./+types/dashboard.$connectionId._index";
-import { Metrics, Bookings, Data, Settings, FeatureFlags, ensureSlug } from "getbooqin-core";
-// Direct subpath import, not the root barrel — see bookingsShared.ts's
-// header comment for why the barrel isn't safe to import from client code.
-import { paymentStatusLabels } from "getbooqin-core/booking/bookingsShared";
+import { Metrics, Bookings, Data, Settings, ensureSlug } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { PageHeader, StatCard, BarChart, MeterRow, EmptyState } from "~/components/ui";
 import { SetupChecklist, EmptyStat } from "~/components/onboarding";
@@ -47,7 +44,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const activeServiceCount = allServices.filter((s) => s.status).length;
 
   const setupFacts = {
-    presetId: settings.preset,
+    terms: settings.terms,
     // Same "still carries its raw manual-<uuid> connection id" check as
     // the sidebar label and Settings' business-name field use — surfaced
     // here as an actual checklist item instead of a silent gap for
@@ -57,10 +54,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     serviceCount: allServices.length,
     bookableResourceCount,
     // A manual connection isn't itself a "channel" the way a real Shopify
-    // or Stripe integration is — counting it here made the checklist mark
-    // "Connect a channel" done for every manual account with nothing
-    // actually connected.
-    connectedChannels: (platform === "shopify" ? 1 : 0) + (settings.enabled_gateways.includes("stripe") ? 1 : 0),
+    // integration is — counting it here made the checklist mark "Connect
+    // a channel" done for every manual account with nothing actually
+    // connected.
+    connectedChannels: platform === "shopify" ? 1 : 0,
     channelSetupSkipped: settings.channel_setup_skipped,
     remindersOn: settings.reminder_enabled,
     isManual: platform === "manual",
@@ -88,13 +85,6 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     bookingUrl: `${getAppUrl()}/book/${bookingSlug}`,
     conflictCount,
     unbookableCount,
-    // Checked at render time rather than only at the persisted-settings
-    // level, since hidden_overview_cards' own default ("hide Revenue until
-    // payments exist") only applies going forward — an existing shop whose
-    // settings predate that default still had it visible with nothing to
-    // show but "No settled payments in range" (Defect Dossier's R2-09
-    // finding, second half).
-    paymentsAvailable: FeatureFlags.PAYMENTS_ENABLED && settings.enabled_gateways.length > 0,
     // A rule change that leaves zero bookable slots (minimum notice at or
     // past the maximum advance window) used to have no signal anywhere —
     // the Booking rules page showed a green "Saved just now" and Overview
@@ -123,14 +113,6 @@ function chartDayLabel(dateStr: string): string {
   const [y, m, d] = dateStr.split("-").map(Number);
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(Date.UTC(y, m - 1, d)));
 }
-
-const PAYMENT_TINT: Record<string, string> = {
-  paid: "bg-chart-ok",
-  not_required: "bg-chart-off",
-  unpaid: "bg-chart-warn",
-  refunded: "bg-chart-off",
-  failed: "bg-danger",
-};
 
 // Column count for the stats row — "stats" (bookings/pending/active
 // services) and "noShow" are two separately toggleable Business template
@@ -167,10 +149,8 @@ function BookingWindowClosedBanner({
 }
 
 export default function Overview({ loaderData, params }: Route.ComponentProps) {
-  const { overview, pendingCount, activeServiceCount, range, timezone, allTimeBookingCount, setupFacts, hiddenCards, bookingUrl, conflictCount, unbookableCount, paymentsAvailable, bookingWindowClosed, minNoticeHours, maxAdvanceDays } = loaderData;
+  const { overview, pendingCount, activeServiceCount, range, timezone, allTimeBookingCount, setupFacts, hiddenCards, bookingUrl, conflictCount, unbookableCount, bookingWindowClosed, minNoticeHours, maxAdvanceDays } = loaderData;
   const totalBookings = overview.bookingsSeries.reduce((sum, d) => sum + d.count, 0);
-  const paymentLabels = paymentStatusLabels();
-  const paymentTotal = overview.paymentBreakdown.reduce((sum, p) => sum + p.count, 0);
   const v = useVocabulary();
 
   if (allTimeBookingCount === 0) {
@@ -190,7 +170,6 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
   const showStats = !hidden.has("stats");
   const showNoShow = !hidden.has("noShow");
   const showChart = !hidden.has("chart");
-  const showRevenue = !hidden.has("revenue") && paymentsAvailable;
   const showTopServices = !hidden.has("topServices");
   const showUtilisation = !hidden.has("utilisation");
   const statCount = (showStats ? 3 : 0) + (showNoShow ? 1 : 0);
@@ -276,74 +255,27 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
         </div>
       )}
 
-      {(showRevenue || showTopServices) && (
-        <div className={`grid gap-[14px] ${showRevenue && showTopServices ? "grid-cols-[1.15fr_1fr]" : "grid-cols-1"}`}>
-          {showRevenue && (
-            <div className="card">
-              <div className="card-header">
-                <h2 className="card-title">Revenue</h2>
-              </div>
-              <div className="card-body flex flex-col gap-4">
-                {overview.revenueByCurrency.length === 0 ? (
-                  <p className="m-0 text-body text-muted">No settled payments in range.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-5">
-                    {overview.revenueByCurrency.map((r) => (
-                      <div key={r.currency} className="flex flex-col gap-[2px]">
-                        <span className="text-[12px] font-medium text-muted">{r.currency}</span>
-                        <span className="num text-stat font-medium tracking-[-0.03em]">{r.amount.toFixed(2)}</span>
-                      </div>
-                    ))}
+      {showTopServices && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="card-title">Top {v.services.toLowerCase()}</h2>
+          </div>
+          <div className="card-body">
+            {overview.topServices.length === 0 ? (
+              <p className="m-0 text-body text-muted">No {v.bookingMany} in range yet.</p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {overview.topServices.map((s) => (
+                  <div key={s.serviceId} className="flex items-center justify-between gap-3 text-[13px]">
+                    <span className="min-w-0 truncate font-medium">{s.name || `Service #${s.serviceId}`}</span>
+                    <span className="num shrink-0 text-subtle">
+                      {s.bookings} {s.bookings === 1 ? v.bookingOne : v.bookingMany}
+                    </span>
                   </div>
-                )}
-
-                {overview.paymentBreakdown.length > 0 && paymentTotal > 0 && (
-                  <div className="flex flex-col gap-[7px]">
-                    <div className="flex h-2 overflow-hidden rounded-[5px] bg-row">
-                      {overview.paymentBreakdown.map((p) => (
-                        <div
-                          key={p.status}
-                          className={PAYMENT_TINT[p.status] ?? "bg-chart-off"}
-                          style={{ width: `${(p.count / paymentTotal) * 100}%` }}
-                        />
-                      ))}
-                    </div>
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-muted">
-                      {overview.paymentBreakdown.map((p) => (
-                        <span key={p.status} className="num">
-                          {paymentLabels[p.status] ?? p.status}: {p.count}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                ))}
               </div>
-            </div>
-          )}
-
-          {showTopServices && (
-            <div className="card">
-              <div className="card-header">
-                <h2 className="card-title">Top {v.services.toLowerCase()}</h2>
-              </div>
-              <div className="card-body">
-                {overview.topServices.length === 0 ? (
-                  <p className="m-0 text-body text-muted">No {v.bookingMany} in range yet.</p>
-                ) : (
-                  <div className="flex flex-col gap-3">
-                    {overview.topServices.map((s) => (
-                      <div key={s.serviceId} className="flex items-center justify-between gap-3 text-[13px]">
-                        <span className="min-w-0 truncate font-medium">{s.name || `Service #${s.serviceId}`}</span>
-                        <span className="num shrink-0 text-subtle">
-                          {s.bookings} {s.bookings === 1 ? v.bookingOne : v.bookingMany}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 
@@ -436,7 +368,6 @@ function EmptyOverview({
     // (?page=…); every one of these silently landed on General instead of
     // the section it claimed to deep-link to.
     name: `${base}/settings?page=general`,
-    preset: `${base}/settings?page=template`,
     services: `${base}/services`,
     resources: `${base}/resources/new`,
     channel: `${base}/settings?page=integrations`,

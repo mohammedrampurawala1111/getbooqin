@@ -44,16 +44,6 @@ export function statusLabels(): Record<BookingStatus, string> {
   };
 }
 
-export function paymentStatusLabels(): Record<string, string> {
-  return {
-    not_required: "No payment",
-    unpaid: "Unpaid",
-    paid: "Paid",
-    refunded: "Refunded",
-    failed: "Failed",
-  };
-}
-
 export function validDate(date: unknown): date is string {
   return typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date);
 }
@@ -79,10 +69,9 @@ export function isRealEmail(value: string): boolean {
 }
 
 // Same loose E.164-ish check as cloud/app/lib/validation.ts's isValidPhone
-// (that copy is client-bundle-safe UI validation; this one is what the
-// WhatsApp send path — see whatsapp.ts's sendToCustomer — checks server-side
-// before trying to message a customer.phone value at all). Deliberately
-// permissive on formatting; not a substitute for real E.164 parsing.
+// (that copy is client-bundle-safe UI validation; this one is the
+// server-side check). Deliberately permissive on formatting; not a
+// substitute for real E.164 parsing.
 export function isPhone(value: string): boolean {
   return /^\+?[1-9]\d{6,14}$/.test(value.replace(/[\s()-]/g, ""));
 }
@@ -90,9 +79,9 @@ export function isPhone(value: string): boolean {
 /**
  * Prepends the business's configured default country code to a phone
  * number that doesn't already have one — "9325705315" saved verbatim with
- * no country code and no format hint, then silently failing to deliver the
- * moment WhatsApp is switched on (Meta's Cloud API requires E.164), was
- * exactly the gap GetBooqin clinic audit's PB-03 finding reproduced. Only
+ * no country code and no format hint, leaving the business unable to
+ * reliably dial it back, was exactly the gap GetBooqin clinic audit's
+ * PB-03 finding reproduced. Only
  * ever adds a "+" prefix; never reformats or validates the rest of the
  * number, so this can't corrupt a number a customer already typed with its
  * own country code (anything starting with "+" or "00" is left alone).

@@ -4,6 +4,41 @@ app = "getbooqin"
 primary_region = "ams"
 
 [build]
+  # Clerk's publishable key is compiled into cloud's client JS by Vite at
+  # image-build time (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY), so it
+  # cannot be a `fly secrets set` runtime value like everything else here.
+  # It lived only in a `--build-arg` on the deploy command line, which
+  # meant any `fly deploy` that forgot the flag shipped an empty key and
+  # broke login with no build error. Pinned here so the deploy is
+  # reproducible and the value is visible.
+  #
+  # Safe to commit: publishable keys are designed to ship in client
+  # bundles and this one is already served from getbooqin.fly.dev.
+  #
+  # ⚠️ THIS IS A pk_test_ KEY — a Clerk *development* instance: capped
+  # user count, relaxed security, unbranded shared OAuth consent screens,
+  # and email delivery that does not match production. Production has
+  # been running on it since before Phase 0. It must become a pk_live_
+  # key from a production Clerk instance (with your own domain and OAuth
+  # credentials) before real customers reach this. See
+  # cloud/.env.example's note and docs/phase-0-runbook.md.
+  [build.args]
+    VITE_CLERK_PUBLISHABLE_KEY = "pk_test_ZW5vdWdoLW1hbW1vdGgtNTQ5NC5jbGVyay5hY2NvdW50cy5kZXYk"
+
+# Migrations run here, not in the machine's CMD, and the difference
+# matters: a release command runs once, before any machine is replaced,
+# and a non-zero exit aborts the deploy with the old version still
+# serving. Run from the CMD instead (as this app did until Phase 0), a
+# migration that fails just crashes the new machine on boot — and with no
+# health check configured, Fly had no signal to stop the rollout and would
+# happily crash-loop both machines.
+#
+# That stopped being theoretical with the double-booking exclusion
+# constraints (Phase 0's B2): they cannot be added over data that already
+# violates them, and the migration deliberately refuses rather than
+# applying half. Refusing must cost a failed deploy, not an outage.
+[deploy]
+  release_command = "npx prisma migrate deploy --schema core/prisma/schema.prisma"
 
 [env]
 PORT = "3000"
@@ -21,6 +56,23 @@ force_https = true
 auto_stop_machines = false
 auto_start_machines = true
 min_machines_running = 1
+
+# Liveness, not product health — /healthz without ?strict=1 fails only
+# when the database is unreachable. A stale reminder cron deliberately
+# does NOT fail this: the machine is still serving bookings, and taking
+# it out of rotation over a background job would turn a background
+# problem into an outage. That alarm belongs on an external uptime
+# monitor watching /healthz?strict=1 instead (see
+# docs/phase-0-runbook.md).
+#
+# grace_period covers boot: migrations, the Prisma client connecting, and
+# the first reminder sweep all happen before the app answers.
+[[http_service.checks]]
+  interval = "15s"
+  timeout = "5s"
+  grace_period = "60s"
+  method = "GET"
+  path = "/healthz"
 
 [[vm]]
 size = "shared-cpu-1x"

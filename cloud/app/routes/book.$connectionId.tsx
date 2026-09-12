@@ -5,15 +5,12 @@ import {
   Data,
   Bookings,
   Settings as CoreSettings,
-  ConsultationSummary,
-  FeatureFlags,
   Waitlist,
   getPublicConnection,
   isGetBooqinError,
 } from "getbooqin-core";
-import type { PatientSummary } from "getbooqin-core";
 import { formatInZone, wallClockToUtc, zoneAbbr } from "getbooqin-core/booking/tz";
-import { vocabFor, isClinicFeaturePreset } from "~/lib/presets";
+import { vocabFor } from "~/lib/presets";
 import { AlertError, Badge, ConfirmDialog, Field, FormErrorSummary, Input } from "~/components/ui";
 import { LogoMark } from "~/components/onboarding";
 import { throttle, clientIp } from "~/lib/http.server";
@@ -23,12 +20,10 @@ export const meta: Route.MetaFunction = ({ data: loaderData }) =>
   loaderData ? [{ title: `Book with ${loaderData.businessName} · GetBooqin` }] : [{ title: "Book · GetBooqin" }];
 
 // Only the fields the public page actually needs — never spread the raw
-// Settings object into loader data. settings.gateways can hold a merchant's
-// own Stripe/PayPal secret key (BYO-credentials, not OAuth — see
-// PaymentManager/gateways/stripe.ts), and settings.admin_email/video/chat_*
-// are internal-only; React Router serializes whatever a loader returns
-// straight to the browser, so leaking that object here would leak
-// credentials, not just over-fetch.
+// Settings object into loader data. settings.admin_email and the rest of
+// the business configuration are internal-only; React Router serializes
+// whatever a loader returns straight to the browser, so leaking that
+// object here would be a real disclosure, not just over-fetch.
 function publicSettings(settings: CoreSettings.Settings) {
   return {
     businessName: settings.business_name,
@@ -99,93 +94,12 @@ function formatBusinessHours(hours: Array<{ dayOfWeek: number; open: boolean; st
     .join(", ");
 }
 
-/* ------------------------------------------------------------------ */
-/* Visit Summary patient view — explicit allowlist transform. Never      */
-/* spread the parsed PatientSummaryDraft into loader data: review_flags, */
-/* withheld, unclear_passages, and every `source` quote are clinician-   */
-/* facing review artifacts and must never reach this public, no-login    */
-/* page (plan Part 3 §5). Building a fresh object literal per field,     */
-/* rather than deleting keys from a copy, is what makes that a compile-  */
-/* time guarantee instead of a runtime "don't forget to strip X" rule.   */
-/* ------------------------------------------------------------------ */
-type PublicItem = { text: string } | null;
-
-function publicItem(item: PatientSummary.Item | null): PublicItem {
-  return item ? { text: item.text } : null;
-}
-
-function publicItems(items: PatientSummary.Item[]): { text: string }[] {
-  return items.map((i) => ({ text: i.text }));
-}
-
-function publicMedication(m: PatientSummary.Medication) {
-  return { name: m.name, dose: m.dose, frequency: m.frequency, duration: m.duration, purpose: m.purpose };
-}
-
-function toPatientView(draft: PatientSummary.PatientSummaryDraft) {
-  return {
-    outputLanguage: draft.output_language,
-    reasonForVisit: publicItem(draft.reason_for_visit),
-    discussed: publicItems(draft.discussed),
-    examinedOrTested: publicItems(draft.examined_or_tested),
-    clinicianAssessment: publicItem(draft.clinician_assessment),
-    plan: {
-      medication: draft.plan.medication.map(publicMedication),
-      testsOrdered: publicItems(draft.plan.tests_ordered),
-      referrals: publicItems(draft.plan.referrals),
-      selfCare: publicItems(draft.plan.self_care),
-    },
-    followUp: publicItem(draft.follow_up),
-    safetyNetting: publicItem(draft.safety_netting),
-    questionsAnswered: draft.questions_answered.map((q) => ({ question: q.question, answer: q.answer })),
-  };
-}
-
 export async function loader({ request, params }: Route.LoaderArgs) {
   const connection = await getPublicConnection(params.connectionId!);
   if (!connection) throw data("This booking page isn't available.", { status: 404 });
 
   const settings = await CoreSettings.getSettings(connection.shop, connection.platform);
-  const vocab = vocabFor(settings.preset);
-
-  // Bookings.summaryUrl() builds exactly this query param
-  // (?getbooqin_summary={{booking.uid}}) — same tokened, no-login pattern
-  // as manageUrl()/getbooqin_booking right below, addressed by the
-  // booking's own uid since there's no separate per-summary token (see
-  // core/src/booking/consultationSummary.ts's getForBooking(), which
-  // always resolves "the current summary for this booking"). Clinic
-  // preset only, and only once a summary has actually been sent — a
-  // draft/under_review/approved row (still under clinician review) must
-  // never be reachable here.
-  const summaryUid = new URL(request.url).searchParams.get("getbooqin_summary");
-  if (summaryUid) {
-    if (!isClinicFeaturePreset(settings.preset) || !FeatureFlags.VISIT_SUMMARIES_ENABLED || !settings.visit_summaries_enabled) {
-      throw data("This page isn't available.", { status: 404 });
-    }
-
-    const booking = await Bookings.getByUid(connection.shop, summaryUid);
-    if (!booking) throw data("That summary couldn't be found.", { status: 404 });
-
-    const row = await ConsultationSummary.getForBooking({
-      shop: connection.shop,
-      platform: connection.platform,
-      bookingId: booking.id,
-    });
-    if (!row || row.status !== "sent") {
-      throw data("This visit summary isn't available yet.", { status: 404 });
-    }
-
-    const resource = await Data.resource(connection.shop, booking.resourceId);
-    const edited = ConsultationSummary.parseEditedJson(row);
-
-    return {
-      mode: "summary" as const,
-      businessName: settings.business_name,
-      patient: toPatientView(edited),
-      reviewer: { name: resource?.name ?? "" },
-      approvedAt: row.approvedAt ? row.approvedAt.toISOString() : null,
-    };
-  }
+  const vocab = vocabFor(settings.terms);
 
   // Bookings.manageUrl() builds exactly this query param — this is the link
   // a (now-fixed) confirmation/cancel email points customers back to.
@@ -330,11 +244,6 @@ async function handleBook(connectionId: string, request: Request, form: FormData
         when: formatInZone(booking.startUtc, Bookings.displayTz(booking, settings.timezone)),
         startIso: booking.startUtc.toISOString(),
         endIso: booking.endUtc.toISOString(),
-        // Payment collection isn't built into this page yet — but the
-        // confirmation shouldn't claim "you're booked" outright when the
-        // service actually requires payment the merchant has to chase down
-        // themselves (Bookings.needsPayment reads this straight off the row).
-        needsPayment: Bookings.needsPayment(booking),
         // The confirmation used to say "confirmed" and "a confirmation has
         // been sent" regardless of actual status, and gave a customer whose
         // settings allow cancelling no way to act on it — no reference, no
@@ -473,129 +382,7 @@ export default function BookingPage({ loaderData, params }: Route.ComponentProps
       />
     );
   }
-  if (loaderData.mode === "summary") {
-    return <PatientSummaryView loaderData={loaderData} />;
-  }
   return <BookingFlow loaderData={loaderData} />;
-}
-
-/* ---------------------------------------------------- Visit summary view */
-
-type SummaryLoaderData = Extract<Route.ComponentProps["loaderData"], { mode: "summary" }>;
-
-function PatientSummaryView({ loaderData }: { loaderData: SummaryLoaderData }) {
-  const { businessName, patient, reviewer, approvedAt } = loaderData;
-  const isNl = patient.outputLanguage === "nl";
-  const lang = isNl ? "nl" : "en";
-  const reviewerName = reviewer.name || (isNl ? "uw zorgverlener" : "your clinician");
-  const dateLabel = approvedAt
-    ? new Intl.DateTimeFormat(isNl ? "nl-NL" : "en-GB", { dateStyle: "long" }).format(new Date(approvedAt))
-    : "";
-
-  const planCount =
-    patient.plan.medication.length + patient.plan.testsOrdered.length + patient.plan.referrals.length + patient.plan.selfCare.length;
-
-  return (
-    <Shell businessName={businessName}>
-      <div className="card p-[18px]" lang={lang}>
-        <h1 className="ob-h1 mb-3">{isNl ? "Uw bezoeksamenvatting" : "Your visit summary"}</h1>
-
-        {/* Trust banner (plan Part 3 §5) — prominent, not fine print like
-            book page's own consent_text styling. */}
-        <div className="mb-4 rounded-[10px] border border-brand-200 bg-brand-50 px-[15px] py-[13px]">
-          <p className="m-0 text-[13px] font-medium text-ink">
-            {isNl
-              ? `Deze samenvatting is met AI-hulp opgesteld op basis van uw gesprek, en gecontroleerd en goedgekeurd door ${reviewerName}${dateLabel ? ` op ${dateLabel}` : ""}.`
-              : `This summary was drafted with AI assistance based on your visit, and reviewed and approved by ${reviewerName}${dateLabel ? ` on ${dateLabel}` : ""}.`}
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-4 text-body">
-          <PatientField label={isNl ? "Reden van uw bezoek" : "Reason for your visit"} item={patient.reasonForVisit} />
-          <PatientList label={isNl ? "Wat we hebben besproken" : "What we discussed"} items={patient.discussed} />
-          <PatientList label={isNl ? "Onderzoeken" : "Examinations & tests"} items={patient.examinedOrTested} />
-          <PatientField label={isNl ? "Beoordeling van de arts" : "Doctor's assessment"} item={patient.clinicianAssessment} />
-
-          {planCount > 0 && (
-            <div>
-              <h2 className="mb-2 text-[14px] font-semibold">Plan</h2>
-              <div className="flex flex-col gap-3">
-                {patient.plan.medication.length > 0 && (
-                  <div>
-                    <h3 className="mb-1 text-[12.5px] font-semibold text-ink-2">{isNl ? "Medicatie" : "Medication"}</h3>
-                    <ul className="m-0 flex list-none flex-col gap-2 p-0">
-                      {patient.plan.medication.map((m, i) => (
-                        <li key={i} className="rounded-[8px] border border-line px-3 py-2">
-                          <div className="font-medium">{m.name}</div>
-                          {(m.dose || m.frequency || m.duration) && (
-                            <div className="text-[12.5px] text-muted">{[m.dose, m.frequency, m.duration].filter(Boolean).join(" · ")}</div>
-                          )}
-                          {m.purpose && <div className="text-[12.5px] text-muted">{m.purpose}</div>}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                <PatientList label={isNl ? "Onderzoeken aangevraagd" : "Tests ordered"} items={patient.plan.testsOrdered} bare />
-                <PatientList label={isNl ? "Doorverwijzingen" : "Referrals"} items={patient.plan.referrals} bare />
-                <PatientList label={isNl ? "Zelfzorg" : "Self-care"} items={patient.plan.selfCare} bare />
-              </div>
-            </div>
-          )}
-
-          <PatientField label={isNl ? "Vervolgafspraak" : "Follow-up"} item={patient.followUp} />
-          <PatientField label={isNl ? "Wanneer contact opnemen" : "When to seek help"} item={patient.safetyNetting} />
-
-          {patient.questionsAnswered.length > 0 && (
-            <div>
-              <h2 className="mb-2 text-[14px] font-semibold">{isNl ? "Uw vragen" : "Questions you asked"}</h2>
-              <div className="flex flex-col gap-2">
-                {patient.questionsAnswered.map((q, i) => (
-                  <div key={i} className="rounded-[8px] border border-line px-3 py-2">
-                    <div className="font-medium">{q.question}</div>
-                    <div className="text-muted">{q.answer}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-      <p className="text-center text-body text-muted">
-        {isNl
-          ? `Vragen over deze samenvatting? Neem rechtstreeks contact op met ${businessName}.`
-          : `Questions about this summary? Contact ${businessName} directly.`}
-      </p>
-    </Shell>
-  );
-}
-
-function PatientField({ label, item }: { label: string; item: PublicItem }) {
-  if (!item) return null;
-  return (
-    <div>
-      <h2 className="mb-1 text-[14px] font-semibold">{label}</h2>
-      <p className="m-0 whitespace-pre-wrap">{item.text}</p>
-    </div>
-  );
-}
-
-function PatientList({ label, items, bare = false }: { label: string; items: { text: string }[]; bare?: boolean }) {
-  if (items.length === 0) return null;
-  return (
-    <div>
-      {bare ? (
-        <h3 className="mb-1 text-[12.5px] font-semibold text-ink-2">{label}</h3>
-      ) : (
-        <h2 className="mb-1 text-[14px] font-semibold">{label}</h2>
-      )}
-      <ul className="m-0 flex list-disc flex-col gap-1 pl-5">
-        {items.map((it, i) => (
-          <li key={i}>{it.text}</li>
-        ))}
-      </ul>
-    </div>
-  );
 }
 
 /* ---------------------------------------------------------- Manage view */
@@ -890,7 +677,6 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
       when: string;
       startIso: string;
       endIso: string;
-      needsPayment: boolean;
       canCancel: boolean;
       cancelCutoffHours: number;
       cancelUnavailableReason: string;
@@ -1332,7 +1118,6 @@ function Confirmation({
     when: string;
     startIso: string;
     endIso: string;
-    needsPayment: boolean;
     canCancel: boolean;
     cancelCutoffHours: number;
     cancelUnavailableReason: string;
@@ -1370,9 +1155,6 @@ function Confirmation({
         <p className="mt-1 text-[12px] text-subtle">Reference #{bookingRef}</p>
         {booking.status === "pending" && (
           <p className="mt-2 text-body text-muted">{businessName} will confirm this {vocab.bookingOne} shortly.</p>
-        )}
-        {booking.needsPayment && (
-          <p className="mt-2 text-body text-muted">{businessName} will be in touch about payment for this {vocab.bookingOne}.</p>
         )}
         {/* Nothing is actually confirmed yet on a pending request — the
             copy used to claim a confirmation had been sent regardless of

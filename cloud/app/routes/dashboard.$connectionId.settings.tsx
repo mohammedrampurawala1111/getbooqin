@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Form, redirect, useFetcher, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.settings";
-import { Settings, Data, Mailer, PaymentManager, WhatsApp, FeatureFlags, Team, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
+import { Settings, Data, Mailer, Team, Entitlements, Billing, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
 // Client-safe subpath for the two rule-checks the component below calls at
 // render time — importing these off the main `Settings` namespace instead
 // would pull core's *entire* barrel (nodemailer, the Razorpay/Shopify HMAC
@@ -15,12 +15,13 @@ import { requireTenant } from "~/tenant.server";
 import { getClerkClient } from "~/session.server";
 import { Badge, TimezoneSelect, Toggle, useToast } from "~/components/ui";
 import { IntegrationRow } from "~/components/onboarding";
-import { TemplateConfig, overviewCards, type OverviewCardKey } from "~/components/account";
+import { DashboardLayoutCard, VocabularyFields, overviewCards, type OverviewCardKey } from "~/components/account";
 import {
-  SettingsShell, Row, RowInput, RowSelect, RowTextarea, ToggleRow, Segmented, ValueRow, SettingsCard, isSettingsPage, PresetFieldBadge, hiddenSettingsNavKeys,
+  SettingsShell, Row, RowInput, RowSelect, RowTextarea, ToggleRow, Segmented, ValueRow, SettingsCard, isSettingsPage,
   MemberRow, PendingInviteRow, InviteMemberCard, TeamReadOnlyNotice, TeamEmptyHint,
 } from "~/components/settings";
-import { integrationsFor, getPreset, isClinicFeaturePreset, useVocabulary, SERVICE_SWATCHES, type PresetId, type PresetRules } from "~/lib/presets";
+import { INTEGRATIONS, vocabFor, useVocabulary, withDefaultTerms, type Terms } from "~/lib/presets";
+import { BillingPage } from "~/components/billing";
 import { PHONE_PATTERN } from "~/lib/validation";
 import { CURRENCIES } from "~/lib/currency";
 
@@ -42,10 +43,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     throw redirect(url.pathname + url.search);
   }
 
-  // Every page under Settings — General, Business template, Booking rules,
-  // Notifications, Payments, Visit summaries, Integrations, Team — is
-  // business configuration or sensitive data (billing/integration
-  // credentials, the full team roster with emails), so this gates the
+  // Every page under Settings — General, Business template, Booking
+  // rules, Notifications, Integrations, Team — is business configuration
+  // or sensitive data (integration credentials, the full team roster with
+  // emails), so this gates the
   // *loader* at "admin" too, not just the action below. A write/read
   // teammate shouldn't see any of it, not just be blocked from editing it
   // — unlike the operational dashboard routes (bookings/services/etc.),
@@ -54,12 +55,6 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const settings = await Settings.getSettings(shop, platform);
   const connections = await listUserConnections(userId);
   const isManual = platform === "manual";
-
-  const gatewayFields = Object.entries(PaymentManager.gateways()).map(([id, g]) => ({
-    id,
-    label: g.label({ shop, settings, appProxyBase: "", manageUrl: () => "" }),
-    fields: g.settingsFields(),
-  }));
 
   // getSettings() always seeds business_email/admin_email blank (core's
   // defaultSettings() has no way to know the account's real address at
@@ -82,25 +77,14 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // side, rather than shipping the raw TEMPLATE_DEFS registry + a token
   // renderer to the client — there are only ~16 of these, cheap to
   // precompute all at once.
+  // Every message in TEMPLATE_DEFS is now unconditionally real: the four
+  // that used to be capability-gated (awaiting payment, payment received,
+  // chat lead, visit summary) belonged to the dark surfaces Phase 1
+  // removed, so there is nothing left to filter and no way for the page
+  // to advertise a notification the product can't send (Defect Dossier's
+  // R2-09/R3-02 findings, resolved by deletion rather than by a filter).
   const previewTokens = Mailer.previewTokens(settings);
-  const visitSummariesVisibleForMessages = FeatureFlags.VISIT_SUMMARIES_ENABLED && isClinicFeaturePreset(settings.preset);
-  // A "Payment received" message enabled on a product that can't yet take
-  // payment advertised a capability the business doesn't have (Defect
-  // Dossier's R2-09 finding) — same gate as the Payment column/Deposit
-  // field elsewhere (BQ-30).
-  const paymentsAvailableForMessages = FeatureFlags.PAYMENTS_ENABLED && settings.enabled_gateways.length > 0;
-  // settings.chat_enabled defaults to true for every shop (ported from
-  // shopify-openslot, which had a real chat widget) and there is no
-  // dashboard control that ever turns it off — the standalone product has
-  // no chat widget at all, so a filter keyed on it was never actually
-  // gating anything (Defect Dossier's R3-02 finding). FeatureFlags.CHAT_ENABLED
-  // is the real switch: off unless ENABLE_CHAT is explicitly set, same
-  // convention as every other unbuilt-capability flag.
-  const notificationMessages = Mailer.visibleTemplateDefs({
-    chat: FeatureFlags.CHAT_ENABLED,
-    payments: paymentsAvailableForMessages,
-    visitSummary: visitSummariesVisibleForMessages,
-  }).map((def) => {
+  const notificationMessages = Mailer.TEMPLATE_DEFS.map((def) => {
     const subject = Settings.template(settings, `${def.key}_subject`, def.subject);
     const body = Settings.template(settings, `${def.key}_body`, def.body);
     return {
@@ -156,24 +140,40 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     invitedAt: inviteDateFormatter.format(i.createdAt),
   }));
 
+  // Billing snapshot for the page below. Read-only in 2a — there is no
+  // upgrade path until the payment rails go in (2c), and a button that
+  // 404s is worse than a plan you can see but not yet change.
+  const entitlements = await Entitlements.entitlementsFor(connection.id);
+  const usage = await Billing.usageSnapshot(shop, platform, connection.id, userId);
+
   return {
     settings,
-    gatewayFields,
-    paymentsEnabled: FeatureFlags.PAYMENTS_ENABLED,
-    whatsappEnabled: FeatureFlags.WHATSAPP_ENABLED,
-    whatsappFields: WhatsApp.settingsFields(),
-    whatsappConfigured: WhatsApp.isConfigured(settings),
-    whatsappRequiredTemplate: WhatsApp.requiredTemplate(),
+    billing: {
+      plan: entitlements.plan,
+      status: entitlements.status,
+      trialEndsAt: entitlements.trialEndsAt ? entitlements.trialEndsAt.toISOString() : null,
+      trialDaysLeft: entitlements.trialDaysLeft,
+      currentPeriodEnd: entitlements.currentPeriodEnd ? entitlements.currentPeriodEnd.toISOString() : null,
+      cancelAtPeriodEnd: entitlements.cancelAtPeriodEnd,
+      currency: entitlements.currency,
+      billingCycle: entitlements.billingCycle,
+      inGrace: entitlements.inGrace,
+      features: [...entitlements.features],
+      limits: Object.fromEntries(
+        Object.entries(entitlements.limits).map(([k, v]) => [k, Number.isFinite(v) ? v : null])
+      ) as Record<string, number | null>,
+      usage,
+      overrides: entitlements.overrides.map((o) => ({
+        key: o.key,
+        value: o.value,
+        reason: o.reason,
+        expiresAt: o.expiresAt ? o.expiresAt.toISOString() : null,
+      })),
+    },
     viewerRole,
     canManageTeam,
     members,
     pendingInvites,
-    // Two-layer gate (docs/patient-summary-cloud-integration-plan.md Part 3
-    // §6 / Part 5): this env flag plus the shop's own preset decide whether
-    // the "Visit summaries" nav entry and page even render below — the
-    // per-clinic visit_summaries_enabled toggle inside that page is the
-    // second layer, and stays off (opt-in) regardless of this flag.
-    visitSummariesEnabled: FeatureFlags.VISIT_SUMMARIES_ENABLED,
     notificationMessages,
     connections,
     currentConnectionId: connection.id,
@@ -297,67 +297,42 @@ export async function action({ request, params }: Route.ActionArgs) {
       waitlist_enabled: form.get("waitlist_enabled") === "on",
     });
     return { saved: true };
-  } else if (section === "template") {
-    const preset = String(form.get("preset") ?? "");
+  } else if (section === "vocabulary") {
+    // Free text, straight through. There is no "apply a template to this
+    // shop" path any more, so nothing here can overwrite a booking rule,
+    // a consent notice or an email body as a side effect of picking a
+    // word — which is the entire reason presets, PRESET_CONTROLLED_KEYS
+    // and the "Preset default / Customized" badges are gone (see core's
+    // presets.ts). withDefaultTerms() fills any field the merchant
+    // cleared, so a blank input can never render an empty noun in a
+    // heading.
     const current = await Settings.getSettings(shop, platform);
-    let seededCount = 0;
-    if (preset && preset !== current.preset) {
-      await Settings.applyPreset(shop, platform, preset);
-      // The "Default {services}" panel promises "Added if missing", but
-      // applyPreset() only ever wrote vocabulary/rule settings — switching
-      // Legal -> Clinic kept only the four legal services, none of
-      // Clinic's own (Defect Dossier's BQ-20 finding). Seeded inactive so
-      // nothing appears on the public page unreviewed; name-matched so
-      // switching back and forth doesn't accumulate duplicates.
-      const existingServices = await Data.catalogServices(shop, platform, false);
-      const existingNames = new Set(existingServices.map((s) => s.name.toLowerCase()));
-      const toSeed = getPreset(preset).services.filter((s) => !existingNames.has(s.name.toLowerCase()));
-      // Assigned to every currently-active resource up front, same as
-      // onboarding's own resource-creation step already does — otherwise a
-      // template-switch-seeded service sits unconfigured (not "assigned to
-      // nobody", just never decided) until someone visits its own page,
-      // which is exactly the ambiguous state two otherwise-identical
-      // services could silently differ on (Defect Dossier's R2-04 finding).
-      // Practitioners only — a newly seeded service shouldn't silently pick
-      // up a "requires a room" assignment nobody asked for; that stays an
-      // explicit, deliberate choice per service (GetBooqin clinic audit's
-      // RS-01 finding).
-      const activeResourceIds = (await Data.resources(shop, platform, true, "practitioner")).map((r) => r.id);
-      for (let i = 0; i < toSeed.length; i++) {
-        const svc = toSeed[i];
-        // Web Crypto's global `crypto`, not `node:crypto` — an explicit
-        // "node:crypto" import in a route file (client+server universal
-        // module) makes Vite's client bundle try to load it too, and
-        // referencing any of its properties on the externalized browser
-        // stub throws immediately on page load. The global works
-        // identically in both environments with no import needed.
-        const productId = crypto.randomUUID();
-        const productHandle = `${svc.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "service"}-${productId.slice(0, 8)}`;
-        await Data.upsertProductCache(shop, platform, { productId, productHandle, title: svc.name, price: svc.price });
-        await Data.saveServiceConfig(shop, platform, {
-          product_id: productId,
-          product_handle: productHandle,
-          duration_min: svc.minutes,
-          location_type: svc.location ?? "onsite",
-          color: SERVICE_SWATCHES[i % SERVICE_SWATCHES.length],
-          status: false,
-          // Only when there's someone to assign — passing an empty array
-          // here would mark the service as *explicitly* assigned to
-          // nobody, which is a different (and wrong) claim from "no
-          // resources exist yet to assign."
-          ...(activeResourceIds.length > 0 ? { resource_ids: activeResourceIds } : {}),
-        });
-      }
-      seededCount = toSeed.length;
-    }
-    // Checked "cards" are the visible ones; anything in the full card list
-    // that didn't come through in this submit was switched off.
+    const terms = withDefaultTerms({
+      booking_single: String(form.get("term_booking_single") ?? ""),
+      booking_plural: String(form.get("term_booking_plural") ?? ""),
+      service_single: String(form.get("term_service_single") ?? ""),
+      service_plural: String(form.get("term_service_plural") ?? ""),
+      resource_single: String(form.get("term_resource_single") ?? ""),
+      resource_plural: String(form.get("term_resource_plural") ?? ""),
+      customer_single: String(form.get("term_customer_single") ?? ""),
+      customer_plural: String(form.get("term_customer_plural") ?? ""),
+    });
+
+    // Checked "cards" are the visible ones; anything in the full card
+    // list that didn't come through in this submit was switched off.
     const visible = new Set(form.getAll("cards").map(String));
-    const hidden = overviewCards(preset || current.preset)
+    const hidden = overviewCards({
+      booking: terms.booking_single,
+      service: terms.service_single,
+      services: terms.service_plural,
+      resource: terms.resource_single,
+    })
       .map((c) => c.key)
       .filter((key) => !visible.has(key));
-    await Settings.setSettings(shop, platform, { hidden_overview_cards: hidden });
-    return { saved: true, seededCount };
+
+    await Settings.setSettings(shop, platform, { terms, hidden_overview_cards: hidden });
+    void current;
+    return { saved: true };
   } else if (section === "disconnect_store") {
     const targetId = String(form.get("connection_id") ?? "");
     await disconnectConnection(userId, targetId);
@@ -381,10 +356,8 @@ export async function action({ request, params }: Route.ActionArgs) {
     // Each message row is its own tiny form (on/off toggle, or the
     // subject/body editor), independent of the blanket switches above —
     // the "reuse that mechanism" piece of BQ-34: TEMPLATE_DEFS/
-    // Settings.template() already carry a per-key override and an
-    // industry-appropriate default (via applyPreset() writing a preset's
-    // own text into settings.templates), this just adds the save path
-    // that was missing.
+    // Settings.template() already carry a shipped default per key plus a
+    // per-shop override, this just adds the save path that was missing.
     const key = String(form.get("key") ?? "");
     const intent = String(form.get("_action") ?? "");
     const current = await Settings.getSettings(shop, platform);
@@ -407,46 +380,6 @@ export async function action({ request, params }: Route.ActionArgs) {
       });
     }
     return { saved: true, savedKey: key };
-  } else if (section === "visit_summaries" && FeatureFlags.VISIT_SUMMARIES_ENABLED) {
-    // Preset re-checked server-side (not just trusted from the hidden nav) —
-    // same defense-in-depth as the client-side gate below; a non-clinic shop
-    // posting this section directly shouldn't be able to persist these keys.
-    const current = await Settings.getSettings(shop, platform);
-    if (isClinicFeaturePreset(current.preset)) {
-      const rawLanguage = String(form.get("visit_summary_default_language") ?? "auto");
-      await Settings.setSettings(shop, platform, {
-        visit_summaries_enabled: form.get("visit_summaries_enabled") === "on",
-        visit_summary_default_language: rawLanguage === "nl" || rawLanguage === "en" ? rawLanguage : "auto",
-        visit_summary_consent_line: String(form.get("visit_summary_consent_line") ?? ""),
-      });
-    }
-  } else if (section === "payments" && FeatureFlags.PAYMENTS_ENABLED) {
-    const enabled = form.getAll("enabled_gateways").map(String);
-    await Settings.setSettings(shop, platform, { enabled_gateways: enabled });
-    for (const [id, gateway] of Object.entries(PaymentManager.gateways())) {
-      const values: Record<string, string | boolean> = {};
-      for (const field of gateway.settingsFields()) {
-        const raw = form.get(`gateway_${id}_${field.key}`);
-        values[field.key] = field.type === "checkbox" ? raw === "on" : String(raw ?? "");
-      }
-      if (Object.keys(values).length) await PaymentManager.saveGatewaySettings(shop, platform, id, values);
-    }
-  } else if (section === "whatsapp" && FeatureFlags.WHATSAPP_ENABLED) {
-    const values: Record<string, string> = {};
-    for (const field of WhatsApp.settingsFields()) {
-      values[field.key] = String(form.get(`whatsapp_${field.key}`) ?? "");
-    }
-    await WhatsApp.saveWhatsAppSettings(shop, platform, values);
-    await Settings.setSettings(shop, platform, { whatsapp_enabled: form.get("whatsapp_enabled") === "on" });
-  } else if (section === "whatsapp_test" && FeatureFlags.WHATSAPP_ENABLED) {
-    const toPhone = String(form.get("whatsapp_test_phone") ?? "");
-    try {
-      await WhatsApp.sendTestMessage(shop, platform, toPhone);
-      return { saved: true, whatsappTestSent: true };
-    } catch (err) {
-      if (isGetBooqinError(err)) return { whatsappTestError: err.message };
-      return { whatsappTestError: err instanceof Error ? err.message : "Couldn't send that test message." };
-    }
   }
 
   return { saved: true };
@@ -454,8 +387,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 export default function SettingsPage({ loaderData, actionData }: Route.ComponentProps) {
   const {
-    settings, gatewayFields, paymentsEnabled, visitSummariesEnabled, whatsappEnabled, whatsappFields, whatsappConfigured, whatsappRequiredTemplate,
-    notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites,
+    settings, billing, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites,
   } = loaderData;
   const v = useVocabulary();
   // defaultSettings() seeds business_name to the connection's own opaque
@@ -469,24 +401,15 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
   const adminEmailValue = settings.admin_email || accountEmail;
   const [searchParams] = useSearchParams();
   const rawPage = searchParams.get("page");
-  // An unknown ?page= value already fell back to General correctly — but
-  // "payments" is a *known* slug that renders a heading and nav highlight
-  // with zero form fields whenever the feature flag is off, since nothing
-  // upstream of this line knew to reject it (UX audit's C4 finding). Same
-  // fallback, just extended to a slug that's real but not buildable yet.
-  // Same fallback shape as the payments carve-out above, extended for the
-  // second gated page: "visit_summaries" is a real slug but only buildable
-  // when both the global rollout flag and this shop's preset allow it
-  // (docs/patient-summary-cloud-integration-plan.md Part 3 §6).
-  const visitSummariesVisible = visitSummariesEnabled && isClinicFeaturePreset(settings.preset);
-  const page = isSettingsPage(rawPage)
-    && (rawPage !== "payments" || paymentsEnabled)
-    && (rawPage !== "visit_summaries" || visitSummariesVisible)
-    && (rawPage !== "whatsapp" || whatsappEnabled)
-    ? rawPage : "general";
+  // An unknown ?page= value falls back to General. The three slugs that
+  // used to need their own carve-outs here — payments, whatsapp,
+  // visit_summaries, each a real slug that rendered a heading and nav
+  // highlight with zero form fields while its flag was off (UX audit's C4
+  // finding) — are simply not settings pages any more, so isSettingsPage()
+  // rejects them on its own.
+  const page = isSettingsPage(rawPage) ? rawPage : "general";
   const savedAt = actionData?.saved ? "just now" : undefined;
   const base = `/dashboard/${currentConnectionId}`;
-  const hiddenNavKeys = hiddenSettingsNavKeys({ paymentsEnabled, visitSummariesEnabled, whatsappEnabled, preset: settings.preset });
 
   // Field-level errors from a blocked "rules" save (BR-01/BR-02) — see the
   // action's validateBookingRules call above.
@@ -497,7 +420,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
   const cutoffExceedsNotice = cancelCutoffExceedsNotice(settings);
 
   return (
-    <SettingsShell active={page} base={base} hide={hiddenNavKeys}>
+    <SettingsShell active={page} base={base}>
       {page === "general" && (
         <SettingsCard saveLabel="Save changes" savedAt={savedAt}>
           <input type="hidden" name="_section" value="general" />
@@ -510,12 +433,12 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
           <Row label="Business phone">
             <RowInput type="tel" name="business_phone" defaultValue={settings.business_phone} pattern={PHONE_PATTERN} />
           </Row>
-          {/* A phone number saved with no country code silently fails to
-              deliver the moment WhatsApp is switched on — Meta's Cloud API
-              requires E.164 (GetBooqin clinic audit's PB-03 finding). This
-              is prepended automatically to any phone number typed without
-              one, business-wide (booking form, staff-entered bookings,
-              client records) — see bookingsShared.ts's normalizePhone(). */}
+          {/* A phone number saved with no country code leaves the
+              business unable to reliably dial it back (GetBooqin clinic
+              audit's PB-03 finding). This is prepended automatically to
+              any phone number typed without one, business-wide (booking
+              form, staff-entered bookings, client records) — see
+              bookingsShared.ts's normalizePhone(). */}
           <Row label="Default country code" hint="Added automatically to phone numbers entered without one, e.g. +91">
             <RowInput name="default_country_code" defaultValue={settings.default_country_code} placeholder="+91" cap={100} />
           </Row>
@@ -552,29 +475,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
         </SettingsCard>
       )}
 
-      {page === "template" && (
-        <Form id="template-form" method="post" className="flex flex-col gap-[14px]">
-          <input type="hidden" name="_section" value="template" />
-          <TemplateTab
-            presetId={settings.preset}
-            initialHidden={settings.hidden_overview_cards}
-            saved={!!actionData?.saved}
-            currentRules={{
-              slot_interval: settings.slot_interval,
-              min_notice_hours: settings.min_notice_hours,
-              max_advance_days: settings.max_advance_days,
-              cancel_cutoff_hours: settings.cancel_cutoff_hours,
-              auto_confirm: settings.auto_confirm,
-              require_phone: settings.require_phone,
-              waitlist_enabled: settings.waitlist_enabled,
-              waitlist_offer_window_hours: settings.waitlist_offer_window_hours,
-            }}
-            customizedFields={settings.customized_fields}
-            seededCount={actionData && "seededCount" in actionData ? actionData.seededCount ?? 0 : 0}
-            paymentsAvailable={paymentsEnabled && settings.enabled_gateways.length > 0}
-          />
-        </Form>
-      )}
+      {page === "general" && <VocabularySection settings={settings} saved={!!actionData?.saved} savedAt={savedAt} />}
 
       {page === "rules" && (
         <SettingsCard saveLabel="Save booking rules" savedAt={savedAt} error={ruleErrorSummary}>
@@ -594,23 +495,19 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
               below to reopen it.
             </p>
           )}
-          <Row label="Slot interval (minutes)" hint="The spacing between bookable start times."
-            badge={<PresetFieldBadge customized={settings.customized_fields.includes("slot_interval")} />}>
+          <Row label="Slot interval (minutes)" hint="The spacing between bookable start times.">
             <RowInput type="number" name="slot_interval" min={5} max={480} defaultValue={settings.slot_interval} cap={140} />
             {ruleErrors.slot_interval && <p className="m-0 mt-1 text-[12px] text-danger">{ruleErrors.slot_interval}</p>}
           </Row>
-          <Row label="Minimum notice (hours)" hint="How soon before a slot someone can still book it."
-            badge={<PresetFieldBadge customized={settings.customized_fields.includes("min_notice_hours")} />}>
+          <Row label="Minimum notice (hours)" hint="How soon before a slot someone can still book it.">
             <RowInput type="number" name="min_notice_hours" min={0} max={720} defaultValue={settings.min_notice_hours} cap={140} />
             {ruleErrors.min_notice_hours && <p className="m-0 mt-1 text-[12px] text-danger">{ruleErrors.min_notice_hours}</p>}
           </Row>
-          <Row label="Max advance booking (days)" hint="How far ahead your calendar opens up."
-            badge={<PresetFieldBadge customized={settings.customized_fields.includes("max_advance_days")} />}>
+          <Row label="Max advance booking (days)" hint="How far ahead your calendar opens up.">
             <RowInput type="number" name="max_advance_days" min={1} max={730} defaultValue={settings.max_advance_days} cap={140} />
             {ruleErrors.max_advance_days && <p className="m-0 mt-1 text-[12px] text-danger">{ruleErrors.max_advance_days}</p>}
           </Row>
-          <Row label="Cancellation cutoff (hours before start)" hint={`How late a ${v.customerOne} can still cancel.`}
-            badge={<PresetFieldBadge customized={settings.customized_fields.includes("cancel_cutoff_hours")} />}>
+          <Row label="Cancellation cutoff (hours before start)" hint={`How late a ${v.customerOne} can still cancel.`}>
             <RowInput type="number" name="cancel_cutoff_hours" min={0} max={720} defaultValue={settings.cancel_cutoff_hours} cap={140} />
             {ruleErrors.cancel_cutoff_hours && <p className="m-0 mt-1 text-[12px] text-danger">{ruleErrors.cancel_cutoff_hours}</p>}
           </Row>
@@ -626,20 +523,16 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
               — anyone who books inside that gap won't be able to cancel online at all.
             </p>
           )}
-          <ToggleRow name="auto_confirm" label="Auto-confirm new bookings" hint="Skip manual approval for new bookings" defaultChecked={settings.auto_confirm}
-            badge={<PresetFieldBadge customized={settings.customized_fields.includes("auto_confirm")} />} />
-          <ToggleRow name="require_phone" label="Require a phone number" hint="Ask for a phone number when booking" defaultChecked={settings.require_phone}
-            badge={<PresetFieldBadge customized={settings.customized_fields.includes("require_phone")} />} />
+          <ToggleRow name="auto_confirm" label="Auto-confirm new bookings" hint="Skip manual approval for new bookings" defaultChecked={settings.auto_confirm} />
+          <ToggleRow name="require_phone" label="Require a phone number" hint="Ask for a phone number when booking" defaultChecked={settings.require_phone} />
           {/* Email was hard-required with no matching setting at all — a
               walk-in patient with no email address couldn't book online,
               full stop (GetBooqin clinic audit's PB-03 finding). Defaults
               on, so no shop's booking form changes until this is explicitly
               turned off. */}
           <ToggleRow name="require_email" label="Require an email address" hint="Ask for an email address when booking" defaultChecked={settings.require_email} />
-          <ToggleRow name="waitlist_enabled" label="Offer freed slots to the waitlist" hint="Cancelled, declined or no-show bookings get offered to the next matching waitlist entry" defaultChecked={settings.waitlist_enabled}
-            badge={<PresetFieldBadge customized={settings.customized_fields.includes("waitlist_enabled")} />} />
-          <Row label="Waitlist offer window (hours)" hint={settings.waitlist_enabled ? "How long someone has to claim an offered slot before it moves to the next person." : "Inactive — turn on \"Offer freed slots to the waitlist\" above for this to take effect."}
-            badge={<PresetFieldBadge customized={settings.customized_fields.includes("waitlist_offer_window_hours")} />}>
+          <ToggleRow name="waitlist_enabled" label="Offer freed slots to the waitlist" hint="Cancelled, declined or no-show bookings get offered to the next matching waitlist entry" defaultChecked={settings.waitlist_enabled} />
+          <Row label="Waitlist offer window (hours)" hint={settings.waitlist_enabled ? "How long someone has to claim an offered slot before it moves to the next person." : "Inactive — turn on \"Offer freed slots to the waitlist\" above for this to take effect."}>
             {/* Stayed editable and looked identically live whether or not
                 the toggle above was on, with nothing indicating it was
                 inert (GetBooqin clinic audit's finding under BR-02's rule
@@ -705,141 +598,12 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
         </div>
       )}
 
-      {page === "payments" && paymentsEnabled && (
-        <SettingsCard saveLabel="Save payment settings" savedAt={savedAt}>
-          <input type="hidden" name="_section" value="payments" />
-          {gatewayFields.map((g) => (
-            <div key={g.id}>
-              {/* as="div": Toggle already renders its own <label> around its
-                  checkbox + "Enabled" text — Row wrapping that in a second
-                  <label> would nest labels, which is invalid HTML and
-                  breaks the association for both. */}
-              <Row as="div" label={g.label} hint="Accept payments through this gateway">
-                <Toggle name="enabled_gateways" value={g.id} defaultChecked={settings.enabled_gateways.includes(g.id)} label="Enabled" />
-              </Row>
-              {g.fields.map((field) => (
-                <Row key={field.key} as={field.type === "checkbox" ? "div" : "label"} label={field.label}>
-                  {field.type === "checkbox" ? (
-                    // No wrapping label here (see as="div" above), so this
-                    // Toggle needs its own label text to have any
-                    // accessible name at all.
-                    <Toggle name={`gateway_${g.id}_${field.key}`} defaultChecked={Boolean(settings.gateways[g.id]?.[field.key])} label={field.label} />
-                  ) : (
-                    <RowInput
-                      type={field.type === "password" ? "password" : "text"}
-                      name={`gateway_${g.id}_${field.key}`}
-                      defaultValue={settings.gateways[g.id]?.[field.key] as string | undefined}
-                    />
-                  )}
-                </Row>
-              ))}
-            </div>
-          ))}
-        </SettingsCard>
-      )}
-
-      {page === "whatsapp" && whatsappEnabled && (
-        <div className="flex flex-col gap-[14px]">
-          <SettingsCard saveLabel="Save WhatsApp settings" savedAt={savedAt}>
-            <input type="hidden" name="_section" value="whatsapp" />
-            <div className="mx-[18px] mt-[14px] rounded-[8px] border border-line bg-canvas-alt px-3 py-3">
-              <p className="m-0 text-[13px] font-medium text-body">Before you turn this on, add one template from Meta's library</p>
-              <p className="m-0 mt-1 text-[12.5px] text-subtle">
-                In WhatsApp Manager: Message templates → Create template → browse the template library (don't write
-                your own — a library template is pre-approved by Meta, so there's no review wait). Find{" "}
-                <span className="font-mono">{whatsappRequiredTemplate.libraryPath}</span>, add it to your account, and
-                use exactly these values — the name and language must match exactly, or messages fail to send:
-              </p>
-              <dl className="m-0 mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-[3px] font-mono text-[12px]">
-                <dt className="text-subtle">Name</dt>
-                <dd className="m-0">{whatsappRequiredTemplate.name}</dd>
-                <dt className="text-subtle">Language</dt>
-                <dd className="m-0">{whatsappRequiredTemplate.language}</dd>
-                <dt className="text-subtle">Category</dt>
-                <dd className="m-0">{whatsappRequiredTemplate.category}</dd>
-              </dl>
-              <p className="m-0 mt-2 text-[12.5px] text-subtle">
-                Its "View details" button uses a Static URL — point it at your own booking page. The body's wording is
-                fixed by Meta; GetBooqin fills in its five blanks automatically, in order:
-              </p>
-              <ol className="m-0 mt-1 list-inside list-decimal text-[12px] text-subtle">
-                {whatsappRequiredTemplate.variables.map((v) => (
-                  <li key={v.token}>{v.label}</li>
-                ))}
-              </ol>
-              <p className="m-0 mt-2 whitespace-pre-wrap rounded-[6px] bg-surface px-2 py-2 font-mono text-[11.5px] text-subtle">
-                {whatsappRequiredTemplate.body}
-              </p>
-            </div>
-            <Row as="div" label="Send via WhatsApp" hint="Turn on to send a WhatsApp confirmation whenever a booking is confirmed, through your connected number">
-              <Toggle name="whatsapp_enabled" defaultChecked={settings.whatsapp_enabled} label="Enabled" />
-            </Row>
-            {whatsappFields.map((field) => (
-              <Row key={field.key} label={field.label} hint={field.description}>
-                <RowInput
-                  type={field.type === "password" ? "password" : "text"}
-                  name={`whatsapp_${field.key}`}
-                  defaultValue={(settings.whatsapp as Record<string, string | undefined>)[field.key] ?? ""}
-                />
-              </Row>
-            ))}
-            {settings.whatsapp_enabled && !whatsappConfigured && (
-              <p className="m-0 rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
-                WhatsApp is turned on, but the phone number ID or access token is still missing — no messages will
-                send until both are filled in.
-              </p>
-            )}
-          </SettingsCard>
-
-          <WhatsAppTestCard />
-        </div>
-      )}
-
-      {page === "visit_summaries" && visitSummariesVisible && (
-        <SettingsCard saveLabel="Save visit summary settings" savedAt={savedAt}>
-          <input type="hidden" name="_section" value="visit_summaries" />
-          <ToggleRow
-            name="visit_summaries_enabled"
-            label="Enable visit summaries"
-            hint="Let staff turn consultation transcripts into patient-friendly summaries for review and approval."
-            defaultChecked={settings.visit_summaries_enabled}
-          />
-          {/* There's no plan, allowance or billing anywhere in the product
-              to back a "Clinic plan... monthly allowance" claim — replaced
-              with what's actually true today rather than an unenforceable
-              commercial term (Defect Dossier's BQ-38 finding). Add a real
-              usage counter here once an allowance actually exists. */}
-          <ValueRow label="Pricing" value="Included while this feature is in preview." />
-          <Row label="Default summary language" hint="Pre-fills the language selector when staff start a new visit summary. Still changeable per summary.">
-            <Segmented
-              name="visit_summary_default_language"
-              value={settings.visit_summary_default_language}
-              options={["auto", "nl", "en"]}
-              labels={{ auto: "Detect automatically", nl: "Nederlands", en: "English" }}
-            />
-          </Row>
-          <Row label="Consultation consent notice" align="start">
-            <div className="flex flex-col gap-[6px]">
-              <RowTextarea
-                name="visit_summary_consent_line"
-                defaultValue={settings.visit_summary_consent_line}
-                placeholder="Ahead of your visit: your doctor may use an AI-assisted tool to help prepare a plain-language written summary of today's consultation for you to keep. A clinician always reviews and approves the summary before it is sent — the AI never sends anything to you directly, and nothing is shared outside our practice. If you have questions, or would prefer we don't prepare a summary this way, please tell our front desk before your appointment."
-              />
-              <p className="m-0 text-meta text-subtle">
-                Shown to patients ahead of a visit that may be summarized with AI assistance. This is not
-                legal advice — have your legal/compliance advisor review this wording against whichever
-                data-protection and medical-record consent law your practice actually operates under (e.g.
-                GDPR, India's DPDP Act, HIPAA) before enabling this for real patients.
-              </p>
-            </div>
-          </Row>
-        </SettingsCard>
-      )}
+      {page === "billing" && <BillingPage billing={billing} />}
 
       {page === "integrations" && (
         <>
           <div className="card">
-            {integrationsFor(settings.preset).map((integ) => {
+            {INTEGRATIONS.map((integ) => {
               if (integ.id === "shopify") {
                 return (
                   <IntegrationRow
@@ -859,58 +623,6 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
                       ) : (
                         <span className="btn-sec pointer-events-none opacity-60">Connected</span>
                       )
-                    }
-                  />
-                );
-              }
-              if (integ.id === "whatsapp") {
-                const connected = whatsappEnabled && settings.whatsapp_enabled && whatsappConfigured;
-                return (
-                  <IntegrationRow
-                    key={integ.id}
-                    id={integ.id}
-                    name={integ.name}
-                    initial={integ.initial}
-                    tint={integ.tint}
-                    tag={whatsappEnabled ? integ.tag : "Coming soon"}
-                    blurb={integ.blurb}
-                    connected={connected}
-                    variant="settings"
-                    disabled={!whatsappEnabled}
-                    action={
-                      whatsappEnabled ? (
-                        <a href="?page=whatsapp" className="btn-sec no-underline hover:no-underline">
-                          {connected ? "Manage" : "Configure"}
-                        </a>
-                      ) : undefined
-                    }
-                  />
-                );
-              }
-              if (integ.id === "stripe") {
-                const connected = paymentsEnabled && settings.enabled_gateways.includes("stripe");
-                return (
-                  <IntegrationRow
-                    key={integ.id}
-                    id={integ.id}
-                    name={integ.name}
-                    initial={integ.initial}
-                    tint={integ.tint}
-                    // Disabled kept rendering a live-looking "Payments" tag
-                    // with no explanation — the same "Coming soon" the
-                    // other not-yet-buildable integrations already carry
-                    // (Defect Dossier's BQ-30 finding).
-                    tag={paymentsEnabled ? integ.tag : "Coming soon"}
-                    blurb={integ.blurb}
-                    connected={connected}
-                    variant="settings"
-                    disabled={!paymentsEnabled}
-                    action={
-                      paymentsEnabled ? (
-                        <a href="?page=payments" className="btn-sec no-underline hover:no-underline">
-                          {connected ? "Manage" : "Configure"}
-                        </a>
-                      ) : undefined
                     }
                   />
                 );
@@ -1230,28 +942,29 @@ function CurrencyRowSelect({ defaultCode, defaultSymbol }: { defaultCode: string
   );
 }
 
-// Local controlled state drives TemplateConfig's live renames/cards preview
-// on pick/toggle; its inputs are still real named radios/checkboxes so the
-// #template-form submit above works whether or not this state ever changes.
-function TemplateTab({
-  presetId, initialHidden, saved, currentRules, customizedFields, seededCount, paymentsAvailable,
-}: { presetId: string; initialHidden: string[]; saved: boolean; currentRules: PresetRules; customizedFields: string[]; seededCount: number; paymentsAvailable: boolean }) {
-  const [preset, setPreset] = useState<PresetId>(presetId as PresetId);
+/**
+ * Settings → General's second card: the words this business uses, and
+ * which Overview cards it shows. Both used to live on a separate
+ * "Business template" page built around an industry-preset picker; the
+ * presets are gone (see core's presets.ts) and what's left is small
+ * enough to sit under General, which is where W5 wants it anyway.
+ *
+ * Local state exists only so the live preview line under the heading
+ * tracks what's typed — the inputs are real named fields, so the save
+ * works identically with or without it.
+ */
+function VocabularySection({
+  settings, saved, savedAt,
+}: { settings: { terms: Terms; hidden_overview_cards: string[] }; saved: boolean; savedAt?: string }) {
+  const [terms, setTerms] = useState<Terms>(() => withDefaultTerms(settings.terms));
   const [hidden, setHidden] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(initialHidden.map((key) => [key, true]))
+    () => Object.fromEntries(settings.hidden_overview_cards.map((key) => [key, true]))
   );
   const toast = useToast();
-  const v = useVocabulary();
   const navigation = useNavigation();
+  const v = vocabFor(terms);
 
-  // The confirm dialog's own button submits the real #template-form
-  // navigation (not a fetcher), so nothing ever told it the save had
-  // finished — it saved correctly and sat open over its own "Saved."
-  // message regardless (Defect Dossier's R3-01 finding, the same shape as
-  // BQ-02 but on a real Form instead of a fetcher). Close it and report
-  // success as a toast once the submitting -> idle round trip completes.
   const wasSubmitting = useRef(false);
-  const presetBeforeSubmit = useRef(presetId);
   useEffect(() => {
     if (navigation.state === "submitting") {
       wasSubmitting.current = true;
@@ -1259,32 +972,73 @@ function TemplateTab({
     }
     if (navigation.state !== "idle" || !wasSubmitting.current) return;
     wasSubmitting.current = false;
-    if (saved) {
-      (document.getElementById("template") as HTMLDialogElement | null)?.close();
-      const switched = presetBeforeSubmit.current !== presetId;
-      toast(
-        switched
-          ? `Business template switched to ${getPreset(presetId).label}${seededCount > 0 ? ` — ${seededCount} ${v.services.toLowerCase()} added as inactive` : ""}`
-          : "Dashboard layout saved."
-      );
-    }
-    presetBeforeSubmit.current = presetId;
+    if (saved) toast("Saved.");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigation.state]);
 
+  // Reads the whole card's inputs back out on any change, so the preview
+  // line and the Overview card labels below track what's actually typed
+  // rather than needing a controlled input per field.
+  function syncFromForm(e: React.FormEvent<HTMLFormElement>) {
+    const form = e.currentTarget;
+    const read = (key: keyof Terms) =>
+      (form.elements.namedItem(`term_${key}`) as HTMLInputElement | null)?.value ?? "";
+    setTerms(
+      withDefaultTerms({
+        booking_single: read("booking_single"), booking_plural: read("booking_plural"),
+        service_single: read("service_single"), service_plural: read("service_plural"),
+        resource_single: read("resource_single"), resource_plural: read("resource_plural"),
+        customer_single: read("customer_single"), customer_plural: read("customer_plural"),
+      })
+    );
+  }
+
   return (
-    <TemplateConfig
-      presetId={preset}
-      currentPresetId={presetId}
-      hidden={hidden}
-      saved={saved}
-      currentRules={currentRules}
-      customizedFields={customizedFields}
-      onPick={setPreset}
-      onToggle={(key: OverviewCardKey) => setHidden((prev) => ({ ...prev, [key]: !prev[key] }))}
-      pending={navigation.state !== "idle"}
-      paymentsAvailable={paymentsAvailable}
-    />
+    <Form method="post" onInput={syncFromForm} className="flex flex-col gap-[14px]">
+      <input type="hidden" name="_section" value="vocabulary" />
+
+      <div className="card" id="vocabulary">
+        <div className="card-header">
+          <div className="flex flex-col gap-[3px]">
+            <h2 className="card-title">What do you call things?</h2>
+            <p className="m-0 text-meta text-muted">
+              Whatever you type here is what the dashboard, your booking page and every email say —
+              {" "}{v.bookingTitle.toLowerCase()}, {v.services.toLowerCase()}, {v.resources.toLowerCase()},{" "}
+              {v.customers.toLowerCase()}.
+            </p>
+          </div>
+        </div>
+        <div className="px-[18px] py-[14px]">
+          <VocabularyFields terms={terms} />
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <div className="flex flex-col gap-[3px]">
+            <h2 className="card-title">Dashboard layout</h2>
+            {/* Don't promise reordering unless drag handles exist. */}
+            <p className="m-0 text-meta text-muted">Switch off any Overview card you don't need.</p>
+          </div>
+        </div>
+        <div className="px-[18px] py-[14px]">
+          <DashboardLayoutCard
+            vocab={{
+              booking: terms.booking_single,
+              service: terms.service_single,
+              services: terms.service_plural,
+              resource: terms.resource_single,
+            }}
+            hidden={hidden}
+            onToggle={(key: OverviewCardKey) => setHidden((prev) => ({ ...prev, [key]: !prev[key] }))}
+          />
+        </div>
+        <div className="card-footer">
+          {saved && savedAt && <span className="alert-success">Saved {savedAt}.</span>}
+          <button type="submit" className="btn-pri ml-auto">Save</button>
+        </div>
+      </div>
+    </Form>
   );
 }
 

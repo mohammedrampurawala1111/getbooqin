@@ -18,26 +18,11 @@ import {
   Badge,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
-import { Settings as Backend, Presets, FeatureFlags } from "getbooqin-core";
-import { PaymentManager, MeetingManager, Mailer } from "getbooqin-core";
+import { Settings as Backend } from "getbooqin-core";
+import { Mailer } from "getbooqin-core";
 
 function slugify(label: string): string {
   return label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "field";
-}
-
-/* "Preset default" vs "Customized" next to a rule field's label — tells a
-   merchant which fields switching "Industry preset" will (and won't)
-   touch: applyPreset() (core's settings.ts) skips any key listed in
-   settings.customized_fields, so a hand-edit here survives picking a
-   different preset later. Mirrors cloud/app/components/settings.tsx's
-   PresetFieldBadge. */
-function PresetFieldLabel({ text, customized }: { text: string; customized: boolean }) {
-  return (
-    <InlineStack gap="150" blockAlign="center">
-      <span>{text}</span>
-      <Badge tone={customized ? "info" : undefined}>{customized ? "Customized" : "Preset default"}</Badge>
-    </InlineStack>
-  );
 }
 
 const INTAKE_FIELD_TYPES = ["text", "phone", "email", "textarea"] as const;
@@ -89,15 +74,6 @@ const WIDGET_TEXT_DEFS: { key: string; group: string; label: string; default: st
   { key: "genericError", group: "Messages", label: "Generic error message", default: "Something went wrong. Please try again." },
   { key: "close", group: "Messages", label: "Close button", default: "Close" },
 
-  { key: "videoNote", group: "Video calls", label: "Video call note", default: "This is a video call. Your join link is in your confirmation email." },
-  { key: "joinCall", group: "Video calls", label: "Join call button", default: "Join the video call" },
-
-  { key: "payNow", group: "Payments", label: "Pay now button", default: "Pay now" },
-  { key: "choosePayment", group: "Payments", label: "Choose payment heading", default: "How would you like to pay?" },
-  { key: "amountDue", group: "Payments", label: "Amount due label", default: "Amount due" },
-  { key: "payLater", group: "Payments", label: "\"Pay later\" option", default: "I will pay later" },
-  { key: "paymentDone", group: "Payments", label: "Payment received message", default: "Payment received. Thank you!" },
-  { key: "redirecting", group: "Payments", label: "Redirecting message", default: "Taking you to the payment page…" },
 ];
 
 function parseIntakeFields(raw: FormDataEntryValue | null) {
@@ -118,60 +94,12 @@ function parseIntakeFields(raw: FormDataEntryValue | null) {
   }
 }
 
-// Real, wired rule fields (see core/src/booking/presets.ts's
-// PRESET_CONTROLLED_KEYS) each preset sets, merged over the account-wide
-// baseline so "Industry preset" can preview what applying it would actually
-// change before a merchant clicks Apply. Computed server-side (this route
-// module's top-level imports are shared with its client bundle, and
-// core's `Presets`/`Settings` modules pull in Prisma — unlike cloud's
-// getbooqin-core/booking/presets subpath import, that's not safe to
-// reference from code the component itself executes).
-type PresetRulePreview = Pick<
-  Backend.Settings,
-  "min_notice_hours" | "max_advance_days" | "cancel_cutoff_hours" | "auto_confirm" | "require_phone"
->;
-
-function presetRulePreviews(shop: string): Record<string, PresetRulePreview> {
-  const fallback = Backend.defaultSettings(shop, "");
-  return Object.fromEntries(
-    Object.entries(Presets.PRESETS).map(([id, preset]) => [
-      id,
-      { ...fallback, ...(preset.defaults as Partial<PresetRulePreview>) },
-    ])
-  );
-}
-
-/* Plain-language summary of a PresetRulePreview, for "Industry preset"'s
-   before-you-apply preview. Mirrors cloud/app/lib/presets.ts's ruleChips(). */
-function ruleChips(rules: PresetRulePreview): string[] {
-  return [
-    rules.auto_confirm ? "Confirms bookings automatically" : "New bookings need approval first",
-    `At least ${rules.min_notice_hours}h notice required to book`,
-    `Customers can cancel up to ${rules.cancel_cutoff_hours}h before`,
-    rules.require_phone ? "Phone number required at booking" : "Phone number optional",
-  ];
-}
-
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   const settings = await Backend.getSettings(session.shop, "shopify");
   return {
     settings,
-    presetRules: presetRulePreviews(session.shop),
-    gatewayFields: Object.entries(PaymentManager.gateways()).map(([id, g]) => ({
-      id,
-      label: g.label({ shop: session.shop, settings, appProxyBase: "", manageUrl: () => "" }),
-      fields: g.settingsFields(),
-    })),
-    videoFields: Object.entries(MeetingManager.providers()).map(([id, p]) => ({
-      id,
-      label: p.label(),
-      fields: p.settingsFields(),
-    })),
-    presets: Presets.presetChoices(),
     templateDefs: Mailer.TEMPLATE_DEFS,
-    paymentsEnabled: FeatureFlags.PAYMENTS_ENABLED,
-    chatEnabled: FeatureFlags.CHAT_ENABLED,
   };
 }
 
@@ -180,11 +108,6 @@ export async function action({ request }: ActionFunctionArgs) {
   const shop = session.shop;
   const form = await request.formData();
   const section = String(form.get("_section"));
-
-  if (section === "preset") {
-    await Backend.applyPreset(shop, "shopify", String(form.get("preset")));
-    return { ok: true };
-  }
 
   if (section === "general") {
     await Backend.setSettings(shop, "shopify", {
@@ -245,67 +168,13 @@ export async function action({ request }: ActionFunctionArgs) {
     return { ok: true };
   }
 
-  if (section === "chat") {
-    if (!FeatureFlags.CHAT_ENABLED) return { ok: false };
-    await Backend.setSettings(shop, "shopify", {
-      chat_enabled: form.get("chat_enabled") === "true",
-      chat_position: (form.get("chat_position") === "left" ? "left" : "right") as "left" | "right",
-      chat_color: String(form.get("chat_color") || "#2563eb"),
-      chat_title: String(form.get("chat_title") || ""),
-      chat_subtitle: String(form.get("chat_subtitle") || ""),
-      chat_greeting: String(form.get("chat_greeting") || ""),
-      chat_show_faq: form.get("chat_show_faq") === "true",
-      chat_show_booking: form.get("chat_show_booking") === "true",
-      chat_show_message: form.get("chat_show_message") === "true",
-      chat_offline_note: String(form.get("chat_offline_note") || ""),
-      chat_launcher_text: String(form.get("chat_launcher_text") || ""),
-    });
-    return { ok: true };
-  }
-
-  if (section === "payments") {
-    if (!FeatureFlags.PAYMENTS_ENABLED) return { ok: false };
-    const enabled = form.getAll("enabled_gateways").map(String);
-    await Backend.setSettings(shop, "shopify", { enabled_gateways: enabled });
-
-    for (const [id, g] of Object.entries(PaymentManager.gateways())) {
-      const values: Record<string, string | boolean> = {};
-      for (const field of g.settingsFields()) {
-        const key = `gw_${id}_${field.key}`;
-        values[field.key] = field.type === "checkbox" ? form.get(key) === "true" : String(form.get(key) || "");
-      }
-      if (Object.keys(values).length) await PaymentManager.saveGatewaySettings(shop, "shopify", id, values);
-    }
-    return { ok: true };
-  }
-
-  if (section === "video") {
-    const settings = await Backend.getSettings(shop, "shopify");
-    const video = { ...settings.video };
-    for (const [id, p] of Object.entries(MeetingManager.providers())) {
-      const values: Record<string, string> = {};
-      for (const field of p.settingsFields()) {
-        values[field.key] = String(form.get(`video_${id}_${field.key}`) || "");
-      }
-      video[id] = { ...video[id], ...values };
-    }
-    await Backend.setSettings(shop, "shopify", { video_provider: String(form.get("video_provider") || "jitsi"), video, video_join_window: Number(form.get("video_join_window") || 15) });
-    return { ok: true };
-  }
-
   return { ok: false };
 }
 
 export default function Settings() {
   const {
     settings,
-    presetRules,
-    gatewayFields,
-    videoFields,
-    presets,
     templateDefs,
-    paymentsEnabled: paymentsFeatureEnabled,
-    chatEnabled: chatFeatureEnabled,
   } = useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -318,7 +187,6 @@ export default function Settings() {
     if (actionData?.ok) setShowSavedToast(true);
   }, [actionData]);
 
-  const [preset, setPreset] = useState(settings.preset);
   const [businessName, setBusinessName] = useState(settings.business_name);
   const [businessEmail, setBusinessEmail] = useState(settings.business_email);
   const [businessPhone, setBusinessPhone] = useState(settings.business_phone);
@@ -365,35 +233,6 @@ export default function Settings() {
     return initial;
   });
 
-  const [chatEnabled, setChatEnabled] = useState(settings.chat_enabled);
-  const [chatPosition, setChatPosition] = useState(settings.chat_position);
-  const [chatColor, setChatColor] = useState(settings.chat_color);
-  const [chatTitle, setChatTitle] = useState(settings.chat_title);
-  const [chatSubtitle, setChatSubtitle] = useState(settings.chat_subtitle);
-  const [chatGreeting, setChatGreeting] = useState(settings.chat_greeting);
-  const [chatShowFaq, setChatShowFaq] = useState(settings.chat_show_faq);
-  const [chatShowBooking, setChatShowBooking] = useState(settings.chat_show_booking);
-  const [chatShowMessage, setChatShowMessage] = useState(settings.chat_show_message);
-  const [chatOfflineNote, setChatOfflineNote] = useState(settings.chat_offline_note);
-  const [chatLauncherText, setChatLauncherText] = useState(settings.chat_launcher_text);
-
-  const [enabledGateways, setEnabledGateways] = useState<string[]>(settings.enabled_gateways);
-  const [gatewayValues, setGatewayValues] = useState<Record<string, Record<string, string>>>(
-    Object.fromEntries(gatewayFields.map((g) => [g.id, { ...(settings.gateways[g.id] as Record<string, string>) }]))
-  );
-
-  const [videoProvider, setVideoProvider] = useState(settings.video_provider);
-  const [videoJoinWindow, setVideoJoinWindow] = useState(String(settings.video_join_window));
-  const [videoValues, setVideoValues] = useState<Record<string, Record<string, string>>>(
-    Object.fromEntries(videoFields.map((v) => [v.id, { ...(settings.video[v.id] as Record<string, string>) }]))
-  );
-
-  function savePreset() {
-    const form = new FormData();
-    form.set("_section", "preset");
-    form.set("preset", preset);
-    submit(form, { method: "post" });
-  }
 
   function saveGeneral() {
     const form = new FormData();
@@ -469,55 +308,10 @@ export default function Settings() {
     submit(form, { method: "post" });
   }
 
-  function saveChat() {
-    const form = new FormData();
-    form.set("_section", "chat");
-    form.set("chat_enabled", String(chatEnabled));
-    form.set("chat_position", chatPosition);
-    form.set("chat_color", chatColor);
-    form.set("chat_title", chatTitle);
-    form.set("chat_subtitle", chatSubtitle);
-    form.set("chat_greeting", chatGreeting);
-    form.set("chat_show_faq", String(chatShowFaq));
-    form.set("chat_show_booking", String(chatShowBooking));
-    form.set("chat_show_message", String(chatShowMessage));
-    form.set("chat_offline_note", chatOfflineNote);
-    form.set("chat_launcher_text", chatLauncherText);
-    submit(form, { method: "post" });
-  }
-
-  function savePayments() {
-    const form = new FormData();
-    form.set("_section", "payments");
-    enabledGateways.forEach((id) => form.append("enabled_gateways", id));
-    for (const g of gatewayFields) {
-      for (const field of g.fields) {
-        form.set(`gw_${g.id}_${field.key}`, gatewayValues[g.id]?.[field.key] ?? "");
-      }
-    }
-    submit(form, { method: "post" });
-  }
-
-  function saveVideo() {
-    const form = new FormData();
-    form.set("_section", "video");
-    form.set("video_provider", videoProvider);
-    form.set("video_join_window", videoJoinWindow);
-    for (const v of videoFields) {
-      for (const field of v.fields) {
-        form.set(`video_${v.id}_${field.key}`, videoValues[v.id]?.[field.key] ?? "");
-      }
-    }
-    submit(form, { method: "post" });
-  }
-
   const tabs = [
     { id: "general", content: "General" },
     { id: "widget", content: "Widget" },
-    ...(paymentsFeatureEnabled ? [{ id: "payments", content: "Payments" }] : []),
-    { id: "video", content: "Video calls" },
     { id: "notifications", content: "Notifications" },
-    ...(chatFeatureEnabled ? [{ id: "chat", content: "Chat widget" }] : []),
   ];
   const selectedTab = tabs[tab]?.id ?? "general";
 
@@ -528,24 +322,6 @@ export default function Settings() {
         <BlockStack gap="400">
           {selectedTab === "general" && (
             <>
-              <Card>
-                <FormLayout>
-                  <Select label="Industry preset" value={preset} onChange={setPreset} options={presets.map((p) => ({ label: p.label, value: p.value }))} />
-                  <InlineStack align="end">
-                    <Button onClick={savePreset}>Apply preset</Button>
-                  </InlineStack>
-                  <Text as="p" tone="subdued">
-                    Applying a preset changes the words used throughout the app (e.g. "Doctor" instead of "Staff
-                    Member") and sets the booking rules below to sensible defaults for that industry — anything
-                    you've already customized there is left as you set it.
-                  </Text>
-                  <InlineStack gap="150" wrap>
-                    {ruleChips(presetRules[preset] ?? presetRules.generic).map((chip) => (
-                      <Badge key={chip}>{chip}</Badge>
-                    ))}
-                  </InlineStack>
-                </FormLayout>
-              </Card>
               <Card>
                 <FormLayout>
                   <TextField label="Business name" value={businessName} onChange={setBusinessName} autoComplete="off" />
@@ -567,45 +343,45 @@ export default function Settings() {
                   />
                   <FormLayout.Group>
                     <TextField
-                      label={<PresetFieldLabel text="Slot interval (minutes)" customized={settings.customized_fields.includes("slot_interval")} />}
+                      label="Slot interval (minutes)"
                       type="number" value={slotInterval} onChange={setSlotInterval} autoComplete="off"
                     />
                     <TextField
-                      label={<PresetFieldLabel text="Minimum notice (hours)" customized={settings.customized_fields.includes("min_notice_hours")} />}
+                      label="Minimum notice (hours)"
                       type="number" value={minNotice} onChange={setMinNotice} autoComplete="off"
                     />
                     <TextField
-                      label={<PresetFieldLabel text="Booking horizon (days)" customized={settings.customized_fields.includes("max_advance_days")} />}
+                      label="Booking horizon (days)"
                       type="number" value={maxAdvance} onChange={setMaxAdvance} autoComplete="off"
                     />
                   </FormLayout.Group>
                   <Checkbox
-                    label={<PresetFieldLabel text="Auto-confirm new bookings" customized={settings.customized_fields.includes("auto_confirm")} />}
+                    label="Auto-confirm new bookings"
                     checked={autoConfirm} onChange={setAutoConfirm}
                   />
                   <Checkbox label="Allow customers to cancel online" checked={allowCancel} onChange={setAllowCancel} />
                   <TextField
-                    label={<PresetFieldLabel text="Cancellation cutoff (hours before start)" customized={settings.customized_fields.includes("cancel_cutoff_hours")} />}
+                    label="Cancellation cutoff (hours before start)"
                     type="number" value={cancelCutoff} onChange={setCancelCutoff} autoComplete="off"
                   />
                   <Checkbox
-                    label={<PresetFieldLabel text="Require a phone number" customized={settings.customized_fields.includes("require_phone")} />}
+                    label="Require a phone number"
                     checked={requirePhone} onChange={setRequirePhone}
                   />
                   <Checkbox
-                    label={<PresetFieldLabel text="Offer freed slots to the waitlist" customized={settings.customized_fields.includes("waitlist_enabled")} />}
+                    label="Offer freed slots to the waitlist"
                     helpText="When a booking is cancelled, declined or marked no-show, offer that slot to the next matching person on the waitlist."
                     checked={waitlistEnabled} onChange={setWaitlistEnabled}
                   />
                   {waitlistEnabled && (
                     <TextField
-                      label={<PresetFieldLabel text="Waitlist offer window (hours)" customized={settings.customized_fields.includes("waitlist_offer_window_hours")} />}
+                      label="Waitlist offer window (hours)"
                       helpText="How long someone has to claim an offered slot before it's offered to the next person."
                       type="number" value={waitlistOfferWindow} onChange={setWaitlistOfferWindow} autoComplete="off"
                     />
                   )}
                   <TextField
-                    label={<PresetFieldLabel text="Consent text shown on the booking form" customized={settings.customized_fields.includes("consent_text")} />}
+                    label="Consent text shown on the booking form"
                     value={consentText} onChange={setConsentText} multiline={2} autoComplete="off"
                   />
                   <InlineStack align="end">
@@ -684,83 +460,6 @@ export default function Settings() {
                   </InlineStack>
                 </FormLayout>
               </BlockStack>
-            </Card>
-          )}
-
-          {selectedTab === "payments" && (
-            <Card>
-              <BlockStack gap="400">
-                <Banner tone="info">
-                  Every payment is verified server-side before a booking is marked paid — a browser can never mark itself paid.
-                </Banner>
-                <FormLayout>
-                  {gatewayFields.map((g) => (
-                    <Card key={g.id}>
-                      <BlockStack gap="200">
-                        <Checkbox
-                          label={g.label}
-                          checked={enabledGateways.includes(g.id)}
-                          onChange={(checked) =>
-                            setEnabledGateways((prev) => (checked ? [...prev, g.id] : prev.filter((id) => id !== g.id)))
-                          }
-                        />
-                        {g.fields.map((field) => (
-                          <TextField
-                            key={field.key}
-                            label={field.label}
-                            type={field.type === "password" ? "password" : "text"}
-                            multiline={field.type === "textarea" ? 2 : undefined}
-                            helpText={field.description}
-                            value={gatewayValues[g.id]?.[field.key] ?? ""}
-                            onChange={(value) =>
-                              setGatewayValues((prev) => ({ ...prev, [g.id]: { ...prev[g.id], [field.key]: value } }))
-                            }
-                            autoComplete="off"
-                          />
-                        ))}
-                      </BlockStack>
-                    </Card>
-                  ))}
-                  <InlineStack align="end">
-                    <Button variant="primary" loading={saving} onClick={savePayments}>Save</Button>
-                  </InlineStack>
-                </FormLayout>
-              </BlockStack>
-            </Card>
-          )}
-
-          {selectedTab === "video" && (
-            <Card>
-              <FormLayout>
-                <Select
-                  label="Video provider"
-                  value={videoProvider}
-                  onChange={setVideoProvider}
-                  options={videoFields.map((v) => ({ label: v.label, value: v.id }))}
-                />
-                <TextField label="Join button appears (minutes before start)" type="number" value={videoJoinWindow} onChange={setVideoJoinWindow} autoComplete="off" />
-                {videoFields.map((v) => (
-                  <Card key={v.id}>
-                    <BlockStack gap="200">
-                      <Text as="h3" variant="headingSm">{v.label}</Text>
-                      {v.fields.map((field) => (
-                        <TextField
-                          key={field.key}
-                          label={field.label}
-                          type={field.type === "password" ? "password" : "text"}
-                          helpText={field.description}
-                          value={videoValues[v.id]?.[field.key] ?? ""}
-                          onChange={(value) => setVideoValues((prev) => ({ ...prev, [v.id]: { ...prev[v.id], [field.key]: value } }))}
-                          autoComplete="off"
-                        />
-                      ))}
-                    </BlockStack>
-                  </Card>
-                ))}
-                <InlineStack align="end">
-                  <Button variant="primary" loading={saving} onClick={saveVideo}>Save</Button>
-                </InlineStack>
-              </FormLayout>
             </Card>
           )}
 
@@ -851,26 +550,6 @@ export default function Settings() {
             </>
           )}
 
-          {selectedTab === "chat" && (
-            <Card>
-              <FormLayout>
-                <Checkbox label="Enable the chat widget" checked={chatEnabled} onChange={setChatEnabled} />
-                <Select label="Position" value={chatPosition} onChange={(v) => setChatPosition(v as "left" | "right")} options={[{ label: "Right", value: "right" }, { label: "Left", value: "left" }]} />
-                <TextField label="Accent colour" value={chatColor} onChange={setChatColor} autoComplete="off" />
-                <TextField label="Title" value={chatTitle} onChange={setChatTitle} autoComplete="off" />
-                <TextField label="Subtitle" value={chatSubtitle} onChange={setChatSubtitle} autoComplete="off" />
-                <TextField label="Greeting message" value={chatGreeting} onChange={setChatGreeting} autoComplete="off" />
-                <TextField label="Launcher button text" value={chatLauncherText} onChange={setChatLauncherText} autoComplete="off" />
-                <Checkbox label="Show 'Ask a question' (FAQ)" checked={chatShowFaq} onChange={setChatShowFaq} />
-                <Checkbox label={`Show "Book"`} checked={chatShowBooking} onChange={setChatShowBooking} />
-                <Checkbox label="Show 'Leave a message'" checked={chatShowMessage} onChange={setChatShowMessage} />
-                <TextField label="Offline note shown before leaving a message" value={chatOfflineNote} onChange={setChatOfflineNote} multiline={2} autoComplete="off" />
-                <InlineStack align="end">
-                  <Button variant="primary" loading={saving} onClick={saveChat}>Save</Button>
-                </InlineStack>
-              </FormLayout>
-            </Card>
-          )}
         </BlockStack>
       </div>
       {showSavedToast && <Toast content="Saved" onDismiss={() => setShowSavedToast(false)} />}

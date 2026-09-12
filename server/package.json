@@ -6,10 +6,11 @@
   "description": "Combined production entrypoint that serves cloud and shopify-openslot from one Fly app/process, dispatching by URL path. See combined.js for the routing table.",
   "main": "combined.js",
   "scripts": {
-    "start": "node combined.js"
+    "start": "node --import ./instrument.js combined.js"
   },
   "dependencies": {
     "@react-router/express": "^7.1.1",
+    "@sentry/node": "^10.74.0",
     "compression": "^1.8.1",
     "express": "^4.22.2",
     "getbooqin-core": "*",

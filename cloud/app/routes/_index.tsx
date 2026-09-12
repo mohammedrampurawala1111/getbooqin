@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Route } from "./+types/_index";
 import { getUserSession } from "~/session.server";
 import { LogoMark, PlanCard } from "~/components/onboarding";
-import { PRESETS, INTEGRATIONS } from "~/lib/presets";
+import { TEMPLATE_CARDS, INTEGRATIONS } from "~/lib/presets";
 import { Badge, LegalFooter, LogoutButton, ThemeToggle } from "~/components/ui";
 
 export const meta: Route.MetaFunction = () => [
@@ -33,7 +33,7 @@ const PLANS = [
   {
     name: "Growth", price: "$29", per: "/mo", featured: true, cta: "Start free trial", href: "/signup",
     blurb: "For a business juggling staff, resources and payments.",
-    features: ["Everything in Starter", "Unlimited staff & resources", "Deposits & payments", "WhatsApp reminders (soon)"],
+    features: ["Everything in Starter", "Unlimited staff & resources", "Rooms as bookable resources", "Group & class bookings"],
   },
   {
     name: "Scale", price: "$79", per: "/mo", featured: false, cta: "Talk to us", href: "/support",
@@ -215,7 +215,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
-            {PRESETS.map((p) => (
+            {TEMPLATE_CARDS.map((p) => (
               <a
                 key={p.id}
                 href={`/signup?preset=${p.id}`}

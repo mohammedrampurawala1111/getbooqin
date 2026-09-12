@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { PRESETS, getPreset, rulesFor, ruleChips, featureNotesFor, startingRulesDiff, type PresetId, type PresetRules } from "../lib/presets";
+import { termSuggestions, type Terms } from "../lib/presets";
 import { LogoutButton, ConfirmDialog } from "./ui";
 
 /* ==================================================================
@@ -236,260 +236,139 @@ export function SessionRow({
    toggles must map to the same keys the Overview reads. Keep this list
    and `OVERVIEW_CARDS` below as the single shared source.
    ================================================================== */
+// "revenue" is gone with merchant deposits (Phase 1's trim) — Overview
+// no longer renders that card, so offering it as a toggle here would be
+// a switch with nothing behind it, which is the shape of Defect
+// Dossier's R3-05 finding. An existing shop's stored
+// hidden_overview_cards may still contain the key; nothing reads it.
 export type OverviewCardKey =
-  | "stats" | "chart" | "revenue" | "topServices" | "utilisation" | "noShow";
+  | "stats" | "chart" | "topServices" | "utilisation" | "noShow";
 
-// `paymentsAvailable` defaults to true so the settings action's own
-// call (checking which keys exist, not rendering anything) never disables
-// a card it isn't showing. Overview itself already hides the Revenue card
-// outright when no payment provider is connected (R2-09); this list used
-// to still offer it as a live toggle regardless, so switching it "on" did
-// nothing visible with no explanation why (Defect Dossier's R3-05 finding).
-export function overviewCards(presetId: PresetId | string | null | undefined, paymentsAvailable = true) {
-  const p = getPreset(presetId as string);
+export function overviewCards(vocab: { booking: string; service: string; services: string; resource: string }) {
+  const p = { vocab };
   return [
     { key: "stats" as OverviewCardKey, name: "Headline metrics", hint: `${p.vocab.booking}s, pending and active ${p.vocab.service.toLowerCase()} counts`, disabled: false },
     { key: "chart" as OverviewCardKey, name: `${p.vocab.booking}s over time`, hint: "Daily bar chart for the selected range", disabled: false },
-    {
-      key: "revenue" as OverviewCardKey,
-      name: "Revenue & payment status",
-      hint: paymentsAvailable ? "Split by currency and payment state" : "Available once you connect a payment provider.",
-      disabled: !paymentsAvailable,
-    },
     { key: "topServices" as OverviewCardKey, name: `Top ${p.vocab.services.toLowerCase()}`, hint: "Ranked by volume in range", disabled: false },
     { key: "utilisation" as OverviewCardKey, name: `${p.vocab.resource} utilisation`, hint: `Booked vs available hours per ${p.vocab.resource.toLowerCase()}`, disabled: false },
     { key: "noShow" as OverviewCardKey, name: "No-show tracking", hint: "Rate for the range", disabled: false },
   ];
 }
 
-/* What renaming the template changes — shown before applying. Filters out
-   rows where a preset's word happens to match the generic default (e.g.
-   Salon's "Services" is already called that) — those aren't renames, and
-   listing "Services → Services" reads as the feature doing nothing rather
-   than doing nothing *to that one word*. */
-export function vocabDiff(presetId: PresetId | string | null | undefined) {
-  const p = getPreset(presetId as string);
-  return [
-    { from: "Bookings", to: `${p.vocab.booking}s` },
-    { from: "Customers", to: `${p.vocab.customer}s` },
-    { from: "Staff & Resources", to: p.vocab.resources },
-    { from: "Services", to: p.vocab.services },
-    { from: "Resource utilisation", to: `${p.vocab.resource} utilisation` },
-  // Case-insensitive: the generic preset's own "Staff & Resources" already
-  // differs from "Staff & resources" (its own `to` value) only by a
-  // capital R, which isn't a rename a merchant would recognize as one (UX
-  // audit's #12 finding) — the exact-match filter below left it in.
-  ].filter((row) => row.from.toLowerCase() !== row.to.toLowerCase());
+/* ==================================================================
+   Dashboard layout — which Overview cards this shop shows. Lives on
+   Settings → General now; it used to be the bottom half of a Business
+   template page whose top half was the industry-preset picker and a
+   before/after diff of everything switching one would overwrite. That
+   page went with the presets themselves (Phase 1's trim, see core's
+   presets.ts) — this card is the part of it that was doing real work.
+   ================================================================== */
+export function DashboardLayoutCard({
+  vocab, hidden, onToggle,
+}: {
+  vocab: { booking: string; service: string; services: string; resource: string };
+  hidden: Record<string, boolean>;
+  onToggle?: (key: OverviewCardKey) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      {overviewCards(vocab).map((c, i) => {
+        const on = !hidden[c.key] && !c.disabled;
+        return (
+          <label key={c.key} onClick={() => !c.disabled && onToggle?.(c.key)}
+            className={`group flex items-center gap-3 rounded-[9px] border px-[13px] py-[11px] ${c.disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${on ? "border-brand-200 bg-surface" : "border-line bg-canvas-alt"}`}>
+            <input type="checkbox" name="cards" value={c.key} defaultChecked={on} disabled={c.disabled} className="peer sr-only" />
+            <span className="num w-[14px] text-[11px] text-subtle">{i + 1}</span>
+            <span className="flex flex-1 flex-col gap-px">
+              <span className="text-body font-medium">{c.name}</span>
+              <span className="text-[12px] text-muted">{c.hint}</span>
+            </span>
+            <span className="flex h-5 w-[34px] shrink-0 rounded-full bg-[#d3d7e0] p-[2px] peer-checked:bg-brand-500">
+              {/* See ui.tsx's Toggle for why this is group-has-checked,
+                  not peer-checked: this knob is nested inside the track
+                  span, not a direct sibling of the checkbox. */}
+              <span className="h-4 w-4 rounded-full bg-white shadow-[0_1px_2px_rgba(16,24,40,.2)] transition-transform group-has-checked:translate-x-[14px]" />
+            </span>
+          </label>
+        );
+      })}
+    </div>
+  );
 }
 
-export function TemplateConfig({
-  presetId, hidden, onPick, onToggle, saved = false, currentRules, customizedFields = [], pending = false, currentPresetId, paymentsAvailable = true,
-}: {
-  presetId: PresetId | string;
-  hidden: Record<string, boolean>;
-  onPick?: (id: PresetId) => void;
-  onToggle?: (key: OverviewCardKey) => void;
-  saved?: boolean;
-  /** The shop's real, currently-persisted rule values — omitted only by callers (e.g. onboarding's preview) with no shop to compare against yet. */
-  currentRules?: PresetRules;
-  customizedFields?: string[];
-  /** Confirm dialog's save is in flight — see ConfirmDialog's own `pending` prop. */
-  pending?: boolean;
-  /** The shop's real, currently-persisted preset id — distinct from `presetId` (the tile the merchant has picked, which may not be saved yet). Needed so featureNotesFor() can report what a switch *removes*, not just what it adds. Omitted by the same preview-only callers that omit currentRules. */
-  currentPresetId?: string;
-  /** Whether a payment provider is connected — gates the Revenue card the same way Overview itself does (see overviewCards()). */
-  paymentsAvailable?: boolean;
-}) {
-  const preset = getPreset(presetId as string);
-  const changes = currentRules ? startingRulesDiff(currentRules, customizedFields, presetId) : [];
-  const featureNotes = featureNotesFor(currentPresetId, presetId);
+/* ==================================================================
+   Vocabulary — "what do you call things?". Four singular/plural pairs
+   of free text with suggestion chips, and that is the whole feature.
+   It replaces eleven industry presets, each of which also overwrote
+   eleven live settings keys and needed a "Preset default / Customized"
+   badge on every field they could touch (see core's presets.ts for the
+   full story). A business types the word it uses; the dashboard, the
+   booking page and the emails all say it.
+   ================================================================== */
+const VOCAB_ROWS: { single: keyof Terms; plural: keyof Terms; label: string; hint: string }[] = [
+  { single: "booking_single", plural: "booking_plural", label: "Bookings are called", hint: "Every list, heading and confirmation email" },
+  { single: "service_single", plural: "service_plural", label: "Services are called", hint: "The things a customer books" },
+  { single: "resource_single", plural: "resource_plural", label: "Who or what gets booked", hint: "Staff, practitioners, rooms, bays, tables" },
+  { single: "customer_single", plural: "customer_plural", label: "Customers are called", hint: "The people booking" },
+];
+
+export function VocabularyFields({ terms }: { terms: Terms }) {
   return (
-    <>
-      <div className="card">
-        <div className="card-header"><h2 className="card-title">Choose a template</h2></div>
-        {/* Same tile grid as onboarding's PresetTiles, but this copy never
-            got that component's responsive/truncation fix (UX audit's T3
-            finding: the industry-card clipping was fixed in setup but not
-            here). */}
-        <div className="grid grid-cols-1 gap-2 px-[18px] py-[14px] sm:grid-cols-2">
-          {PRESETS.map((p) => (
-            <label key={p.id} onClick={() => onPick?.(p.id)} className={`tile ${p.id === presetId ? "tile-on" : ""}`}>
-              <input type="radio" name="preset" value={p.id} defaultChecked={p.id === presetId} className="sr-only" />
-              <span className="h-5 w-5 shrink-0 rounded-[6px]" style={{ background: p.tint }} />
-              <span className="min-w-0 truncate text-body font-medium">{p.label}</span>
-              <span className="ml-auto shrink-0 text-[11px] text-subtle">{p.unit}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-[14px] md:grid-cols-2">
-        <div className="card">
-          <div className="card-header"><h2 className="card-title">What this renames</h2></div>
-          <div className="px-[18px] pt-1 pb-[14px]">
-            {vocabDiff(presetId).length === 0 ? (
-              <p className="py-[11px] text-[13px] text-subtle">Nothing is renamed for this template.</p>
-            ) : (
-              vocabDiff(presetId).map((v) => (
-                <div key={v.from} className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-row py-[11px] text-[13px]">
-                  <span className="text-subtle">{v.from}</span>
-                  <span className="num text-[11px] text-faint">→</span>
-                  <span className="text-right font-medium">{v.to}</span>
-                </div>
-              ))
-            )}
+    <div className="flex flex-col gap-[18px]">
+      {VOCAB_ROWS.map((row) => (
+        <div key={row.single} className="flex flex-col gap-[7px]">
+          <div className="flex flex-col gap-px">
+            <span className="text-body font-medium">{row.label}</span>
+            <span className="text-[12px] text-muted">{row.hint}</span>
           </div>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <h2 className="card-title">Default {preset.vocab.services.toLowerCase()}</h2>
-            <span className="text-meta text-subtle">Added if missing</span>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <input
+              className="input w-full min-w-0"
+              name={`term_${row.single}`}
+              defaultValue={terms[row.single]}
+              aria-label={`${row.label} (singular)`}
+              placeholder="Singular"
+              maxLength={40}
+            />
+            <input
+              className="input w-full min-w-0"
+              name={`term_${row.plural}`}
+              defaultValue={terms[row.plural]}
+              aria-label={`${row.label} (plural)`}
+              placeholder="Plural"
+              maxLength={40}
+            />
           </div>
-          <div className="px-[18px] pt-1 pb-[14px]">
-            {preset.services.map((s) => (
-              <div key={s.name} className="flex items-center justify-between gap-3 border-b border-row py-[11px] text-[13px]">
-                <span>{s.name}</span>
-                <span className="num text-[12px] text-muted">{s.minutes} min</span>
-              </div>
+          {/* Chips fill the inputs rather than replacing them — the field
+              is free text, and the suggestions exist to show that the
+              product means it, not to fence the answer in. */}
+          <div className="flex flex-wrap gap-[6px]">
+            {termSuggestions(row.single).slice(0, 6).map((word) => (
+              <button
+                key={word}
+                type="button"
+                className="rounded-full border border-line bg-surface px-[10px] py-[3px] text-meta text-ink-2 hover:border-brand-500"
+                onClick={(e) => {
+                  // By name off the owning form, not by DOM walking — the
+                  // inputs are real named fields, so this can't be broken
+                  // by rearranging the markup around them. The dispatched
+                  // input event is what lets the live preview above
+                  // update; React doesn't see a direct `.value` write.
+                  const input = e.currentTarget.form?.elements.namedItem(
+                    `term_${row.single}`
+                  ) as HTMLInputElement | null;
+                  if (!input) return;
+                  input.value = word;
+                  input.dispatchEvent(new Event("input", { bubbles: true }));
+                  input.focus();
+                }}
+              >
+                {word}
+              </button>
             ))}
           </div>
         </div>
-      </div>
-
-      <div className="card p-[18px]">
-        <h2 className="card-title mb-3">Starting rules</h2>
-        <p className="mb-3 text-meta text-muted">
-          Switching templates only changes rules you haven't customized yet — anything you've hand-edited on the
-          Booking rules page stays as you set it.
-        </p>
-        {currentRules ? (
-          // The real before/after against this shop's own current values —
-          // this used to describe only 4 of the 11 rules a preset can
-          // actually set, so switching Legal -> Clinic also silently
-          // changed slot interval, max advance days and the waitlist
-          // toggle with nothing here mentioning it (Defect Dossier's BQ-19
-          // finding).
-          <>
-            {changes.length === 0 && featureNotes.length === 0 ? (
-              <p className="m-0 text-meta text-subtle">Nothing changes — this matches what you already have.</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {changes.map((c) => (
-                  <div key={c.label} className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-row py-[9px] text-[13px]">
-                    <span className="text-subtle">{c.label}</span>
-                    {c.kept ? (
-                      <>
-                        <span className="num text-[11px] text-faint">kept</span>
-                        <span className="text-right text-muted">{c.fromText} (you customized this)</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="num text-[11px] text-faint">{c.fromText} →</span>
-                        <span className="text-right font-medium">{c.toText}</span>
-                      </>
-                    )}
-                  </div>
-                ))}
-                {featureNotes.map((note) => (
-                  <div key={note.text} className={`text-[13px] ${note.removed ? "text-danger" : "text-ink-2"}`}>
-                    {note.removed ? "−" : "+"} {note.text}
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="flex flex-wrap gap-[8px]">
-            {ruleChips(rulesFor(presetId)).map((chip) => (
-              <span key={chip} className="rounded-full border border-line bg-surface px-[10px] py-[4px] text-meta text-ink-2">
-                {chip}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div className="flex flex-col gap-[3px]">
-            <h2 className="card-title">Dashboard layout</h2>
-            {/* Don't promise reordering unless drag handles exist. */}
-            <p className="m-0 text-meta text-muted">Each template leads with the metrics that matter for it. Switch off any card you don't need.</p>
-          </div>
-        </div>
-        <div className="flex flex-col gap-2 px-[18px] py-[14px]">
-          {overviewCards(presetId, paymentsAvailable).map((c, i) => {
-            const on = !hidden[c.key] && !c.disabled;
-            return (
-              <label key={c.key} onClick={() => !c.disabled && onToggle?.(c.key)}
-                className={`group flex items-center gap-3 rounded-[9px] border px-[13px] py-[11px] ${c.disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${on ? "border-brand-200 bg-surface" : "border-line bg-canvas-alt"}`}>
-                <input type="checkbox" name="cards" value={c.key} defaultChecked={on} disabled={c.disabled} className="peer sr-only" />
-                <span className="num w-[14px] text-[11px] text-subtle">{i + 1}</span>
-                <span className="flex flex-1 flex-col gap-px">
-                  <span className="text-body font-medium">{c.name}</span>
-                  <span className="text-[12px] text-muted">{c.hint}</span>
-                </span>
-                <span className="flex h-5 w-[34px] shrink-0 rounded-full bg-[#d3d7e0] p-[2px] peer-checked:bg-brand-500">
-                  {/* See ui.tsx's Toggle for why this is group-has-checked,
-                      not peer-checked: this knob is nested inside the track
-                      span, not a direct sibling of the checkbox. */}
-                  <span className="h-4 w-4 rounded-full bg-white shadow-[0_1px_2px_rgba(16,24,40,.2)] transition-transform group-has-checked:translate-x-[14px]" />
-                </span>
-              </label>
-            );
-          })}
-        </div>
-        {/* Save used to float alone in a detached card above this picker
-            (settings.tsx rendered it as the tab strip's own footer, before
-            any of TemplateConfig's cards), so it read as a control for
-            something else entirely — every other tab's Save sits in the
-            footer of the card it belongs to (UX audit's U6/T3 finding). */}
-        <div className="card-footer">
-          {saved && <span className="alert-success">Saved.</span>}
-          {/* A rule change (slot interval, the waitlist toggle, ...) used to
-              apply the moment "Save template" was clicked, with only the
-              incomplete chip list above as warning. Real, consequential
-              changes (anything the diff above actually lists) now go
-              through one more explicit confirmation before they take
-              effect (Defect Dossier's BQ-19 finding) — a preset switch
-              that changes nothing skips the extra click. */}
-          {currentRules && (changes.length > 0 || featureNotes.length > 0) ? (
-            <button
-              type="button"
-              className="btn-pri ml-auto"
-              onClick={() => (document.getElementById("template") as HTMLDialogElement | null)?.showModal()}
-            >
-              Save template
-            </button>
-          ) : (
-            <button type="submit" className="btn-pri ml-auto">Save template</button>
-          )}
-        </div>
-      </div>
-
-      <ConfirmDialog
-        id="template"
-        title={`Switch to ${preset.label}?`}
-        body="This changes the rules and vocabulary listed above for every booking going forward."
-        confirmLabel="Save template"
-        cancelLabel="Keep reviewing"
-        pending={pending}
-      >
-        <div className="flex flex-col gap-2 text-[13px]">
-          {changes.map((c) => (
-            <div key={c.label} className="flex items-center justify-between gap-3">
-              <span className="text-subtle">{c.label}</span>
-              <span className="font-medium">{c.kept ? `${c.fromText} (kept)` : `${c.fromText} → ${c.toText}`}</span>
-            </div>
-          ))}
-          {featureNotes.map((note) => (
-            <div key={note.text} className={note.removed ? "text-danger" : "text-ink-2"}>
-              {note.removed ? "−" : "+"} {note.text}
-            </div>
-          ))}
-        </div>
-      </ConfirmDialog>
-    </>
+      ))}
+    </div>
   );
 }

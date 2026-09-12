@@ -3,11 +3,11 @@ import type { Route } from "./+types/dashboard.$connectionId.services.new";
 import { Data, Settings } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Field, Input } from "~/components/ui";
-import { useVocabulary, vocabFor, getPreset } from "~/lib/presets";
-import { dashboardPreset } from "~/lib/dashboardMeta";
+import { useVocabulary, vocabFor, starterTemplate } from "~/lib/presets";
+import { dashboardTerms } from "~/lib/dashboardMeta";
 
 export const meta: Route.MetaFunction = ({ matches }) => [
-  { title: `New ${vocabFor(dashboardPreset(matches)).serviceOne} · GetBooqin` },
+  { title: `New ${vocabFor(dashboardTerms(matches)).serviceOne} · GetBooqin` },
 ];
 
 // Only reachable for a manual (non-Shopify) connection — Shopify's catalogue
@@ -67,9 +67,9 @@ export default function NewService({ loaderData, actionData, params }: Route.Com
   // reverted to generic English the moment you went one click deeper — a
   // law-firm partner creating their fourth consultation type saw "New
   // service" and a haircut as the example (Defect Dossier's BQ-15
-  // finding). The placeholder now comes from the preset's own first
-  // default service instead of a hardcoded Salon example.
-  const examplePlaceholder = getPreset(preset).services[0]?.name;
+  // finding). The placeholder now comes from the starter template this
+  // account signed up under instead of a hardcoded Salon example.
+  const examplePlaceholder = starterTemplate(preset).services[0]?.name;
   const base = `/dashboard/${params.connectionId}`;
   return (
     <div className="flex flex-col gap-[18px]">

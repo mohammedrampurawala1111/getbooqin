@@ -3,12 +3,12 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useClerk, useReverification, useSession, useUser } from "@clerk/react-router";
 import { isClerkAPIResponseError, isReverificationCancelledError } from "@clerk/react-router/errors";
 import type { Route } from "./+types/dashboard.$connectionId.account";
-import { prisma, Settings, FeatureFlags } from "getbooqin-core";
+import { prisma, Settings } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Badge, Field, Input, Toggle } from "~/components/ui";
 import { AuthMethodRow, GoogleGlyph, PasswordField, SessionRow } from "~/components/account";
-import { SettingsShell, SettingsCard, Row, RowInput, hiddenSettingsNavKeys } from "~/components/settings";
-import { getPreset, vocabFor } from "~/lib/presets";
+import { SettingsShell, SettingsCard, Row, RowInput } from "~/components/settings";
+import { vocabFor, type Terms } from "~/lib/presets";
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 
 export const meta: Route.MetaFunction = () => [{ title: "Account · GetBooqin" }];
@@ -29,7 +29,7 @@ function clerkMessage(err: unknown): string | undefined {
 // topbar the moment a merchant clicks over to it (that was the actual
 // "why does this open a separate view" bug: it used to be a standalone
 // top-level route). Nothing loaded below is filtered by connectionId
-// except the Business template summary, which is inherently per-store.
+// except the vocabulary summary, which is inherently per-store.
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { userId, connection } = await requireTenant(request, params.connectionId);
   const [dbUser, settings] = await Promise.all([
@@ -39,10 +39,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
   return {
     phone: dbUser?.phone ?? "",
-    template: { presetId: settings.preset, href: `/dashboard/${connection.id}/settings?page=template` },
-    paymentsEnabled: FeatureFlags.PAYMENTS_ENABLED,
-    visitSummariesEnabled: FeatureFlags.VISIT_SUMMARIES_ENABLED,
-    whatsappEnabled: FeatureFlags.WHATSAPP_ENABLED,
+    vocabulary: { terms: settings.terms, href: `/dashboard/${connection.id}/settings?page=general#vocabulary` },
   };
 }
 
@@ -51,17 +48,10 @@ export default function Account({ loaderData, params }: Route.ComponentProps) {
   const tab = searchParams.get("tab") === "security" ? "security" : "profile";
   const base = `/dashboard/${params.connectionId}`;
 
-  const hide = hiddenSettingsNavKeys({
-    paymentsEnabled: loaderData.paymentsEnabled,
-    visitSummariesEnabled: loaderData.visitSummariesEnabled,
-    whatsappEnabled: loaderData.whatsappEnabled,
-    preset: loaderData.template.presetId,
-  });
-
   return (
-    <SettingsShell active={tab} base={base} hide={hide}>
+    <SettingsShell active={tab} base={base}>
       {tab === "profile" ? (
-        <ProfileTab phone={loaderData.phone} template={loaderData.template} />
+        <ProfileTab phone={loaderData.phone} vocabulary={loaderData.vocabulary} />
       ) : (
         <SecurityTab />
       )}
@@ -71,12 +61,12 @@ export default function Account({ loaderData, params }: Route.ComponentProps) {
 
 /* ==================================================================
    Profile — one row-based card (photo, name, job title, email, phone)
-   plus a separate Business template summary, matching the rest of
+   plus a separate vocabulary summary, matching the rest of
    Settings' rail+row layout instead of the old per-field card stack.
    ================================================================== */
 function ProfileTab({
-  phone, template,
-}: { phone: string; template: { presetId: string; href: string } }) {
+  phone, vocabulary,
+}: { phone: string; vocabulary: { terms: Terms; href: string } }) {
   const { isLoaded, user } = useUser();
   if (!isLoaded || !user) {
     return <div className="card px-[18px] py-6 text-body text-muted">Loading…</div>;
@@ -84,7 +74,7 @@ function ProfileTab({
   return (
     <div className="flex flex-col gap-[14px]">
       <ProfileCard user={user} initialPhone={phone} />
-      <TemplateCard template={template} />
+      <VocabularyCard vocabulary={vocabulary} />
     </div>
   );
 }
@@ -308,20 +298,18 @@ function EmailRow({ user }: { user: ClerkUser }) {
   );
 }
 
-function TemplateCard({ template }: { template: { presetId: string; href: string } }) {
-  const preset = getPreset(template.presetId);
-  const v = vocabFor(template.presetId);
+function VocabularyCard({ vocabulary }: { vocabulary: { terms: Terms; href: string } }) {
+  const v = vocabFor(vocabulary.terms);
   return (
     <div className="card">
       <div className="card-body flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="h-9 w-9 shrink-0 rounded-[9px]" style={{ background: preset.tint }} />
-          <div className="flex flex-col gap-[2px]">
-            <span className="text-body font-medium">Business template — {preset.label.split(" / ")[0]}</span>
-            <span className="text-meta text-muted">{v.bookingTitle} · {v.customers} · {preset.vocab.resources}</span>
-          </div>
+        <div className="flex min-w-0 flex-col gap-[2px]">
+          <span className="text-body font-medium">What you call things</span>
+          <span className="min-w-0 truncate text-meta text-muted">
+            {v.bookingTitle} · {v.services} · {v.resources} · {v.customers}
+          </span>
         </div>
-        <a href={template.href} className="btn-sec no-underline hover:no-underline">Change</a>
+        <a href={vocabulary.href} className="btn-sec no-underline hover:no-underline">Change</a>
       </div>
     </div>
   );

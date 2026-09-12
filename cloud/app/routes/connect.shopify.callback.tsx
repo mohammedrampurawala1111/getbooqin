@@ -12,6 +12,7 @@ import {
   verifyCallbackHmac,
   verifyOAuthState,
 } from "getbooqin-core";
+import { starterTemplate } from "~/lib/presets";
 import { getUserSession, ensureUserRow } from "~/session.server";
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -66,17 +67,22 @@ export async function loader({ request }: Route.LoaderArgs) {
   if (state.onboarding) {
     const { presetId, businessName, businessEmail, businessPhone, timezone, resourceName, remindersOn } = state.onboarding;
 
-    const settingsPatch: Record<string, string | boolean> = { reminder_enabled: !!remindersOn };
+    const settingsPatch: Partial<Settings.Settings> = { reminder_enabled: !!remindersOn };
+    // The starter template seeds vocabulary and a slot interval once,
+    // here, and is never consulted again — `preset` is kept only as a
+    // label for analytics (see core's presets.ts).
+    if (presetId) {
+      const template = starterTemplate(presetId);
+      settingsPatch.preset = template.id;
+      settingsPatch.terms = template.terms;
+      settingsPatch.slot_interval = template.slotInterval;
+    }
     if (businessName) settingsPatch.business_name = businessName;
     if (businessEmail) settingsPatch.business_email = businessEmail;
     if (businessPhone) settingsPatch.business_phone = businessPhone;
     const resolvedTimezone = shopTimezone || timezone;
     if (resolvedTimezone) settingsPatch.timezone = resolvedTimezone;
     await Settings.setSettings(shop, "shopify", settingsPatch);
-
-    if (presetId) {
-      await Settings.applyPreset(shop, "shopify", presetId);
-    }
 
     if (resourceName) {
       await Data.saveResource(

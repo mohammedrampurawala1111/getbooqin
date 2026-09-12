@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
 import { Form, redirect, useNavigate, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.bookings";
-import { Bookings, Data, Settings, Waitlist, isGetBooqinError, FeatureFlags } from "getbooqin-core";
+import { Bookings, Data, Settings, Waitlist, isGetBooqinError } from "getbooqin-core";
 import { formatInZone } from "getbooqin-core/booking/tz";
 import { requireTenant } from "~/tenant.server";
 import { PageHeader, Badge, EmptyState, Field, Input, AlertError, DataTable, Toggle, useToast, FormErrorSummary } from "~/components/ui";
 import { useVocabulary, vocabFor } from "~/lib/presets";
-import { dashboardPreset } from "~/lib/dashboardMeta";
+import { dashboardTerms } from "~/lib/dashboardMeta";
 import { contactFieldErrors } from "~/lib/validation";
 
 export const meta: Route.MetaFunction = ({ matches }) => [
-  { title: `${vocabFor(dashboardPreset(matches)).bookingTitle} · GetBooqin` },
+  { title: `${vocabFor(dashboardTerms(matches)).bookingTitle} · GetBooqin` },
 ];
 
 export async function loader({ request, params }: Route.LoaderArgs) {
@@ -88,7 +88,6 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     // A Payment column with nothing to show whenever the shop has no
     // gateway connected read as broken, not empty (Defect Dossier's BQ-30
     // finding).
-    paymentsAvailable: FeatureFlags.PAYMENTS_ENABLED && settings.enabled_gateways.length > 0,
     serviceOptions: services.map((s) => ({ id: s.id, name: s.name })),
     resourceOptions: resources.map((r) => ({ id: r.id, name: r.name })),
     resourcesByService,
@@ -138,7 +137,7 @@ export async function action({ request, params }: Route.ActionArgs) {
       });
       const service = await Data.catalogService(shop, booking.serviceId);
       const when = formatInZone(booking.startUtc, settings.timezone);
-      const bookingNoun = vocabFor(settings.preset).bookingOne;
+      const bookingNoun = vocabFor(settings.terms).bookingOne;
       return redirect(
         `/dashboard/${params.connectionId}/bookings?booked=${encodeURIComponent(`${service?.name ?? bookingNoun} booked — ${when}`)}`
       );
@@ -187,7 +186,7 @@ function customerLabel(c: { firstName: string; lastName: string; email: string }
 }
 
 export default function BookingsList({ loaderData, actionData, params }: Route.ComponentProps) {
-  const { bookings, status, search, filtered, totalCount, statuses, labels, timezone, requirePhone, paymentsAvailable, serviceOptions, resourceOptions, resourcesByService, customerOptions } = loaderData;
+  const { bookings, status, search, filtered, totalCount, statuses, labels, timezone, requirePhone, serviceOptions, resourceOptions, resourcesByService, customerOptions } = loaderData;
   const base = `/dashboard/${params.connectionId}`;
   const noBookingsAtAll = !filtered && totalCount === 0;
   const v = useVocabulary();
@@ -347,14 +346,13 @@ export default function BookingsList({ loaderData, actionData, params }: Route.C
       </div>
 
       <DataTable
-        cols={paymentsAvailable ? "1.05fr 1.25fr .95fr 1.15fr .8fr .8fr 28px" : "1.05fr 1.25fr .95fr 1.15fr .8fr 28px"}
+        cols="1.05fr 1.25fr .95fr 1.15fr .8fr 28px"
         columns={[
           "When",
           v.serviceOne ? v.serviceOne.charAt(0).toUpperCase() + v.serviceOne.slice(1) : "Service",
           v.resourceOneTitle || "Resource",
           v.customerOne ? v.customerOne.charAt(0).toUpperCase() + v.customerOne.slice(1) : "Customer",
           "Status",
-          ...(paymentsAvailable ? ["Payment"] : []),
           "",
         ]}
         rows={bookings}
@@ -375,14 +373,12 @@ export default function BookingsList({ loaderData, actionData, params }: Route.C
             {b.customer.firstName} {b.customer.lastName}
           </span>,
           <Badge status={b.status as any} label={labels[b.status as keyof typeof labels]} />,
-          ...(paymentsAvailable ? [<Badge status={b.paymentStatus as any} />] : []),
           <span className="text-faint">›</span>,
         ]}
-        // Below 640px the 7-column grid squeezed every cell into
-        // overlapping, off-screen text — status/payment pills sat past the
-        // viewport edge and the service name painted over the time (UX
-        // audit's #2 finding). Same stacked-card fallback Resources/Time
-        // off already use.
+        // Below 640px the wide grid squeezed every cell into overlapping,
+        // off-screen text — the status pill sat past the viewport edge and
+        // the service name painted over the time (UX audit's #2 finding).
+        // Same stacked-card fallback Resources/Time off already use.
         mobileCard={(b) => (
           <>
             <div className="flex items-center justify-between gap-3">
@@ -395,10 +391,11 @@ export default function BookingsList({ loaderData, actionData, params }: Route.C
             <span className="min-w-0 truncate text-muted">
               {b.serviceName} · {b.resource.name}
             </span>
-            <div className="flex items-center gap-2">
-              {paymentsAvailable && <Badge status={b.paymentStatus as any} />}
-              {!b.conflict.ok && <span className="badge-pending">Needs attention</span>}
-            </div>
+            {!b.conflict.ok && (
+              <div className="flex items-center gap-2">
+                <span className="badge-pending">Needs attention</span>
+              </div>
+            )}
           </>
         )}
         empty={

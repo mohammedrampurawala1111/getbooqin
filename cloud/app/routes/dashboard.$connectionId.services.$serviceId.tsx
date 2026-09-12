@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { Form, data, redirect } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.services.$serviceId";
-import { Data, Settings, ShopifyAdmin, ServiceMetafields, decryptCredentials, FeatureFlags } from "getbooqin-core";
+import { Data, Settings, ShopifyAdmin, ServiceMetafields, decryptCredentials } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { AlertError, Field, Input, Toggle, CheckCard, ConfirmDialog, useToast } from "~/components/ui";
 import { useVocabulary, SERVICE_SWATCHES as SWATCHES } from "~/lib/presets";
@@ -33,9 +33,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     Settings.getSettings(shop, platform),
   ]);
 
-  const paymentsAvailable = FeatureFlags.PAYMENTS_ENABLED && settings.enabled_gateways.length > 0;
   const bookingCount = await Data.bookingCountForService(shop, id);
-  return { config, product, resources, rooms, addons, resourceIds, addonIds, currencySymbol: settings.currency_symbol, paymentsAvailable, bookingCount };
+  return { config, product, resources, rooms, addons, resourceIds, addonIds, currencySymbol: settings.currency_symbol, bookingCount };
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
@@ -80,8 +79,6 @@ export async function action({ request, params }: Route.ActionArgs) {
       buffer_after_min: Number(form.get("buffer_after_min") ?? 0),
       capacity: Number(form.get("capacity") ?? 1),
       location_type: String(form.get("location_type") ?? "onsite") as "onsite" | "video" | "phone",
-      payment_required: form.get("payment_required") === "on",
-      deposit_percent: Number(form.get("deposit_percent") ?? 0),
       color: String(form.get("color") ?? before.color),
       status: form.get("status") === "on",
       requires_room: form.get("requires_room") === "on",
@@ -132,7 +129,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function ServiceDetail({ loaderData, actionData, params }: Route.ComponentProps) {
-  const { config, product, resources, rooms, addons, resourceIds, addonIds, currencySymbol, paymentsAvailable, bookingCount } = loaderData;
+  const { config, product, resources, rooms, addons, resourceIds, addonIds, currencySymbol, bookingCount } = loaderData;
   const base = `/dashboard/${params.connectionId}`;
   const swatches = SWATCHES.includes(config.color) ? SWATCHES : [config.color, ...SWATCHES];
   const editable = config.platform === "manual";
@@ -228,19 +225,7 @@ export default function ServiceDetail({ loaderData, actionData, params }: Route.
                 <option value="phone">Phone</option>
               </select>
             </Field>
-            {/* Payments are advertised throughout the dashboard (a Payment
-                column, a Revenue card) but were configurable nowhere — these
-                two controls did nothing until a gateway existed to act on
-                them (Defect Dossier's BQ-30 finding). */}
-            <Field
-              label="Deposit (% of price)"
-              hint={paymentsAvailable ? "What share of the price is due to hold the booking." : "Available once you connect a payment provider."}
-            >
-              <Input type="number" name="deposit_percent" min={0} max={100} defaultValue={config.depositPercent} disabled={!paymentsAvailable} />
-            </Field>
-
             <div className="col-span-2 flex flex-col gap-3">
-              <Toggle name="payment_required" defaultChecked={paymentsAvailable && config.paymentRequired} disabled={!paymentsAvailable} label="Payment required to hold the booking" />
               <Toggle name="status" defaultChecked={config.status} label="Active" />
             </div>
 
@@ -322,20 +307,23 @@ export default function ServiceDetail({ loaderData, actionData, params }: Route.
           </div>
         </div>
 
-        <div className="card">
-          <div className="card-header">
-            <h2 className="card-title">Add-ons offered</h2>
-          </div>
-          <div className="card-body grid grid-cols-2 gap-2">
-            {addons.length === 0 ? (
-              <p className="col-span-2 m-0 text-body text-muted">No add-ons yet.</p>
-            ) : (
-              addons.map((a) => (
+        {/* Only for an account that already has add-ons — the screens
+            that created them came out in Phase 1's trim, so this is
+            permanently empty for a new account and an empty card would
+            just be a dead end. Existing add-ons stay attachable and keep
+            working. */}
+        {addons.length > 0 && (
+          <div className="card">
+            <div className="card-header">
+              <h2 className="card-title">Add-ons offered</h2>
+            </div>
+            <div className="card-body grid grid-cols-2 gap-2">
+              {addons.map((a) => (
                 <CheckCard key={a.id} name="addon_ids" value={String(a.id)} label={a.name} defaultChecked={addonIds.includes(a.id)} />
-              ))
-            )}
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="flex items-center justify-between gap-2">
           <button type="submit" className="btn-pri">

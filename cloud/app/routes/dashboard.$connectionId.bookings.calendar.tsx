@@ -5,11 +5,11 @@ import { requireTenant } from "~/tenant.server";
 import { PageHeader } from "~/components/ui";
 import { DayCalendar, WeekCalendar, ModeToggle, type CalendarBooking, type CalendarColumn, type WeekBooking } from "~/components/calendar";
 import { useVocabulary, vocabFor } from "~/lib/presets";
-import { dashboardPreset } from "~/lib/dashboardMeta";
+import { dashboardTerms } from "~/lib/dashboardMeta";
 import { shiftDate, mondayOf, dayOfWeekFromIso } from "~/lib/calendarDate";
 
 export const meta: Route.MetaFunction = ({ matches }) => [
-  { title: `Calendar · ${vocabFor(dashboardPreset(matches)).bookingTitle} · GetBooqin` },
+  { title: `Calendar · ${vocabFor(dashboardTerms(matches)).bookingTitle} · GetBooqin` },
 ];
 
 // A booking market completed/no-show the moment staff close it out

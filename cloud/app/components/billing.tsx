@@ -1,0 +1,264 @@
+/**
+ * Settings → Billing.
+ *
+ * **Read-only in Phase 2a, deliberately.** The plan, the trial counter,
+ * what's included and what's being used are all real and all enforced
+ * server-side today; what doesn't exist yet is a way to pay. An "Upgrade"
+ * button that 404s is worse than a plan you can see but not yet change,
+ * so this states the position plainly instead.
+ *
+ * Neither PayPal nor Razorpay offers a hosted customer portal the way
+ * Stripe does, so when 2c lands, the upgrade/downgrade/cancel controls
+ * and a payment-history table all get built into this same screen. It is
+ * shaped for that now — the plan comparison and the usage meters are the
+ * halves that don't change.
+ */
+import {
+  PLANS, PLAN_ORDER, LIMIT_KEYS, LIMIT_LABELS, FEATURE_LABELS,
+  priceFor, formatPrice, formatLimit, monthlyEquivalent,
+  type Currency, type BillingCycle, type FeatureKey, type LimitKey, type PlanId,
+} from "getbooqin-core/billing/plans";
+
+export interface BillingView {
+  plan: PlanId;
+  status: string;
+  trialEndsAt: string | null;
+  trialDaysLeft: number | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  currency: Currency;
+  billingCycle: BillingCycle;
+  inGrace: boolean;
+  features: string[];
+  /** null means unlimited — Infinity doesn't survive JSON. */
+  limits: Record<string, number | null>;
+  usage: Record<string, number>;
+  overrides: { key: string; value: string; reason: string; expiresAt: string | null }[];
+}
+
+function formatDate(iso: string | null): string {
+  if (!iso) return "—";
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(iso));
+}
+
+/** The one line at the top that answers "what am I on, and until when?" */
+function StatusBanner({ billing }: { billing: BillingView }) {
+  const plan = PLANS[billing.plan];
+
+  if (billing.status === "trialing") {
+    const days = billing.trialDaysLeft ?? 0;
+    // Under a week is the point at which this stops being information
+    // and starts being something to act on.
+    const urgent = days <= 7;
+    return (
+      <div className={`rounded-[8px] px-3 py-2 text-[12.5px] ${urgent ? "bg-warn-bg text-warn" : "bg-brand-50 text-brand-600"}`}>
+        You're on a free trial of <strong>{plan.name}</strong> —{" "}
+        {days === 0 ? "it ends today" : `${days} day${days === 1 ? "" : "s"} left`}, until {formatDate(billing.trialEndsAt)}.
+        {" "}Nothing is deleted when it ends; the account drops to Free and stays read-only above the Free limits.
+      </div>
+    );
+  }
+
+  if (billing.inGrace) {
+    return (
+      <div className="rounded-[8px] bg-danger-bg px-3 py-2 text-[12.5px] font-medium text-danger">
+        A payment didn't go through. Your {plan.name} plan is still fully active while we retry — update your
+        payment method to avoid interruption.
+      </div>
+    );
+  }
+
+  if (billing.status === "canceled") {
+    return (
+      <div className="rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+        Your {plan.name} plan is cancelled and won't renew. You keep it until {formatDate(billing.currentPeriodEnd)}.
+      </div>
+    );
+  }
+
+  if (billing.plan === "free") {
+    return (
+      <div className="rounded-[8px] bg-row px-3 py-2 text-[12.5px] text-muted">
+        You're on the <strong>Free</strong> plan. The booking page, reminders, calendar and your own vocabulary all
+        work — it's capped, not cut down.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-[8px] bg-ok-bg px-3 py-2 text-[12.5px] text-ok">
+      <strong>{plan.name}</strong>, billed {billing.billingCycle}
+      {billing.currentPeriodEnd ? `, renews ${formatDate(billing.currentPeriodEnd)}` : ""}.
+    </div>
+  );
+}
+
+/** Usage against cap, per limit. This is the part a merchant actually checks. */
+function UsageMeters({ billing }: { billing: BillingView }) {
+  return (
+    <div className="flex flex-col">
+      {LIMIT_KEYS.map((key) => {
+        const cap = billing.limits[key];
+        const used = billing.usage[key] ?? 0;
+        const unlimited = cap === null;
+        const over = !unlimited && used > cap;
+        const pct = unlimited ? 0 : Math.min(100, Math.round((used / Math.max(1, cap)) * 100));
+        return (
+          <div key={key} className="flex flex-col gap-[6px] border-b border-row py-[11px] last:border-b-0">
+            <div className="flex items-baseline justify-between gap-3 text-[13px]">
+              <span className={over ? "font-medium text-danger" : ""}>{LIMIT_LABELS[key as LimitKey]}</span>
+              <span className="num shrink-0 text-[12px] text-muted">
+                {used} / {unlimited ? "Unlimited" : cap}
+              </span>
+            </div>
+            {!unlimited && (
+              <div className="h-[5px] overflow-hidden rounded-[3px] bg-row">
+                <div
+                  className={`h-full rounded-[3px] ${over ? "bg-danger" : pct >= 80 ? "bg-chart-warn" : "bg-brand-500"}`}
+                  style={{ width: `${Math.max(2, pct)}%` }}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function BillingPage({ billing }: { billing: BillingView }) {
+  const current = PLANS[billing.plan];
+  const features = new Set(billing.features as FeatureKey[]);
+  const overCaps = LIMIT_KEYS.filter((key) => {
+    const cap = billing.limits[key];
+    return cap !== null && (billing.usage[key] ?? 0) > cap;
+  });
+
+  return (
+    <div className="flex flex-col gap-[14px]">
+      <div className="card">
+        <div className="card-header">
+          <h2 className="card-title">Your plan</h2>
+        </div>
+        <div className="card-body flex flex-col gap-3">
+          <StatusBanner billing={billing} />
+
+          {/* A downgrade is never destructive — nothing is deleted, and
+              what already exists keeps working. The honest thing is to
+              say which caps are exceeded rather than quietly blocking
+              the next create with no explanation. */}
+          {overCaps.length > 0 && (
+            <div className="rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+              You're over your plan on {overCaps.map((k) => LIMIT_LABELS[k as LimitKey].toLowerCase()).join(", ")}.
+              Nothing has been removed and everything you have keeps working — you just can't add more until you
+              upgrade.
+            </div>
+          )}
+
+          <p className="m-0 text-meta text-muted">{current.blurb}</p>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <div className="flex flex-col gap-[3px]">
+            <h2 className="card-title">What you're using</h2>
+            <p className="m-0 text-meta text-muted">
+              Bookings count customer-made ones only — anything you or your team enter by hand is never metered.
+            </p>
+          </div>
+        </div>
+        <div className="px-[18px] py-[4px]">
+          <UsageMeters billing={billing} />
+        </div>
+      </div>
+
+      {billing.overrides.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="card-title">Applied to your account</h2>
+          </div>
+          <div className="px-[18px] py-[4px]">
+            {billing.overrides.map((o) => (
+              <div key={o.key} className="flex items-baseline justify-between gap-3 border-b border-row py-[11px] text-[13px] last:border-b-0">
+                <span>{FEATURE_LABELS[o.key as FeatureKey] ?? o.key}</span>
+                <span className="shrink-0 text-[12px] text-muted">
+                  {o.value === "off" ? "Removed" : o.value === "on" ? "Added" : o.value}
+                  {o.expiresAt ? ` · until ${formatDate(o.expiresAt)}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="card">
+        <div className="card-header">
+          <div className="flex flex-col gap-[3px]">
+            <h2 className="card-title">Plans</h2>
+            <p className="m-0 text-meta text-muted">
+              Prices in {billing.currency}. Yearly is ten months' money for twelve months' service.
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-[10px] px-[18px] py-[14px] md:grid-cols-3">
+          {PLAN_ORDER.filter((id) => PLANS[id].visible || id === billing.plan).map((id) => {
+            const plan = PLANS[id];
+            const monthly = priceFor(id, billing.currency, "monthly");
+            const yearly = priceFor(id, billing.currency, "yearly");
+            const isCurrent = id === billing.plan;
+            return (
+              <div
+                key={id}
+                className={`flex flex-col gap-2 rounded-[9px] border px-[13px] py-[12px] ${isCurrent ? "border-brand-500 bg-surface" : "border-line bg-canvas-alt"}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-body font-semibold">{plan.name}</span>
+                  {isCurrent && <span className="badge bg-brand-50 text-brand-600">Current</span>}
+                </div>
+                <div className="flex flex-col gap-px">
+                  <span className="num text-[18px] font-medium tracking-[-0.02em]">
+                    {monthly ? formatPrice(monthly.amount, billing.currency) : formatPrice(0, billing.currency)}
+                    <span className="text-[12px] font-normal text-muted">/mo</span>
+                  </span>
+                  {yearly && (
+                    <span className="text-[11.5px] text-subtle">
+                      or {formatPrice(yearly.amount, billing.currency)}/yr — works out at{" "}
+                      {formatPrice(monthlyEquivalent(yearly.amount), billing.currency)}/mo
+                    </span>
+                  )}
+                </div>
+                <p className="m-0 text-[12px] text-muted">{plan.blurb}</p>
+                <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[12px]">
+                  {LIMIT_KEYS.map((key) => (
+                    <li key={key} className="flex items-baseline justify-between gap-2">
+                      <span className="text-subtle">{LIMIT_LABELS[key as LimitKey]}</span>
+                      <span className="num shrink-0">{formatLimit(plan.limits[key as LimitKey])}</span>
+                    </li>
+                  ))}
+                </ul>
+                {plan.features.length > 0 && (
+                  <ul className="m-0 flex list-none flex-col gap-1 border-t border-row p-0 pt-2 text-[12px] text-muted">
+                    {plan.features.map((f) => (
+                      <li key={f} className={features.has(f) ? "text-ink-2" : ""}>
+                        {FEATURE_LABELS[f]}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {/* Stated plainly rather than shipping a button that goes
+            nowhere. The rails land in Phase 2c; until then this screen
+            is honest about being a mirror, not a control panel. */}
+        <div className="card-footer">
+          <span className="text-meta text-muted">
+            Changing plan isn't self-serve yet — get in touch and we'll move you. Every limit above is already live.
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}

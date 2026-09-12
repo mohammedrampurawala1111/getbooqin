@@ -13,13 +13,31 @@
 // Mirrors @react-router/serve's own cli.js (static mounts, compression,
 // morgan) but wired to two builds instead of one — see that package's
 // dist/cli.js if this ever needs to track a react-router upgrade.
+// Sentry is loaded TWICE on purpose, and the one that does the work is
+// not this line.
+//
+// It instruments http/express/pg by patching those modules as they load,
+// which under ESM has to happen before this module's own import graph is
+// linked — being "the first import" is not early enough, and Sentry says
+// so out loud at boot: "express is not instrumented. Please make sure to
+// initialize Sentry in a separate file that you `--import`". That is why
+// package.json's start script is `node --import ./instrument.js
+// combined.js`: the --import pass registers Node's module-customization
+// hooks before anything here is loaded.
+//
+// This import is then just the binding — ES modules are singletons, so
+// instrument.js has already evaluated and Sentry.init() does not run a
+// second time. It is kept because setupExpressErrorHandler() below needs
+// the handle. Inert without SENTRY_DSN either way. See instrument.js.
+import { Sentry } from "./instrument.js";
+
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import compression from "compression";
 import express from "express";
 import morgan from "morgan";
 import { createRequestHandler } from "@react-router/express";
-import { Mailer } from "getbooqin-core";
+import { Jobs } from "getbooqin-core";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
@@ -43,6 +61,11 @@ const CLOUD_PREFIXES = [
   // sync with cloud/app/routes.ts.
   "/invite",
   "/webhooks/clerk",
+  // Razorpay subscription events (cloud/app/routes/webhooks.razorpay.tsx).
+  // Listed individually rather than as "/webhooks" because
+  // shopify-openslot owns the rest of that namespace for Shopify's own
+  // mandatory webhooks.
+  "/webhooks/razorpay",
   // Cloud's own account-surface legal pages — deliberately not "/privacy"
   // or "/terms", which shopify-openslot already owns (its Shopify App
   // Store submission). Keep in sync with cloud/app/routes.ts.
@@ -107,15 +130,30 @@ function mountStatic(app, appDir, build) {
 // a periodic sweep, independent of any one booking's own request/response
 // cycle, since a reminder is due on its own clock, not in reaction to an
 // action a customer or merchant just took.
+//
+// Phase 0 / B1 changed two things about it. It now calls the shared
+// Jobs.runReminders() rather than Mailer.sendReminders() directly, so
+// this interval and the /cron/reminders route do the same work (they had
+// already drifted — the route also cleaned up expired chat
+// conversations, this didn't; the chat widget itself has since gone in
+// Phase 1's trim) and every tick is recorded, so a sweep
+// that quietly stops becomes visible instead of looking like a quiet
+// hour. And because Jobs.record() takes a short lease, running more than
+// one app machine no longer means two sweeps sending the same customer
+// the same reminder twice. See core/src/jobs.ts.
 const REMINDER_INTERVAL_MS = 10 * 60 * 1000;
 
 function startReminderScheduler() {
   const tick = () => {
-    Mailer.sendReminders()
-      .then(({ sent }) => {
-        if (sent > 0) console.log(`[getbooqin-server] sent ${sent} reminder email(s)`);
+    Jobs.runReminders()
+      .then((outcome) => {
+        if (!outcome.ran) return; // another sweep held the lease — normal, not worth a line
+        const { reminders_sent: sent } = outcome.result;
+        if (sent > 0) {
+          console.log(`[getbooqin-server] reminder sweep: ${sent} email(s) sent`);
+        }
       })
-      .catch((err) => console.error("[getbooqin-server] sendReminders failed:", err));
+      .catch((err) => console.error("[getbooqin-server] reminder sweep failed:", err));
   };
   tick();
   return setInterval(tick, REMINDER_INTERVAL_MS);
@@ -151,6 +189,12 @@ async function main() {
     const handler = wantsCloud ? cloudHandler : shopifyHandler;
     return handler(req, res, next);
   });
+
+  // After the route handlers, before listen: Express error middleware
+  // only sees what the handlers pass to next(). React Router catches most
+  // loader/action throws before they ever get here, which is why each app
+  // also reports from its own entry.server.tsx handleError.
+  Sentry.setupExpressErrorHandler(app);
 
   const port = Number(process.env.PORT) || 3000;
   const onListen = () => console.log(`[getbooqin-server] listening on :${port}`);

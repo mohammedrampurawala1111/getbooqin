@@ -70,7 +70,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return {
     step,
     settings: { ...settings, timezone },
-    presets: Presets.presetChoices(),
+    presets: Presets.templateChoices(),
     resourcesCount,
     servicesCount,
     embedDetected,
@@ -90,8 +90,15 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   if (section === "business") {
-    await Backend.applyPreset(shop, "shopify", String(form.get("preset") || "generic"));
+    // Seeds the vocabulary once and keeps the id as a plain label —
+    // there is no "apply a template to a live shop" path any more, so
+    // nothing a merchant has edited can be overwritten from here (see
+    // core/src/booking/presets.ts).
+    const template = Presets.starterTemplate(String(form.get("preset") || "generic"));
     await Backend.setSettings(shop, "shopify", {
+      preset: template.id,
+      terms: template.terms,
+      slot_interval: template.slotInterval,
       business_name: String(form.get("business_name") || ""),
       timezone: String(form.get("timezone") || "UTC"),
     });
@@ -291,8 +298,8 @@ export default function Onboarding() {
                   label="What kind of business is this?"
                   value={preset}
                   onChange={setPreset}
-                  options={presets.map((p) => ({ label: p.label, value: p.value }))}
-                  helpText="Changes the words used throughout the app, e.g. “Doctor” instead of “Staff Member.” It never changes your data."
+                  options={presets.map((p: { label: string; value: string }) => ({ label: p.label, value: p.value }))}
+                  helpText="Picks the starting words used throughout the app, e.g. “Dentist” instead of “Staff.” Every one of them stays editable, and it never changes your data."
                 />
               </FormLayout>
             </BlockStack>
@@ -449,7 +456,7 @@ export default function Onboarding() {
               <BlockStack gap="200">
                 <InlineStack align="space-between">
                   <Text as="span">Business type</Text>
-                  <Badge tone="success">{presets.find((p) => p.value === settings.preset)?.label ?? settings.preset}</Badge>
+                  <Badge tone="success">{presets.find((p: { value: string }) => p.value === settings.preset)?.label ?? settings.preset}</Badge>
                 </InlineStack>
                 <InlineStack align="space-between">
                   <Text as="span">Team</Text>

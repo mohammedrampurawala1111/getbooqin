@@ -64,10 +64,7 @@
 		selectTimeHint: 'Please select a time slot',
 		payNow: 'Pay now',
 		choosePayment: 'How would you like to pay?',
-		amountDue: 'Amount due',
 		payLater: 'I will pay later',
-		paymentDone: 'Payment received. Thank you!',
-		redirecting: 'Taking you to the payment page…',
 		videoNote: 'This is a video call. Your join link is in your confirmation email.',
 		joinCall: 'Join the video call',
 		bookNow: 'Book now',
@@ -1194,11 +1191,7 @@
 			submit.disabled = true;
 			api( 'bookings', { method: 'POST', body: JSON.stringify( payload ) } )
 				.then( function ( booking ) {
-					if ( booking.payment && booking.payment.required && booking.payment.gateways.length ) {
-						self.stepPay( booking );
-					} else {
-						self.stepDone( booking );
-					}
+					self.stepDone( booking );
 				} )
 				.catch( function ( err ) {
 					submit.disabled = false;
@@ -1271,10 +1264,9 @@
 	 * Everything a customer needs from this screen without having to find
 	 * the confirmation email: what they booked, with whom, for how much, a
 	 * reference to quote if they call, and a calendar file. Shared between
-	 * stepDone (paid/free path) and stepInstructions (offline-payment path)
-	 * so neither shortchanges it. No manage-booking link here — that page
-	 * isn't wired up on this store yet; the confirmation email still has
-	 * manage_url for whenever it is.
+	 * so the confirmation screen never shortchanges it. No manage-booking
+	 * link here — that page isn't wired up on this store yet; the
+	 * confirmation email still has manage_url for whenever it is.
 	 */
 	function confirmationDetails( booking ) {
 		var nodes = [];
@@ -1305,188 +1297,14 @@
 		return nodes;
 	}
 
-	/**
-	 * Shown after choosing an offline method. The booking is real but unpaid,
-	 * so this screen states that plainly instead of thanking them for a
-	 * payment that never happened.
-	 */
-	Wizard.prototype.stepInstructions = function ( booking, message ) {
+	Wizard.prototype.stepDone = function ( booking ) {
 		this.setProgress( 3 );
 		this.body.innerHTML = '';
 		this.body.appendChild(
 			el( 'div', { class: 'getbooqin-done' }, [
 				el( 'div', { class: 'getbooqin-done__mark', text: '✓' } ),
 				el( 'h4', { text: t.booked } ),
-				message ? el( 'p', { class: 'getbooqin-instructions', text: message } ) : null,
 				el( 'p', { class: 'getbooqin-muted', text: t.bookedIntro } ),
-				booking.meeting && booking.meeting.is_video
-					? el( 'p', { class: 'getbooqin-muted', text: t.videoNote } )
-					: null
-			].concat( confirmationDetails( booking ) ) )
-		);
-	};
-
-	Wizard.prototype.stepPay = function ( booking ) {
-		var self = this;
-		this.setProgress( 3 );
-		this.body.innerHTML = '';
-
-		var payHeading = el( 'h4', { text: t.choosePayment } );
-		this.body.appendChild( payHeading );
-		focusHeading( payHeading );
-		this.body.appendChild(
-			el( 'p', { class: 'getbooqin-summary', text: t.amountDue + ': ' + booking.payment.due_html } )
-		);
-
-		var msg = el( 'div', { class: 'getbooqin-pay__msg', role: 'status' } );
-		var methods = el( 'div', { class: 'getbooqin-options' } );
-
-		booking.payment.gateways.forEach( function ( gateway ) {
-			methods.appendChild(
-				el( 'button', {
-					type: 'button',
-					class: 'getbooqin-option',
-					onClick: function () {
-						loadGatewayScript( gateway.id ).then( function () {
-							startPayment(
-								booking.uid,
-								gateway.id,
-								msg,
-								function () {
-									self.stepDone( booking, true );
-								},
-								function ( message ) {
-									self.stepInstructions( booking, message );
-								}
-							);
-						} );
-					}
-				}, [
-					el( 'strong', { text: gateway.label } ),
-					gateway.description ? el( 'small', { text: gateway.description } ) : null
-				] )
-			);
-		} );
-
-		this.body.appendChild( methods );
-		this.body.appendChild( msg );
-		this.body.appendChild(
-			el( 'div', { class: 'getbooqin-actions' }, [
-				el( 'button', {
-					type: 'button',
-					class: 'getbooqin-btn getbooqin-btn--ghost',
-					text: t.payLater,
-					onClick: function () {
-						self.stepDone( booking );
-					}
-				} )
-			] )
-		);
-	};
-
-	var scriptPromises = {};
-	function loadGatewayScript( gatewayId ) {
-		if ( 'razorpay' !== gatewayId ) {
-			return Promise.resolve();
-		}
-		if ( scriptPromises.razorpay ) {
-			return scriptPromises.razorpay;
-		}
-		scriptPromises.razorpay = new Promise( function ( resolve, reject ) {
-			if ( window.Razorpay ) {
-				resolve();
-				return;
-			}
-			var script = document.createElement( 'script' );
-			script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-			script.onload = resolve;
-			script.onerror = reject;
-			document.head.appendChild( script );
-		} );
-		return scriptPromises.razorpay;
-	}
-
-	/**
-	 * Kicks off a payment. Redirect gateways leave the page; Razorpay opens in
-	 * place and is verified server-side before we ever say "paid".
-	 */
-	function startPayment( uid, gatewayId, msg, onPaid, onInstructions ) {
-		msg.textContent = t.loading;
-
-		api( 'payments/start', {
-			method: 'POST',
-			body: JSON.stringify( { uid: uid, gateway: gatewayId } )
-		} )
-			.then( function ( result ) {
-				if ( 'redirect' === result.type ) {
-					msg.textContent = t.redirecting;
-					window.location.href = result.url;
-					return;
-				}
-
-				if ( 'instructions' === result.type ) {
-					msg.textContent = result.message;
-					if ( onInstructions ) {
-						onInstructions( result.message );
-					}
-					return;
-				}
-
-				if ( 'razorpay' === result.type ) {
-					if ( typeof window.Razorpay === 'undefined' ) {
-						msg.textContent = t.genericError;
-						return;
-					}
-					msg.textContent = '';
-
-					var options = Object.assign( {}, result.params, {
-						handler: function ( response ) {
-							msg.textContent = t.loading;
-							api( 'payments/verify', {
-								method: 'POST',
-								body: JSON.stringify( {
-									payment_id: result.payment_id,
-									razorpay_order_id: response.razorpay_order_id,
-									razorpay_payment_id: response.razorpay_payment_id,
-									razorpay_signature: response.razorpay_signature
-								} )
-							} )
-								.then( function () {
-									msg.textContent = t.paymentDone;
-									if ( onPaid ) {
-										onPaid();
-									}
-								} )
-								.catch( function ( err ) {
-									msg.textContent = err.message;
-								} );
-						},
-						modal: {
-							ondismiss: function () {
-								msg.textContent = '';
-							}
-						}
-					} );
-
-					new window.Razorpay( options ).open();
-					return;
-				}
-
-				msg.textContent = t.genericError;
-			} )
-			.catch( function ( err ) {
-				msg.textContent = err.message;
-			} );
-	}
-
-	Wizard.prototype.stepDone = function ( booking, paid ) {
-		this.setProgress( 3 );
-		this.body.innerHTML = '';
-		this.body.appendChild(
-			el( 'div', { class: 'getbooqin-done' }, [
-				el( 'div', { class: 'getbooqin-done__mark', text: '✓' } ),
-				el( 'h4', { text: t.booked } ),
-				el( 'p', { class: 'getbooqin-muted', text: paid ? t.paymentDone : t.bookedIntro } ),
 				booking.meeting && booking.meeting.is_video
 					? el( 'p', { class: 'getbooqin-muted', text: t.videoNote } )
 					: null
@@ -1578,10 +1396,6 @@
 				renderRescheduleFlow( card );
 			} );
 		}
-		var payBox = card.querySelector( '.getbooqin-pay' );
-		if ( payBox ) {
-			initPay( payBox );
-		}
 	}
 
 	/**
@@ -1613,21 +1427,6 @@
 					card.appendChild( el( 'p', {}, [
 						el( 'a', { class: 'getbooqin-btn', href: b.meeting.url, target: '_blank', rel: 'noopener', text: t.joinCall } )
 					] ) );
-				}
-
-				if ( b.payment && b.payment.required ) {
-					var payBox = el( 'div', { class: 'getbooqin-pay', 'data-uid': b.uid }, [
-						el( 'p', {}, [ el( 'strong', { text: t.amountDue + ': ' } ), document.createTextNode( b.payment.due_html ) ] )
-					] );
-					var methods = el( 'div', { class: 'getbooqin-pay__methods' } );
-					b.payment.gateways.forEach( function ( g ) {
-						methods.appendChild( el( 'button', { type: 'button', class: 'getbooqin-btn getbooqin-btn--ghost', 'data-getbooqin-pay': g.id, text: g.label } ) );
-					} );
-					payBox.appendChild( methods );
-					payBox.appendChild( el( 'div', { class: 'getbooqin-pay__msg', role: 'status' } ) );
-					card.appendChild( payBox );
-				} else if ( 'paid' === b.payment.status ) {
-					card.appendChild( el( 'p', { class: 'getbooqin-status getbooqin-status--completed', text: 'Paid' } ) );
 				}
 
 				var actions = el( 'div', { class: 'getbooqin-actions' } );
@@ -1725,29 +1524,6 @@
 				card.innerHTML = '';
 				card.appendChild( el( 'p', {}, [ document.createTextNode( err.message ) ] ) );
 			} );
-	}
-
-	function initPay( box ) {
-		var msg = box.querySelector( '.getbooqin-pay__msg' );
-		box.querySelectorAll( '[data-getbooqin-pay]' ).forEach( function ( button ) {
-			button.addEventListener( 'click', function () {
-				loadGatewayScript( button.dataset.getbooqinPay ).then( function () {
-					startPayment(
-						box.dataset.uid,
-						button.dataset.getbooqinPay,
-						msg,
-						function () {
-							window.location.reload();
-						},
-						function () {
-							box.querySelectorAll( '[data-getbooqin-pay]' ).forEach( function ( other ) {
-								other.disabled = true;
-							} );
-						}
-					);
-				} );
-			} );
-		} );
 	}
 
 	/**
@@ -1937,7 +1713,6 @@
 	}
 
 	document.addEventListener( 'DOMContentLoaded', function () {
-		document.querySelectorAll( '.getbooqin-pay' ).forEach( initPay );
 		document.querySelectorAll( '.getbooqin-booking' ).forEach( function ( root ) {
 			new Wizard( root );
 		} );

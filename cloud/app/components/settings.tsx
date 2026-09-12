@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Form, useFetcher } from "react-router";
 import { ConfirmDialog, useToast } from "~/components/ui";
-import { isClinicFeaturePreset } from "~/lib/presets";
 
 /* ==================================================================
    Settings shell — one rail, one page at a time (design handoff v4).
@@ -30,42 +29,23 @@ export const SETTINGS_NAV = [
     { key: "security", label: "Password & security", path: "/account?tab=security", title: "Account", subtitle: "Your personal details. Business-wide settings are below." },
   ]},
   { group: "Business", items: [
-    { key: "general", label: "General", path: "/settings?page=general", title: "General", subtitle: "Business identity and how time is displayed." },
-    { key: "template", label: "Business template", path: "/settings?page=template", title: "Business template", subtitle: "Industry preset, vocabulary and which Overview cards show." },
+    { key: "general", label: "General", path: "/settings?page=general", title: "General", subtitle: "Business identity, the words you use, and how time is displayed." },
     { key: "rules", label: "Booking rules", path: "/settings?page=rules", title: "Booking rules", subtitle: "When customers can book, and what happens automatically." },
     { key: "notifications", label: "Notifications", path: "/settings?page=notifications", title: "Notifications", subtitle: "Emails sent to customers and staff." },
-    { key: "payments", label: "Payments", path: "/settings?page=payments", title: "Payments", subtitle: "How money is collected for bookings." },
-    { key: "whatsapp", label: "WhatsApp", path: "/settings?page=whatsapp", title: "WhatsApp", subtitle: "Send booking confirmations and updates through your own WhatsApp Business number." },
-    { key: "visit_summaries", label: "Visit summaries", path: "/settings?page=visit_summaries", title: "Visit summaries", subtitle: "AI-drafted, clinician-reviewed summaries patients can keep after a visit." },
     { key: "integrations", label: "Integrations", path: "/settings?page=integrations", title: "Integrations", subtitle: "Optional integrations. GetBooqin works fully without any of them." },
     { key: "team", label: "Team", path: "/settings?page=team", title: "Team", subtitle: "Who can access this dashboard, and what they can do." },
+    { key: "billing", label: "Billing", path: "/settings?page=billing", title: "Billing", subtitle: "Your plan, what it includes, and what you're using." },
   ]},
 ] as const;
 
 export type SettingsKey = typeof SETTINGS_NAV[number]["items"][number]["key"];
 
-/**
- * Which settings-nav items to hide, given the two feature gates that
- * control them. Two routes render this same rail (dashboard.$connectionId.
- * settings.tsx and dashboard.$connectionId.account.tsx) and each used to
- * compute its own visibility independently — the account route never
- * checked visit_summaries/preset at all, so switching the business
- * template away from Clinic left "Visit summaries" showing there while the
- * settings route correctly hid it, in the same session (Defect Dossier's
- * BQ-21 finding). One function both routes call now.
- */
-export function hiddenSettingsNavKeys(gates: {
-  paymentsEnabled: boolean;
-  visitSummariesEnabled: boolean;
-  whatsappEnabled: boolean;
-  preset: string | null;
-}): SettingsKey[] {
-  return [
-    ...(gates.paymentsEnabled ? [] : (["payments"] as const)),
-    ...(gates.visitSummariesEnabled && isClinicFeaturePreset(gates.preset) ? [] : (["visit_summaries"] as const)),
-    ...(gates.whatsappEnabled ? [] : (["whatsapp"] as const)),
-  ];
-}
+/* Every remaining settings page is unconditionally available: the three
+   that used to be feature-gated (Payments, WhatsApp, Visit summaries)
+   were the dark surfaces Phase 1 removed, so there is nothing left for a
+   `hiddenSettingsNavKeys()` to hide. The `hide` prop below stays — it is
+   what a future per-plan entitlement gate (§W7) will drive the rail
+   from. */
 
 // The route's own ?page= value used to be cast straight to SettingsKey with
 // `as` — an unrecognized value (a typo, a stale link, a preset id someone
@@ -151,18 +131,6 @@ export function Row({
       </div>
       <div className="min-w-0">{children}</div>
     </Tag>
-  );
-}
-
-/* "Preset default" vs "Customized" — tells a merchant which fields a
-   template switch will (and won't) touch: applyPreset() (core's
-   settings.ts) skips any key in settings.customized_fields, so a hand-edit
-   here survives picking a different template later. */
-export function PresetFieldBadge({ customized }: { customized: boolean }) {
-  return customized ? (
-    <span className="badge bg-brand-50 text-brand-600">Customized</span>
-  ) : (
-    <span className="badge-neutral">Preset default</span>
   );
 }
 
@@ -289,8 +257,8 @@ export function Segmented({
    action — when given, it replaces the default real POST (still
    `preventDefault()`-driven by the caller, so nothing here changes).
    Every settings section rendered inside one of these (General, Booking
-   rules, Notifications, Payments, WhatsApp, Visit summaries) previously had
-   no guard at all against losing an edit: changing a toggle, clicking a
+   rules, Notifications, …) previously had no guard at all against losing
+   an edit: changing a toggle, clicking a
    different item in the settings rail — a plain <a href>, i.e. a real page
    navigation, not a client-side transition — and coming back showed the
    change gone, with no dirty-state indicator, no confirmation prompt, and
@@ -400,8 +368,8 @@ function useFetcherToast<Data>(fetcher: { state: string; data: Data | undefined 
    *changed*: the Owner row (any viewer), every row for a write/read
    viewer (§0 — hidden select, not disabled), and the invite-accept page's
    "join with {Role} access" line. Owner gets the same brand-tinted
-   treatment PresetFieldBadge already uses for "Customized" so it reads as
-   "special", not just another neutral badge. */
+   brand-tinted treatment so it reads as "special", not just another
+   neutral badge. */
 export function RoleBadge({ role }: { role: Role }) {
   return (
     <span className={role === "owner" ? "badge bg-brand-50 text-brand-600" : "badge-neutral"}>

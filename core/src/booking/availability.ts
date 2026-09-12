@@ -9,7 +9,7 @@
  * a second "local" copy of a timestamp in the database.
  */
 import { DateTime } from "luxon";
-import prisma from "../db.js";
+import prisma, { type DbClient } from "../db.js";
 import type { Resource } from "@prisma/client";
 import type { CatalogService } from "./data.js";
 import * as Data from "./data.js";
@@ -659,12 +659,13 @@ export async function isBlockedByTimeOff(
   resourceId: number,
   startUtc: DateTime,
   endUtc: DateTime,
-  service: CatalogService
+  service: CatalogService,
+  db: DbClient = prisma
 ): Promise<boolean> {
   const busyStart = startUtc.minus({ minutes: service.bufferBeforeMin }).toJSDate();
   const busyEnd = endUtc.plus({ minutes: service.bufferAfterMin }).toJSDate();
 
-  const blocked = await prisma.timeOff.count({
+  const blocked = await db.timeOff.count({
     where: {
       shop,
       OR: [{ resourceId }, { resourceId: 0 }],
@@ -682,7 +683,8 @@ export async function hasBookingConflict(
   startUtc: DateTime,
   endUtc: DateTime,
   service: CatalogService,
-  excludeBookingId = 0
+  excludeBookingId = 0,
+  db: DbClient = prisma
 ): Promise<boolean> {
   const busyStart = startUtc.minus({ minutes: service.bufferBeforeMin }).toJSDate();
   const busyEnd = endUtc.plus({ minutes: service.bufferAfterMin }).toJSDate();
@@ -690,7 +692,7 @@ export async function hasBookingConflict(
   const capacity = Math.max(1, service.capacity);
 
   if (capacity > 1) {
-    const taken = await prisma.booking.count({
+    const taken = await db.booking.count({
       where: {
         shop,
         resourceId,
@@ -703,7 +705,7 @@ export async function hasBookingConflict(
     return taken >= capacity;
   }
 
-  const overlap = await prisma.booking.count({
+  const overlap = await db.booking.count({
     where: {
       shop,
       resourceId,
@@ -729,10 +731,11 @@ export async function isFree(
   startUtc: DateTime,
   endUtc: DateTime,
   service: CatalogService,
-  excludeBookingId = 0
+  excludeBookingId = 0,
+  db: DbClient = prisma
 ): Promise<boolean> {
-  if (await isBlockedByTimeOff(shop, resourceId, startUtc, endUtc, service)) return false;
-  return !(await hasBookingConflict(shop, resourceId, startUtc, endUtc, service, excludeBookingId));
+  if (await isBlockedByTimeOff(shop, resourceId, startUtc, endUtc, service, db)) return false;
+  return !(await hasBookingConflict(shop, resourceId, startUtc, endUtc, service, excludeBookingId, db));
 }
 
 /**
@@ -750,12 +753,13 @@ export async function hasRoomConflict(
   startUtc: DateTime,
   endUtc: DateTime,
   service: CatalogService,
-  excludeBookingId = 0
+  excludeBookingId = 0,
+  db: DbClient = prisma
 ): Promise<boolean> {
   const busyStart = startUtc.minus({ minutes: service.bufferBeforeMin }).toJSDate();
   const busyEnd = endUtc.plus({ minutes: service.bufferAfterMin }).toJSDate();
 
-  const overlap = await prisma.booking.count({
+  const overlap = await db.booking.count({
     where: {
       shop,
       roomId,
@@ -781,8 +785,9 @@ export async function isRoomFree(
   startUtc: DateTime,
   endUtc: DateTime,
   service: CatalogService,
-  excludeBookingId = 0
+  excludeBookingId = 0,
+  db: DbClient = prisma
 ): Promise<boolean> {
-  if (await isBlockedByTimeOff(shop, roomId, startUtc, endUtc, service)) return false;
-  return !(await hasRoomConflict(shop, roomId, startUtc, endUtc, service, excludeBookingId));
+  if (await isBlockedByTimeOff(shop, roomId, startUtc, endUtc, service, db)) return false;
+  return !(await hasRoomConflict(shop, roomId, startUtc, endUtc, service, excludeBookingId, db));
 }

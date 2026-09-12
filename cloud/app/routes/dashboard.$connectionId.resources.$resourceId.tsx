@@ -4,13 +4,13 @@ import type { Route } from "./+types/dashboard.$connectionId.resources.$resource
 import { Data, Settings } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { Field, Input, Toggle, CheckCard, TimezoneSelect, ConfirmDialog } from "~/components/ui";
-import { getPreset, useVocabulary, vocabFor } from "~/lib/presets";
-import { dashboardPreset } from "~/lib/dashboardMeta";
+import { templateCard, useVocabulary, vocabFor } from "~/lib/presets";
+import { dashboardTerms } from "~/lib/dashboardMeta";
 
 export const meta: Route.MetaFunction = ({ params, matches, data: loaderData }) => [
   {
     title: `${params.resourceId === "new" ? "Add" : "Edit"} ${
-      loaderData?.kind === "room" ? "room" : vocabFor(dashboardPreset(matches)).resourceOne
+      loaderData?.kind === "room" ? "room" : vocabFor(dashboardTerms(matches)).resourceOne
     } · GetBooqin`,
   },
 ];
@@ -72,16 +72,19 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // the moment one merely existed — onboarding's own step 2 already
   // *previewed* the business's hours from its industry preset and then
   // never carried them into the resource it creates (UX audit's #2
-  // finding). Seed a brand-new resource's schedule from that same preset
-  // instead of leaving every day unchecked; the merchant can still turn
-  // any day off before saving, same as always.
+  // finding). Seed a brand-new resource's schedule from the starter
+  // template this account signed up under instead of leaving every day
+  // unchecked; the merchant can still turn any day off before saving,
+  // same as always. `settings.preset` is a label, not a live setting
+  // (see core's presets.ts) — this is the one place left that reads it,
+  // and only to pick a plausible default week for a form.
   if (isNew) {
-    const preset = getPreset(settings.preset);
-    const [start, end] = preset.range.split("–");
+    const template = templateCard(settings.preset);
+    const [start, end] = template.range.split("–");
     for (let day = 0; day < 7; day++) {
-      // DAYS below is Sunday-first (index 0); preset.open is Monday-first.
-      const presetDay = day === 0 ? 6 : day - 1;
-      if (preset.open[presetDay]) scheduleByDay[day] = [{ startTime: start, endTime: end }];
+      // DAYS below is Sunday-first (index 0); template.open is Monday-first.
+      const templateDay = day === 0 ? 6 : day - 1;
+      if (template.open[templateDay]) scheduleByDay[day] = [{ startTime: start, endTime: end }];
     }
   }
 

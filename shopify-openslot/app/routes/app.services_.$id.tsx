@@ -268,18 +268,25 @@ export default function ServiceConfigForm() {
             </BlockStack>
           </Card>
 
-          <Card>
-            <BlockStack gap="200">
-              <ChoiceList
-                title="Add-ons offered for this service"
-                allowMultiple
-                choices={addons.map((a) => ({ label: a.name, value: String(a.id) }))}
-                selected={selectedAddons}
-                onChange={setSelectedAddons}
-              />
-              {addons.length === 0 && <p>No add-ons yet. Create one under Add-ons, then attach it here.</p>}
-            </BlockStack>
-          </Card>
+          {/* Only for an account that already has add-ons. The screens
+              that created them came out in Phase 1's trim, so a new
+              account can never populate this — rendering an empty card
+              telling it to "create one under Add-ons" would point at a
+              page that no longer exists. Existing add-ons stay attachable
+              and keep working. */}
+          {addons.length > 0 && (
+            <Card>
+              <BlockStack gap="200">
+                <ChoiceList
+                  title="Add-ons offered for this service"
+                  allowMultiple
+                  choices={addons.map((a) => ({ label: a.name, value: String(a.id) }))}
+                  selected={selectedAddons}
+                  onChange={setSelectedAddons}
+                />
+              </BlockStack>
+            </Card>
+          )}
 
           <InlineStack align="end">
             <Button variant="primary" onClick={handleSubmit} disabled={!productId}>Save</Button>

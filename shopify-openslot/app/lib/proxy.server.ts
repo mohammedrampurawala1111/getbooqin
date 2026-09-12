@@ -14,14 +14,11 @@ import { authenticate } from "~/shopify.server";
 import {
   Data,
   Bookings,
-  PaymentManager,
-  MeetingManager,
   Settings as CoreSettings,
   GetBooqinError,
 } from "getbooqin-core";
 
 type Settings = CoreSettings.Settings;
-type GatewayContext = PaymentManager.GatewayContext;
 
 // Thin compat wrapper — every App Proxy route still imports `getSettings`
 // with the pre-cutover single-arg shape from here; this is the one place
@@ -35,21 +32,11 @@ export async function proxyShop(request: Request): Promise<string> {
   return shop;
 }
 
-export function gatewayContext(shop: string, settings: Settings): GatewayContext {
-  return {
-    shop,
-    settings,
-    appProxyBase: `https://${shop}/apps/getbooqin`,
-    manageUrl: (booking: Booking) => Bookings.manageUrl(booking, settings),
-  };
-}
-
 export async function bookingPayload(shop: string, settings: Settings, booking: Booking) {
   const service = await Data.catalogService(shop, booking.serviceId);
   const resource = await Data.resource(shop, booking.resourceId);
   const customer = await Data.customer(shop, booking.customerId);
   const addons = await Data.bookingAddons(shop, booking.id);
-  const ctx = gatewayContext(shop, settings);
 
   return {
     uid: booking.uid,
@@ -74,18 +61,11 @@ export async function bookingPayload(shop: string, settings: Settings, booking: 
     manage_url: Bookings.manageUrl(booking, settings),
     can_cancel: Bookings.customerCanCancel(booking, settings),
     can_reschedule: Bookings.customerCanReschedule(booking, settings),
-    payment: {
-      status: booking.paymentStatus,
-      due: booking.amountDue,
-      due_html: booking.amountDue ? `${settings.currency_symbol}${booking.amountDue.toFixed(2)}` : "",
-      required: Bookings.needsPayment(booking),
-      gateways: Bookings.needsPayment(booking) ? PaymentManager.optionsFor(ctx) : [],
-    },
-    meeting: {
-      is_video: service?.locationType === "video",
-      url: MeetingManager.joinOpen(booking, settings) ? booking.meetingUrl : "",
-      ready: !!booking.meetingUrl,
-    },
+    // No `payment` or `meeting` block any more: merchant deposits and
+    // video-meeting provisioning both came out in Phase 1's trim, and the
+    // storefront widget's matching branches went with them. `is_video` is
+    // still a real property of a service, but with nothing left to
+    // provision a link there is no per-booking meeting state to report.
   };
 }
 

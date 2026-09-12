@@ -22,7 +22,7 @@ import { Bookings } from "getbooqin-core";
 import { Mailer } from "getbooqin-core";
 import { Settings } from "getbooqin-core";
 import { term, money } from "getbooqin-core/booking/settingsShared";
-import { TRANSITIONS, statusLabels, paymentStatusLabels, type BookingStatus } from "getbooqin-core/booking/bookingsShared";
+import { TRANSITIONS, statusLabels, type BookingStatus } from "getbooqin-core/booking/bookingsShared";
 import { GetBooqinError } from "getbooqin-core";
 import { BookingStatusMenu } from "~/components/BookingStatusMenu";
 
@@ -273,14 +273,6 @@ export default function BookingDetail() {
               <BlockStack gap="050">
                 <Text as="span" tone="subdued" variant="bodySm">Status</Text>
                 <Badge tone={statusTone(booking.status)}>{statusLabels()[booking.status as BookingStatus] ?? booking.status}</Badge>
-              </BlockStack>
-              <BlockStack gap="050">
-                <Text as="span" tone="subdued" variant="bodySm">Payment</Text>
-                <Text as="span">
-                  {booking.paymentStatus === "not_required"
-                    ? "No payment required"
-                    : `${paymentStatusLabels()[booking.paymentStatus] ?? booking.paymentStatus}${booking.amountDue ? ` — ${money(settings, booking.amountDue)}` : ""}`}
-                </Text>
               </BlockStack>
             </InlineStack>
           </BlockStack>

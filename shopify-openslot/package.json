@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",
+    "@sentry/node": "^10.74.0",
     "@shopify/app-bridge-react": "^4.1.6",
     "@shopify/polaris": "^13.9.0",
     "@shopify/shopify-app-react-router": "^2.0.0",

@@ -9,13 +9,12 @@
  * DB-touching module along. They are re-exported here too, for convenience.
  */
 import prisma from "../db.js";
-import { getPreset, PRESET_CONTROLLED_KEYS } from "./presets.js";
+import { defaultTerms, withDefaultTerms } from "./presets.js";
 import type { Settings } from "./settingsShared.js";
-import { PAYMENTS_ENABLED } from "./featureFlags.js";
 
-export type { Settings, GatewaySettings, VideoSettings, WhatsAppSettings, BookingRuleField, BookingRuleInput } from "./settingsShared.js";
+export type { Settings, BookingRuleField, BookingRuleInput } from "./settingsShared.js";
 export {
-  term, money, gatewaySetting, videoSetting, template,
+  term, money, template,
   BOOKING_RULE_LIMITS, validateBookingRules, cancelCutoffExceedsNotice, bookingWindowIsClosed,
 } from "./settingsShared.js";
 
@@ -33,7 +32,7 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
     currency_symbol: "$",
     timezone: "UTC",
 
-    terms: getPreset("generic").terms,
+    terms: defaultTerms(),
 
     slot_interval: 30,
     min_notice_hours: 2,
@@ -51,35 +50,11 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
     waitlist_enabled: false,
     waitlist_offer_window_hours: 4,
 
-    enabled_gateways: [],
-    gateways: {},
-    default_deposit: 100,
-
-    video_provider: "jitsi",
-    video: {},
-    video_join_window: 15,
-
     notify_customer: true,
     notify_admin: true,
     admin_email: adminEmail,
     reminder_enabled: true,
     reminder_hours: 24,
-
-    whatsapp_enabled: false,
-    whatsapp: {},
-
-    chat_enabled: true,
-    chat_position: "right",
-    chat_color: "#2563eb",
-    chat_title: "Chat with us",
-    chat_subtitle: "We usually reply in a few minutes",
-    chat_greeting: "Hi there! 👋 How can I help you today?",
-    chat_show_faq: true,
-    chat_show_booking: true,
-    chat_show_message: true,
-    chat_offline_note: "Leave your details and we will get back to you.",
-    chat_hide_pages: "",
-    chat_launcher_text: "Need help?",
 
     templates: {},
     template_enabled: {},
@@ -89,18 +64,12 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
     onboarding_completed: false,
     channel_setup_skipped: false,
 
-    // Every preset turned the Revenue & payment-status card on by default
-    // even though nothing on the account could ever be configured to
-    // populate it — Stripe wasn't even reachable (Defect Dossier's BQ-30
-    // finding). Only defaulted this way while the feature is genuinely
-    // unavailable; a shop can always re-enable it from the Business
-    // template's dashboard-layout picker once it connects a gateway.
-    hidden_overview_cards: PAYMENTS_ENABLED ? [] : ["revenue"],
-    customized_fields: [],
-
-    visit_summaries_enabled: false,
-    visit_summary_default_language: "auto",
-    visit_summary_consent_line: "",
+    // Overview cards this shop has switched off. "revenue" is no longer
+    // one of them — the card itself came out with merchant deposits in
+    // Phase 1's trim (Defect Dossier's BQ-30 finding was that same card
+    // showing zeroes for a gateway that was never reachable). Existing
+    // rows may still carry the key; nothing reads it any more.
+    hidden_overview_cards: [],
   };
 }
 
@@ -112,88 +81,33 @@ export async function getSettings(shop: string, platform = "shopify"): Promise<S
   const fallback = defaultSettings(shop, "");
   const merged: Settings = row ? { ...fallback, ...JSON.parse(row.data) } : fallback;
 
-  if (!merged.terms || Object.keys(merged.terms).length === 0) {
-    merged.terms = getPreset(merged.preset).terms;
-  }
+  // Read-time backfill, so a row written before vocabulary was editable
+  // (or one saved from a half-filled form) can never render an empty noun
+  // in a heading. scripts_backfill_terms.ts does the same thing once, at
+  // rest; this is the belt to its braces.
+  merged.terms = withDefaultTerms(merged.terms);
 
   return merged;
 }
 
-function valueChanged(a: unknown, b: unknown): boolean {
-  if (a === b) return false;
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return true;
-  return JSON.stringify(a) !== JSON.stringify(b);
-}
-
-// `fromPreset` is applyPreset()'s own escape hatch, not a merchant-facing
-// option: a normal save (settings form, onboarding) marks any
-// PRESET_CONTROLLED_KEYS whose value actually changes as customized, so a
-// later preset switch knows to leave that field alone. applyPreset()
-// already computed its own next `customized_fields` value (respecting
-// existing customizations, or clearing them under `force`) and passes it
-// through `values` — this flag just stops that from being reinterpreted as
-// "the merchant just customized these keys."
-//
-// Comparing values (not just checking which keys are present in `values`)
-// matters because at least one settings form submits its whole section on
-// every save — shopify-openslot's General tab always includes
-// slot_interval/min_notice_hours/etc. in the payload even when a merchant
-// only meant to change business_name. A presence check would have marked
-// every rule field "customized" on that app's very first save of anything,
-// silently defeating preset switching for it from day one.
+/**
+ * Merge-and-persist. Plain object merge since Phase 1's trim: the
+ * `fromPreset` escape hatch, the `customized_fields` bookkeeping and the
+ * per-key comparison against a preset's own defaults all existed to keep
+ * `applyPreset()` from silently overwriting a merchant's hand-edits when
+ * they switched industry template. Nothing applies a template to a live
+ * shop any more — STARTER_TEMPLATES is read once during onboarding and
+ * never again (see presets.ts) — so there is nothing left to protect a
+ * field from, and the whole "Preset default / Customized" concept went
+ * with it.
+ */
 export async function setSettings(
   shop: string,
   platform: string,
-  values: Partial<Settings>,
-  opts: { fromPreset?: boolean } = {}
+  values: Partial<Settings>
 ): Promise<Settings> {
   const current = await getSettings(shop, platform);
-
-  let customizedFields = current.customized_fields ?? [];
-  if (!opts.fromPreset) {
-    const touched = (Object.keys(values) as (keyof Settings)[]).filter(
-      (key) =>
-        (PRESET_CONTROLLED_KEYS as readonly string[]).includes(key as string) &&
-        valueChanged(values[key], current[key])
-    );
-    if (touched.length > 0) {
-      // Whether a touched field lands in or out of customizedFields is
-      // decided against the *preset's own default*, not just "did the
-      // value change" — a GetBooqin clinic audit finding (BR-05) set
-      // minimum notice to 3000, then back to its original preset value of
-      // 4, and the field stayed badged "Customized" through a full reload.
-      // The old code only ever added to this set on write and never
-      // re-evaluated it, so a field that happened to be edited back to its
-      // starting value was stuck reading as hand-edited forever — which
-      // matters beyond the badge itself, since the Business template page
-      // promises "switching templates only changes rules you haven't
-      // customized yet": a mis-flagged field permanently stopped following
-      // its preset with no reset control anywhere to undo it. Comparing
-      // against the preset's default (not `current`) means saving a value
-      // straight back to what the preset would have set un-customizes it
-      // automatically, and a value that only coincidentally matches some
-      // *other* preset's default (not this shop's own) still counts as a
-      // real customization.
-      // `generic`'s own preset.defaults deliberately omits every one of
-      // these fields except slot_interval — its values already equal
-      // defaultSettings()'s baseline (see settingsShared.ts's Settings
-      // header comment) — so a key a preset doesn't mention still needs a
-      // real baseline to compare against, not `undefined`, or reverting it
-      // to that baseline would never un-customize it either.
-      const presetDefaults = { ...defaultSettings(shop, ""), ...getPreset(current.preset).defaults } as Partial<Settings>;
-      const next = new Set(customizedFields);
-      for (const key of touched) {
-        if (valueChanged(values[key], presetDefaults[key])) {
-          next.add(key as string);
-        } else {
-          next.delete(key as string);
-        }
-      }
-      customizedFields = Array.from(next);
-    }
-  }
-
-  const merged: Settings = { ...current, ...values, customized_fields: values.customized_fields ?? customizedFields };
+  const merged: Settings = { ...current, ...values };
 
   await prisma.shopSettings.upsert({
     where: { platform_shop: { platform, shop } },
@@ -202,43 +116,4 @@ export async function setSettings(
   });
 
   return merged;
-}
-
-/**
- * Applies a preset's terms + rule defaults. Vocabulary (`terms`) always
- * updates — it is purely cosmetic and safe to reapply. Rule defaults only
- * overwrite fields the merchant has not already hand-edited (tracked via
- * `customized_fields`), so switching presets — or re-visiting onboarding —
- * can never silently discard a customization made after the last preset
- * apply. Pass `force: true` (an explicit "Reset to industry defaults"
- * action) to overwrite everything and clear that preset's customizations.
- */
-export async function applyPreset(
-  shop: string,
-  platform: string,
-  key: string,
-  opts: { force?: boolean } = {}
-): Promise<Settings> {
-  const preset = getPreset(key);
-  const current = await getSettings(shop, platform);
-  const customized = new Set(current.customized_fields ?? []);
-
-  const defaults = preset.defaults as Partial<Settings>;
-  const toApply: Partial<Settings> = {};
-  for (const field of Object.keys(defaults) as (keyof Settings)[]) {
-    if (opts.force || !customized.has(field)) {
-      (toApply as Record<string, unknown>)[field] = defaults[field];
-    }
-  }
-
-  const nextCustomized = opts.force
-    ? [...customized].filter((field) => !(field in defaults))
-    : [...customized];
-
-  return setSettings(
-    shop,
-    platform,
-    { preset: key, terms: preset.terms, ...toApply, customized_fields: nextCustomized },
-    { fromPreset: true }
-  );
 }

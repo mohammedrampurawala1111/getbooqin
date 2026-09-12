@@ -2,10 +2,7 @@
  * Wires up the cross-module event listeners once per server process.
  * Ported from shopify-openslot/app/lib/boot.server.ts.
  */
-import * as PaymentManager from "./paymentManager.js";
-import * as MeetingManager from "./meetingManager.js";
 import * as Mailer from "./mailer.js";
-import * as WhatsApp from "./whatsapp.js";
 import * as Waitlist from "./waitlist.js";
 
 declare global {
@@ -20,10 +17,7 @@ export function boot() {
   if (globalThis.getbooqinBooted) return;
   globalThis.getbooqinBooted = true;
 
-  PaymentManager.init();
-  MeetingManager.init();
   Mailer.init();
-  WhatsApp.init();
   Waitlist.init();
 }
 
