@@ -57,6 +57,31 @@ like a product bug:
    allowlist is empty. Global setup refuses to run without it, rather
    than letting that happen quietly.
 
+### ⚠️ The Clerk instance is shared with production
+
+`seedTenant()` writes to a **local** database and refuses any other, but
+that is not the whole story: it also creates a real user in the Clerk
+instance named by `CLERK_SECRET_KEY`, and that instance is the same one
+production uses. Clerk then fires `user.created` to **every** webhook
+registered against it — including production's — which creates a `User`
+row there too.
+
+This happened. 44 test users reached the production database this way
+before anyone noticed, and they persisted because `user.deleted` was
+unhandled, so tearing the Clerk user down left the row behind. Both
+halves are fixed — the webhook now removes a deleted user when nothing
+is attached to them — but the underlying hazard is structural and worth
+knowing about.
+
+**The real fix is a separate Clerk development instance for tests**, with
+its own secret key and no production webhook pointed at it. Until then,
+test users are prefixed `gb-e2e-` so they are always identifiable, and
+this finds any stragglers:
+
+```
+fly ssh console --app getbooqin -C "/usr/local/bin/node -e \"const{PrismaClient}=require('/repo/node_modules/@prisma/client');const p=new PrismaClient();p.user.count({where:{email:{startsWith:'gb-e2e-'}}}).then(n=>{console.log('stragglers:',n);process.exit(0)})\""
+```
+
 ### What it covers
 
 - Settings → Billing: the trial banner, usage meters, prices in the
