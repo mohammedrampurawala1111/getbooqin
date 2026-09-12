@@ -3,6 +3,9 @@ import type { Route } from "./+types/_index";
 import { getUserSession } from "~/session.server";
 import { LogoMark, PlanCard } from "~/components/onboarding";
 import { TEMPLATE_CARDS, INTEGRATIONS } from "~/lib/presets";
+import {
+  visiblePlans, priceFor, formatPrice, formatLimit, CURRENCY_SYMBOL, type Currency,
+} from "getbooqin-core/billing/plans";
 import { Badge, LegalFooter, LogoutButton, ThemeToggle } from "~/components/ui";
 
 export const meta: Route.MetaFunction = () => [
@@ -24,25 +27,46 @@ export async function loader({ request }: Route.LoaderArgs) {
   return { loggedIn: !!session };
 }
 
-const PLANS = [
-  {
-    name: "Starter", price: "$0", per: "/mo", featured: false, cta: "Start free", href: "/signup",
-    blurb: "For a single business finding its feet — with or without Shopify.",
-    features: ["1 connected store or manual setup", "Unlimited bookings", "Email reminders", "Shopify product sync"],
+/**
+ * The pricing section renders from `plans.ts` — the same table the
+ * server enforces and the checkout charges — rather than from a copy of
+ * the numbers kept here.
+ *
+ * It used to be a hand-written array quoting $0/$29/$79 against a
+ * product that charges ₹399/₹799, and it advertised "Deposits &
+ * payments" for a feature that no longer exists. A visitor seeing one
+ * price and being charged another is not a copy problem, and the only
+ * version of a fix that survives is one that cannot drift: a browser
+ * test now asserts this page's numbers against plans.ts.
+ */
+const MARKETING_COPY: Record<string, { blurb: string; extra: string[]; cta: string; href: string }> = {
+  free: {
+    blurb: "A real booking page for one person, free forever.",
+    extra: ["Public booking page", "Email confirmations & reminders", "Calendar and customer records"],
+    cta: "Start free",
+    href: "/signup",
   },
-  {
-    name: "Growth", price: "$29", per: "/mo", featured: true, cta: "Start free trial", href: "/signup",
-    blurb: "For a business juggling staff, resources and payments.",
-    features: ["Everything in Starter", "Unlimited staff & resources", "Rooms as bookable resources", "Group & class bookings"],
+  starter: {
+    blurb: "Take the badge off and put it on your own website.",
+    extra: ["Everything in Free", "Embed on your own site", "Waitlist with automatic offers"],
+    cta: "Start free trial",
+    href: "/signup",
   },
-  {
-    name: "Scale", price: "$79", per: "/mo", featured: false, cta: "Talk to us", href: "/support",
-    blurb: "For multiple locations under one account.",
-    features: ["Everything in Growth", "Unlimited connected stores", "Priority support", "Google Calendar sync (soon)"],
+  growth: {
+    blurb: "A team with roles, and your own email wording.",
+    extra: ["Everything in Starter", "Rooms as bookable resources", "Group & class bookings", "Shopify product sync"],
+    cta: "Start free trial",
+    href: "/signup",
   },
-];
+};
+
+/** Currencies a visitor can be quoted, matching what checkout can charge. */
+const MARKETING_CURRENCIES = ["INR", "USD", "EUR"] as const;
 
 export default function Home({ loaderData }: Route.ComponentProps) {
+  // INR first: GetBooqin is sold from India, and it is the currency with
+  // the best unit economics behind it (UPI AutoPay).
+  const [currency, setCurrency] = useState<Currency>("INR");
   const { loggedIn } = loaderData;
   const [navOpen, setNavOpen] = useState(false);
 
@@ -235,13 +259,52 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         <div className="mkt-wrap flex flex-col gap-8 py-20">
           <div className="flex max-w-[560px] flex-col gap-2">
             <h2 className="mkt-h2">Simple pricing</h2>
-            <p className="m-0 text-body text-ink-3">Start free. Upgrade when you need more staff or more stores.</p>
+            <p className="m-0 text-body text-ink-3">
+              Start free. Upgrade when you need more staff. Every plan includes the booking page, reminders and
+              your own vocabulary — the limits are what change.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {MARKETING_CURRENCIES.map((code) => (
+              <button
+                key={code}
+                type="button"
+                onClick={() => setCurrency(code)}
+                className={`rounded-full border px-[12px] py-[4px] text-meta ${currency === code ? "border-brand-500 bg-brand-50 text-brand-600" : "border-line text-ink-3"}`}
+              >
+                {CURRENCY_SYMBOL[code]} {code}
+              </button>
+            ))}
+            <span className="text-meta text-ink-3">· yearly is 2 months free</span>
           </div>
           <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-            {PLANS.map((plan) => (
-              <PlanCard key={plan.name} {...plan} />
-            ))}
+            {visiblePlans().map((plan) => {
+              const copy = MARKETING_COPY[plan.id];
+              const monthly = priceFor(plan.id, currency, "monthly");
+              return (
+                <PlanCard
+                  key={plan.id}
+                  name={plan.name}
+                  price={formatPrice(monthly?.amount ?? 0, currency)}
+                  per="/mo"
+                  featured={plan.id === "growth"}
+                  cta={copy?.cta ?? "Start free trial"}
+                  href={copy?.href ?? "/signup"}
+                  blurb={copy?.blurb ?? plan.blurb}
+                  features={[
+                    `${formatLimit(plan.limits.resources)} staff or rooms`,
+                    `${formatLimit(plan.limits.teamMembers)} team ${plan.limits.teamMembers === 1 ? "member" : "members"}`,
+                    `${formatLimit(plan.limits.bookingsPerMonth)} bookings a month`,
+                    ...(copy?.extra ?? []),
+                  ]}
+                />
+              );
+            })}
           </div>
+          <p className="m-0 max-w-[560px] text-meta text-ink-3">
+            Sold from India. Prices include tax. Outside India we sell to registered businesses only — see our{" "}
+            <a href="/legal/terms" className="mkt-link">terms</a>.
+          </p>
         </div>
       </section>
 
