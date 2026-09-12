@@ -57,8 +57,22 @@ export default function Terms({ loaderData }: Route.ComponentProps) {
       <p>
         Paid plans are billed in advance, monthly or yearly, in the currency shown at checkout, and renew
         automatically at the end of each period until cancelled. Payments are processed by Razorpay; we don't
-        store your card or mandate details. Prices are exclusive of any tax that applies to your purchase
-        unless stated otherwise at checkout.
+        store your card or mandate details.
+      </p>
+
+      <h2>Tax</h2>
+      <p>
+        GetBooqin is sold by a company registered in India. Prices shown include any tax that applies.
+      </p>
+      <p>
+        <strong>If your business is in India</strong>, Indian GST applies. You can add your GSTIN at checkout
+        if you want to claim input credit; it's optional, and you don't need one to subscribe.
+      </p>
+      <p>
+        <strong>If your business is outside India</strong>, the sale is a zero-rated export of services. We
+        sell only to registered businesses outside India, so we ask for your VAT or business tax number at
+        checkout and can't complete a subscription without one. If you're in the EU, the reverse charge
+        applies and the VAT is yours to account for, not ours — your tax number is what evidences that.
       </p>
       <p>
         We'll give at least 30 days' notice before increasing the price of a plan you're already on. A price

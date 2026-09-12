@@ -28,6 +28,7 @@
  */
 import prisma from "../db.js";
 import { applyProviderState } from "./subscriptions.js";
+import { sendPaymentFailed, sendPaymentFailedFinal } from "./emails.js";
 import type { BillingProvider, NormalisedEvent } from "./providers/provider.js";
 
 export type WebhookOutcome =
@@ -160,6 +161,23 @@ export async function handleWebhook(
     }
 
     await prisma.billingEvent.update({ where: { id: recordId }, data: { processedAt: new Date() } });
+
+    // Dunning. Fired after the state change and deliberately not
+    // awaited into the webhook's own success: the provider is waiting on
+    // this response, and a slow or failing SMTP relay must not turn a
+    // correctly-applied event into a 500 and a retry — which would then
+    // re-send the same email on every retry. The state change is the
+    // part that has to be right; the email is best-effort by design.
+    if (status === "past_due" && event.plan !== null) {
+      const notify =
+        event.type === "payment_failed_final"
+          ? sendPaymentFailedFinal(connectionId, event.plan, event.currentPeriodEnd)
+          : sendPaymentFailed(connectionId, event.plan, event.currentPeriodEnd);
+      void notify.catch((err) =>
+        console.error(`[getbooqin billing] dunning email failed for ${connectionId}:`, err)
+      );
+    }
+
     return { ok: true, status: "applied", type: event.type, connectionId };
   } catch (err) {
     // Left unprocessed and with its error on the record, so it shows up

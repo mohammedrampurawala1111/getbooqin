@@ -510,6 +510,28 @@ function appUrl(): string {
  * the fresh token, so a resend's email always carries the link that's
  * actually still valid.
  */
+/**
+ * Billing mail — dunning.
+ *
+ * Like sendTeamInvite below, deliberately **not** a customizable
+ * TemplateDef. A merchant editing the wording of "your payment failed"
+ * makes no sense: this is our message to them about their account, not
+ * their message to their customers. TEMPLATE_DEFS is for the latter.
+ *
+ * Exported as one function taking pre-resolved copy so the billing layer
+ * owns the words and this module stays the transport — core/src/billing
+ * must not import "email notifications" wholesale to send one.
+ */
+export async function sendBillingNotice(
+  connection: Connection,
+  to: string,
+  subject: string,
+  body: string
+): Promise<void> {
+  const settings = await getSettings(connection.shop, connection.platform);
+  await mail(to, subject, body, settings);
+}
+
 export async function sendTeamInvite(connection: Connection, invite: ConnectionInvite, inviterEmail: string): Promise<void> {
   const settings = await getSettings(connection.shop, connection.platform);
   const businessName = settings.business_name || connection.shop;

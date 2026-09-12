@@ -65,12 +65,48 @@ describe("parsePlanSelection()", () => {
   });
 });
 
+describe("tax identity", () => {
+  it("requires a country", async () => {
+    await subscribe({ plan: "free", status: "free" });
+    await expect(startCheckout({ connectionId, plan: "growth", cycle: "monthly" })).rejects.toMatchObject({
+      code: "getbooqin_tax_identity",
+    });
+  });
+
+  it("requires a tax number outside India — it is the evidence this is a B2B export", async () => {
+    // Without it we would be a non-EU supplier selling to an EU
+    // consumer, which triggers non-Union OSS registration from the very
+    // first euro.
+    await subscribe({ plan: "free", status: "free", currency: "EUR" });
+    await expect(
+      startCheckout({ connectionId, country: "NL", plan: "growth", cycle: "monthly" })
+    ).rejects.toMatchObject({ code: "getbooqin_tax_identity" });
+  });
+
+  it("does not require a GSTIN from an Indian customer", async () => {
+    // Plenty of legitimate Indian businesses are below the registration
+    // threshold. Blocking them would be wrong.
+    await subscribe({ plan: "free", status: "free" });
+    await expect(startCheckout({ connectionId, country: "IN", plan: "growth", cycle: "monthly" }))
+      .rejects.not.toMatchObject({ code: "getbooqin_tax_identity" });
+  });
+
+  it("state guards answer before tax validation does", async () => {
+    // "You're already on this plan" is a more useful answer than "enter
+    // your VAT number" for someone who double-submitted.
+    await subscribe({ plan: "growth", status: "active", billingCycle: "monthly" });
+    await expect(startCheckout({ connectionId, plan: "growth", cycle: "monthly" })).rejects.toMatchObject({
+      code: "getbooqin_already_subscribed",
+    });
+  });
+});
+
 describe("startCheckout() refusals", () => {
   it("refuses a second mandate for the plan already being paid for", async () => {
     // A re-submitted form, or a double-click, must not create a second
     // recurring debit alongside the live one.
     await subscribe({ plan: "growth", status: "active", billingCycle: "monthly" });
-    await expect(startCheckout({ connectionId, plan: "growth", cycle: "monthly" })).rejects.toMatchObject({
+    await expect(startCheckout({ connectionId, country: "IN", plan: "growth", cycle: "monthly" })).rejects.toMatchObject({
       code: "getbooqin_already_subscribed",
       status: 409,
     });
@@ -78,7 +114,7 @@ describe("startCheckout() refusals", () => {
 
   it("refuses even while past_due — the mandate is still live", async () => {
     await subscribe({ plan: "growth", status: "past_due", billingCycle: "monthly" });
-    await expect(startCheckout({ connectionId, plan: "growth", cycle: "monthly" })).rejects.toMatchObject({
+    await expect(startCheckout({ connectionId, country: "IN", plan: "growth", cycle: "monthly" })).rejects.toMatchObject({
       code: "getbooqin_already_subscribed",
     });
   });
@@ -88,7 +124,7 @@ describe("startCheckout() refusals", () => {
     // the guard and fails at the provider call instead, which is proof
     // the refusal isn't what stopped it.
     await subscribe({ plan: "growth", status: "active", billingCycle: "monthly" });
-    await expect(startCheckout({ connectionId, plan: "growth", cycle: "yearly" }))
+    await expect(startCheckout({ connectionId, country: "IN", plan: "growth", cycle: "yearly" }))
       .rejects.not.toMatchObject({ code: "getbooqin_already_subscribed" });
   });
 
@@ -96,7 +132,7 @@ describe("startCheckout() refusals", () => {
     // `business` ships defined-but-invisible; reaching it by posting the
     // form directly shouldn't work.
     await subscribe({ plan: "free", status: "free" });
-    await expect(startCheckout({ connectionId, plan: "business", cycle: "monthly" })).rejects.toMatchObject({
+    await expect(startCheckout({ connectionId, country: "IN", plan: "business", cycle: "monthly" })).rejects.toMatchObject({
       code: "getbooqin_plan_unavailable",
       status: 403,
     });
@@ -104,13 +140,13 @@ describe("startCheckout() refusals", () => {
 
   it("allows a hidden tier once an admin has actually put the account on it", async () => {
     await subscribe({ plan: "business", status: "active", billingCycle: "monthly" });
-    await expect(startCheckout({ connectionId, plan: "business", cycle: "yearly" }))
+    await expect(startCheckout({ connectionId, country: "IN", plan: "business", cycle: "yearly" }))
       .rejects.not.toMatchObject({ code: "getbooqin_plan_unavailable" });
   });
 
   it("surfaces a provider failure as a 502 without leaking vendor detail to the merchant", async () => {
     await subscribe({ plan: "free", status: "free" });
-    await expect(startCheckout({ connectionId, plan: "growth", cycle: "monthly" })).rejects.toMatchObject({
+    await expect(startCheckout({ connectionId, country: "IN", plan: "growth", cycle: "monthly" })).rejects.toMatchObject({
       code: "getbooqin_checkout_failed",
       status: 502,
     });
@@ -120,7 +156,7 @@ describe("startCheckout() refusals", () => {
     // The whole design rests on nothing but the webhook granting a
     // plan. A failed checkout must leave the row exactly as it was.
     await subscribe({ plan: "free", status: "free" });
-    await startCheckout({ connectionId, plan: "growth", cycle: "monthly" }).catch(() => {});
+    await startCheckout({ connectionId, country: "IN", plan: "growth", cycle: "monthly" }).catch(() => {});
     const row = await prisma.subscription.findUnique({ where: { connectionId } });
     expect(row?.plan).toBe("free");
     expect(row?.status).toBe("free");

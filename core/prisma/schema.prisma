@@ -733,6 +733,31 @@ model Subscription {
   // monthly|yearly
   billingCycle String @default("monthly")
 
+  // --- Tax identity -------------------------------------------------
+  // GetBooqin sells from an Indian registered entity, so there are
+  // exactly two treatments and which one applies is decided by where
+  // the customer is:
+  //
+  //   india_gst          — a domestic sale. Indian GST applies.
+  //                        `taxId` is the customer's GSTIN when they
+  //                        have one (a business claiming input credit);
+  //                        blank is legitimate for an unregistered one.
+  //   export_zero_rated  — a customer outside India. Export of services
+  //                        is zero-rated under Indian GST, and for an EU
+  //                        business the reverse charge makes it their
+  //                        VAT to account for, not ours. `taxId` is
+  //                        their VAT/business number and is **required**:
+  //                        it is the evidence that this is a B2B export
+  //                        rather than a consumer sale, which is what
+  //                        keeps us out of EU OSS registration.
+  //
+  // ISO-3166 alpha-2, captured at checkout rather than derived — the
+  // billing currency is a guess from settings, and a tax position must
+  // not rest on a guess.
+  taxCountry String @default("")
+  taxId      String @default("")
+  taxStatus  String @default("")
+
   providerCustomerId     String?
   providerSubscriptionId String? @unique
 

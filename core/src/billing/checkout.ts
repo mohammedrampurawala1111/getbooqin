@@ -19,6 +19,7 @@ import { entitlementsFor } from "./entitlements.js";
 import { createSubscription, cancelSubscription, providerPlanId } from "./providers/razorpay.js";
 import { ensureSubscription } from "./subscriptions.js";
 import { getSettings } from "../booking/settings.js";
+import { validateTaxIdentity, type TaxIdentity } from "./tax.js";
 import {
   PLANS,
   planRank,
@@ -88,8 +89,11 @@ export async function startCheckout(args: {
   connectionId: string;
   plan: PlanId;
   cycle: BillingCycle;
+  country?: string | null;
+  taxId?: string | null;
 }): Promise<CheckoutStart> {
   const { connectionId } = args;
+
 
   const existing = await ensureSubscription(connectionId);
   const entitlements = await entitlementsFor(connectionId);
@@ -124,6 +128,23 @@ export async function startCheckout(args: {
     (entitlements.status === "active" || entitlements.status === "past_due")
   ) {
     throw new GetBooqinError("getbooqin_already_subscribed", `You're already on ${PLANS[args.plan].name}.`, 409);
+  }
+
+  // Tax identity, after the state guards above and before anything is
+  // created at the provider. Deliberately not first: telling a merchant
+  // who is already subscribed to "enter your VAT number" is a worse
+  // answer than telling them they're already subscribed, and the state
+  // checks are about whether this action makes sense at all.
+  //
+  // GetBooqin sells from an Indian entity, so outside India this is a
+  // zero-rated B2B export and the customer's tax number is the evidence
+  // for it — selling to an EU *consumer* instead triggers non-Union OSS
+  // registration from the first euro, with no threshold. Captured rather
+  // than derived: the billing currency is a guess from the shop's
+  // settings, and a tax position must not rest on a guess.
+  const tax = validateTaxIdentity({ country: args.country, taxId: args.taxId });
+  if (!tax.identity) {
+    throw new GetBooqinError("getbooqin_tax_identity", tax.problems[0]!.message, 400);
   }
 
   if (providerForCurrency(currency) !== "razorpay") {
@@ -173,7 +194,13 @@ export async function startCheckout(args: {
   // change: nothing has been paid.
   await prisma.subscription.update({
     where: { connectionId },
-    data: { providerSubscriptionId: created.providerSubscriptionId, billingProvider: "razorpay" },
+    data: {
+      providerSubscriptionId: created.providerSubscriptionId,
+      billingProvider: "razorpay",
+      taxCountry: tax.identity.country,
+      taxId: tax.identity.taxId,
+      taxStatus: tax.identity.status,
+    },
   });
 
   return {

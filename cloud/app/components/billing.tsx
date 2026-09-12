@@ -38,6 +38,7 @@ export interface BillingView {
   usage: Record<string, number>;
   /** "{plan}:{cycle}" -> can it actually be charged in this currency right now. */
   sellable: Record<string, boolean>;
+  tax: { country: string; taxId: string; note: string };
   overrides: { key: string; value: string; reason: string; expiresAt: string | null }[];
 }
 
@@ -138,6 +139,12 @@ export function BillingPage({ billing, error }: { billing: BillingView; error?: 
   const [cycle, setCycle] = useState<BillingCycle>(billing.billingCycle === "monthly" ? "monthly" : "yearly");
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
+  const [country, setCountry] = useState(billing.tax.country);
+  const [taxId, setTaxId] = useState(billing.tax.taxId);
+  // GetBooqin sells from an Indian entity: India is a domestic GST
+  // supply, everywhere else is a zero-rated B2B export — and the tax
+  // number is what evidences the "B2B" half.
+  const isExport = country.trim().toUpperCase() !== "IN";
   const features = new Set(billing.features as FeatureKey[]);
   const overCaps = LIMIT_KEYS.filter((key) => {
     const cap = billing.limits[key];
@@ -292,6 +299,10 @@ export function BillingPage({ billing, error }: { billing: BillingView; error?: 
                     <input type="hidden" name="_section" value="billing_upgrade" />
                     <input type="hidden" name="plan" value={id} />
                     <input type="hidden" name="cycle" value={cycle} />
+                    {/* Carried from the shared fields below, so the
+                        merchant fills them in once rather than per card. */}
+                    <input type="hidden" name="country" value={country} />
+                    <input type="hidden" name="tax_id" value={taxId} />
                     <button type="submit" disabled={busy} className={`w-full ${isUpgrade ? "btn-pri" : "btn-sec"}`}>
                       {busy ? "Starting…" : isUpgrade ? `Upgrade to ${plan.name}` : `Switch to ${plan.name}`}
                     </button>
@@ -301,6 +312,39 @@ export function BillingPage({ billing, error }: { billing: BillingView; error?: 
             );
           })}
         </div>
+        {/* Asked once, above the plan cards, rather than per card. */}
+        <div className="flex flex-col gap-2 border-t border-row px-[18px] py-[14px]">
+          <span className="text-body font-medium">Billing details</span>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <label className="flex flex-col gap-1 text-[12px] text-muted">
+              Country your business is registered in
+              <input
+                className="input w-full min-w-0"
+                value={country}
+                onChange={(e) => setCountry(e.target.value.toUpperCase().slice(0, 2))}
+                placeholder="IN"
+                maxLength={2}
+                aria-label="Country code"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[12px] text-muted">
+              {isExport ? "VAT / business tax number" : "GSTIN (optional)"}
+              <input
+                className="input w-full min-w-0"
+                value={taxId}
+                onChange={(e) => setTaxId(e.target.value.toUpperCase())}
+                placeholder={isExport ? "NL123456789B01" : "27AAPFU0939F1ZV"}
+                aria-label="Tax number"
+              />
+            </label>
+          </div>
+          <p className="m-0 text-[11.5px] text-subtle">
+            {isExport
+              ? "We sell to registered businesses outside India. Your tax number makes this a zero-rated export — if you're in the EU, VAT is accounted for by you under the reverse charge."
+              : "Indian GST applies. A GSTIN is optional and only needed if you want to claim input credit."}
+          </p>
+        </div>
+
         <div className="card-footer flex-col items-start gap-2">
           <span className="text-meta text-muted">
             You'll be taken to Razorpay to authorise the payment. Your plan changes once the first payment clears,

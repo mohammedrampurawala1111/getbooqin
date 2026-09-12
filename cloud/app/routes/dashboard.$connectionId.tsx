@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { data, Outlet, NavLink, useLocation, useLoaderData, useParams, useRouteError, isRouteErrorResponse } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId";
-import { Settings, Bookings, ensureSlug } from "getbooqin-core";
+import { Settings, Bookings, Entitlements, ensureSlug } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { tenantSelectHeaders, getClerkClient } from "~/session.server";
 import { UserMenu } from "~/components/account";
@@ -13,6 +13,35 @@ import { getAppUrl } from "~/lib/env.server";
 // connection (same { shop, platform, userId, connectionId } shape the
 // embedded Shopify admin's authenticate.admin() produces), then renders a
 // nav + <Outlet/> for every booking-workflow screen nested under this route.
+/**
+ * The one billing thing worth interrupting a merchant for, or null.
+ *
+ * Deliberately at most one, and only when there is something to *do*.
+ * A banner on every page for a trial that ends in three weeks is
+ * furniture; people learn to look past it, and then miss the one that
+ * mattered.
+ */
+async function billingNotice(connectionId: string) {
+  const ent = await Entitlements.entitlementsFor(connectionId);
+
+  if (ent.inGrace) {
+    return {
+      tone: "danger" as const,
+      text: "A payment didn't go through. Your plan is still fully active while we retry — update your payment method to avoid interruption.",
+      cta: "Fix payment",
+    };
+  }
+  if (ent.status === "trialing" && (ent.trialDaysLeft ?? 99) <= 7) {
+    const days = ent.trialDaysLeft ?? 0;
+    return {
+      tone: "warn" as const,
+      text: `Your free trial ends ${days === 0 ? "today" : `in ${days} day${days === 1 ? "" : "s"}`}. Nothing is deleted when it does — the account moves to Free and its limits apply.`,
+      cta: "See plans",
+    };
+  }
+  return null;
+}
+
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { connection, shop, platform, role } = await requireTenant(request, params.connectionId);
   const settings = await Settings.getSettings(shop, platform);
@@ -100,7 +129,12 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     // nav link is hidden for them here so it doesn't dead-end (orchestrator
     // decision on Settings access, §2). Named distinctly from `role` inside
     // `user` below, which is the unrelated Account-page "job title" label.
-    { connection, channelCount, pendingCount, label, terms: settings.terms, bookingHandle, bookingUrl, canViewSettings: role === "owner" || role === "admin", user: { name, email, initials, role: jobTitle } },
+    { connection, channelCount, pendingCount, label, terms: settings.terms, bookingHandle, bookingUrl,
+      // Billing state, on every dashboard page rather than only on the
+      // Billing screen. A failed payment that is only visible somewhere
+      // a merchant has no reason to visit is not a notification — and
+      // the whole point of the grace period is that they act inside it.
+      billingNotice: await billingNotice(connection.id), canViewSettings: role === "owner" || role === "admin", user: { name, email, initials, role: jobTitle } },
     { headers: tenantSelectHeaders(tenantSession) }
   );
 }
@@ -263,6 +297,9 @@ function DashboardShell({
   loaderData, params, children,
 }: { loaderData: Route.ComponentProps["loaderData"]; params: { connectionId: string }; children: ReactNode }) {
   const { channelCount, pendingCount, label, terms, bookingHandle, bookingUrl, canViewSettings, user } = loaderData;
+  // ErrorBoundary renders this shell too, from a loaderData that may not
+  // carry billing state — so read it defensively rather than destructure.
+  const notice = (loaderData as { billingNotice?: { tone: "danger" | "warn"; text: string; cta: string } | null }).billingNotice ?? null;
   const v = vocabFor(terms);
   const NAV_ITEMS = navItems(v, pendingCount, canViewSettings);
   const base = `/dashboard/${params.connectionId}`;
@@ -405,7 +442,23 @@ function DashboardShell({
             landmark; a second, nested one is itself an accessibility
             violation (only one <main> per document). */}
         <div className="min-w-0 flex-1">
-          <div className="page">{children}</div>
+          <div className="page">
+            {notice && (
+              <div
+                className={`mb-[14px] flex flex-wrap items-center justify-between gap-3 rounded-[10px] px-[15px] py-[11px] text-[12.5px] ${notice.tone === "danger" ? "bg-danger-bg text-danger" : "bg-warn-bg text-warn"}`}
+                role="status"
+              >
+                <span className="min-w-0">{notice.text}</span>
+                <a
+                  href={`/dashboard/${params.connectionId}/settings?page=billing`}
+                  className="shrink-0 font-semibold underline"
+                >
+                  {notice.cta}
+                </a>
+              </div>
+            )}
+            {children}
+          </div>
         </div>
       </div>
     </div>

@@ -49,6 +49,8 @@ export * as Subscriptions from "./billing/subscriptions.js";
 export * as Billing from "./billing/enforcement.js";
 export * as BillingWebhooks from "./billing/webhooks.js";
 export * as Checkout from "./billing/checkout.js";
+export * as BillingEmails from "./billing/emails.js";
+export * as Tax from "./billing/tax.js";
 
 // Platform admin console (§W8) — internal-only, above all accounts.
 // Never renders tenant booking data; see admin/accounts.ts.

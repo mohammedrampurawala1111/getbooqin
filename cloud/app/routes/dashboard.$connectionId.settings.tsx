@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Form, redirect, useFetcher, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.settings";
-import { Settings, Data, Mailer, Team, Entitlements, Billing, Checkout, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
+import { Settings, Data, Mailer, Team, Entitlements, Billing, Checkout, Subscriptions, Tax, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
 // Client-safe subpath for the two rule-checks the component below calls at
 // render time — importing these off the main `Settings` namespace instead
 // would pull core's *entire* barrel (nodemailer, the Razorpay/Shopify HMAC
@@ -144,6 +144,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // upgrade path until the payment rails go in (2c), and a button that
   // 404s is worse than a plan you can see but not yet change.
   const entitlements = await Entitlements.entitlementsFor(connection.id);
+  const subscriptionRow = await Subscriptions.get(connection.id);
   // What the merchant would actually be billed in, not what the row
   // happens to say — a subscription that has never paid has a currency
   // nobody has decided yet, and showing USD prices to a shop that will
@@ -162,6 +163,13 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       cancelAtPeriodEnd: entitlements.cancelAtPeriodEnd,
       currency: billingCurrency,
       sellable: Checkout.sellablePrices(billingCurrency),
+      // Pre-filled from whatever the account already told us, so a
+      // returning merchant isn't asked twice.
+      tax: {
+        country: subscriptionRow?.taxCountry || (billingCurrency === "INR" ? "IN" : ""),
+        taxId: subscriptionRow?.taxId ?? "",
+        note: Tax.taxNote(subscriptionRow?.taxStatus ?? "", subscriptionRow?.taxCountry ?? ""),
+      },
       billingCycle: entitlements.billingCycle,
       inGrace: entitlements.inGrace,
       features: [...entitlements.features],
@@ -310,7 +318,13 @@ export async function action({ request, params }: Route.ActionArgs) {
     // (see core/src/billing/checkout.ts).
     try {
       const { plan, cycle } = Checkout.parsePlanSelection(form.get("plan"), form.get("cycle"));
-      const started = await Checkout.startCheckout({ connectionId: params.connectionId!, plan, cycle });
+      const started = await Checkout.startCheckout({
+        connectionId: params.connectionId!,
+        plan,
+        cycle,
+        country: String(form.get("country") ?? ""),
+        taxId: String(form.get("tax_id") ?? ""),
+      });
       // A 303 so the browser re-issues as GET — a POST redirected to
       // Razorpay's page would be re-submitted on back-navigation.
       throw redirect(started.approvalUrl, 303);
