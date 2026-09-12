@@ -505,24 +505,45 @@ export function ErrorBoundary() {
   const params = useParams<{ connectionId: string }>();
   const loaderData = useLoaderData<typeof loader>();
   const notFound = isRouteErrorResponse(error) && error.status === 404;
+  // 402 is the plan gates' status, and it is never a crash — it is a
+  // merchant being told, correctly, that something is on a higher plan.
+  // Handling it here is the safety net: a route that forgets to catch a
+  // gate still says something true and actionable instead of
+  // "something went wrong".
+  const planGated = isRouteErrorResponse(error) && error.status === 402;
 
-  if (import.meta.env.DEV && !notFound) {
+  if (import.meta.env.DEV && !notFound && !planGated) {
     console.error(error);
   }
 
   const body = (
     <div className="flex flex-col items-center gap-3 px-4 py-16 text-center">
-      <h1 className="page-title">{notFound ? "Page not found" : "Something went wrong"}</h1>
+      <h1 className="page-title">
+        {planGated ? "Not on your plan" : notFound ? "Page not found" : "Something went wrong"}
+      </h1>
       <p className="m-0 max-w-[360px] text-body text-muted">
-        {notFound
-          ? "That page doesn't exist or may have moved."
-          : "An unexpected error occurred. Try again, or head back to the overview."}
+        {planGated
+          ? String(error.data || "That feature isn't included in your current plan.")
+          : notFound
+            ? "That page doesn't exist or may have moved."
+            : "An unexpected error occurred. Try again, or head back to the overview."}
       </p>
+      {planGated && loaderData && (
+        <a
+          href={`/dashboard/${params.connectionId}/settings?page=billing`}
+          className="btn-pri mt-1 no-underline hover:no-underline"
+        >
+          See plans
+        </a>
+      )}
       {/* loaderData missing (checked below) means this route's own id was
           never a real connection to link back to — /dashboard is the one
           link that always resolves, to whatever active connection this
           account actually has. */}
-      <a href={loaderData ? `/dashboard/${params.connectionId}` : "/dashboard"} className="btn-pri mt-2 no-underline hover:no-underline">
+      <a
+        href={loaderData ? `/dashboard/${params.connectionId}` : "/dashboard"}
+        className={`${planGated ? "btn-sec" : "btn-pri"} mt-2 no-underline hover:no-underline`}
+      >
         Back to Overview
       </a>
     </div>

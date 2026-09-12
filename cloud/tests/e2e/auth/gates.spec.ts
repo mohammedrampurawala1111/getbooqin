@@ -114,3 +114,31 @@ test.describe("email template editing", () => {
     await expect(page.getByRole("heading", { name: "Notifications" }).first()).toBeVisible();
   });
 });
+
+test.describe("a refused gate is explained, never a 500", () => {
+  // The bug this guards: GetBooqinError is a plain Error, so an uncaught
+  // one becomes a generic 500 — "something went wrong" to a merchant
+  // whose actual problem is "this is on a higher plan". It shipped, and
+  // the only thing that caught it was a browser test.
+  test("hitting the resource limit says which plan allows more", async ({ page }) => {
+    await setPlan(tenant, "free"); // 1 resource, and the fixture already has one
+    await signInAs(page, tenant);
+    await page.goto(`/dashboard/${tenant.connectionId}/resources/new`);
+
+    await page.getByLabel(/name/i).first().fill("Second practitioner");
+    await page.getByRole("button", { name: /save|create/i }).first().click();
+
+    const body = page.locator("body");
+    await expect(body).toContainText(/Free plan includes 1/i);
+    await expect(body).toContainText(/Starter/i);
+    // The failure mode being guarded against.
+    await expect(body).not.toContainText("Something went wrong");
+  });
+
+  test("the export route's 402 is a 402, not a 500", async ({ page }) => {
+    await setPlan(tenant, "free");
+    await signInAs(page, tenant);
+    const response = await page.request.get(`/dashboard/${tenant.connectionId}/bookings/export.csv`);
+    expect(response.status(), "a plan gate must never surface as a server error").toBe(402);
+  });
+});

@@ -11,6 +11,7 @@ import {
   isValidShopDomain,
   verifyCallbackHmac,
   verifyOAuthState,
+  isGetBooqinError,
 } from "getbooqin-core";
 import { starterTemplate } from "~/lib/presets";
 import { getUserSession, ensureUserRow } from "~/session.server";
@@ -48,6 +49,14 @@ export async function loader({ request }: Route.LoaderArgs) {
   } catch (error) {
     if (error instanceof ShopAlreadyConnectedError) {
       throw data(`${shop} is already connected to a different GetBooqin account.`, { status: 409 });
+    }
+    // The businesses limit and the `shopify` feature both fire here. A
+    // plain Error would render this OAuth callback as a 500 — the least
+    // recoverable place to lose the reason, since the merchant has just
+    // come back from Shopify and has nothing to retry. Re-thrown as a
+    // route error so the status is honest and the message survives.
+    if (isGetBooqinError(error)) {
+      throw data(error.message, { status: error.status });
     }
     throw error;
   }

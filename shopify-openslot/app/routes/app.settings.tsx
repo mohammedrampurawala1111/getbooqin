@@ -18,7 +18,7 @@ import {
   Badge,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
-import { Settings as Backend } from "getbooqin-core";
+import { Settings as Backend, isGetBooqinError } from "getbooqin-core";
 import { Mailer } from "getbooqin-core";
 
 function slugify(label: string): string {
@@ -109,6 +109,13 @@ export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
   const section = String(form.get("_section"));
 
+  // One catch for every section. Editing notification *wording* is a
+  // plan feature (core's setSettings gates `templates`), and without
+  // this a merchant on a plan without it gets Shopify's generic error
+  // screen instead of being told which plan includes it. The cloud
+  // dashboard writes the same field and has always handled this; this
+  // screen is the other writer.
+  try {
   if (section === "general") {
     await Backend.setSettings(shop, "shopify", {
       business_name: String(form.get("business_name") || ""),
@@ -166,6 +173,10 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     await Backend.setSettings(shop, "shopify", { widget_text: widgetText });
     return { ok: true };
+  }
+
+  } catch (err) {
+    return { ok: false, error: isGetBooqinError(err) ? err.message : "Something went wrong." };
   }
 
   return { ok: false };

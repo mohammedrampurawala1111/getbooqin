@@ -3,7 +3,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { redirect, useLoaderData, useNavigate, useSubmit, Form } from "react-router";
 import { Page, Card, BlockStack, FormLayout, TextField, Checkbox, Button, InlineStack, Text, ChoiceList } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
-import { Data } from "getbooqin-core";
+import { Data, isGetBooqinError } from "getbooqin-core";
 import { Settings } from "getbooqin-core";
 import { term, money } from "getbooqin-core/booking/settingsShared";
 
@@ -43,10 +43,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
     if (enabled && start && end) schedule.push({ day, start, end });
   }
 
-  await Data.saveResource(
-    shop,
-    "shopify",
-    {
+  // The resources limit fires here on create. Returned as data rather
+  // than thrown so the form keeps its values — a merchant who has just
+  // typed a name, hours and service assignments should not lose them to
+  // an error page.
+  try {
+    await Data.saveResource(
+      shop,
+      "shopify",
+      {
       name: String(form.get("name") || ""),
       title: String(form.get("title") || ""),
       email: String(form.get("email") || ""),
@@ -58,8 +63,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
       schedule,
       service_ids: serviceIds,
     },
-    id
-  );
+      id
+    );
+  } catch (err) {
+    if (isGetBooqinError(err)) return { ok: false, error: err.message };
+    throw err;
+  }
 
   return redirect("/app/resources");
 }

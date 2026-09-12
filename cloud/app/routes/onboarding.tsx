@@ -8,7 +8,7 @@ import { INTEGRATIONS, starterTemplate, templateCard, vocabFor, SERVICE_SWATCHES
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 import { CURRENCIES, guessCurrency } from "~/lib/currency";
 import { getAppUrl } from "~/lib/env.server";
-import { Data, Settings, Team, createManualConnection, getUserConnection, listUserConnections } from "getbooqin-core";
+import { Data, Settings, Team, createManualConnection, getUserConnection, listUserConnections, isGetBooqinError } from "getbooqin-core";
 
 // Two ways to leave this wizard with a working account: connect a real
 // Shopify store (ShopifyConnectForm below — answers ride through the OAuth
@@ -288,9 +288,20 @@ export async function action({ request }: Route.ActionArgs) {
   const form = await request.formData();
   const intent = String(form.get("_intent") || "");
 
-  if (intent === "step1") return handleStep1(session.userId, form);
-  if (intent === "step2") return handleStep2(session.userId, form);
-  if (intent === "golive") return handleGoLive(session.userId, form);
+  // One catch for all three steps rather than three. Onboarding can hit
+  // a plan limit for real — a user who already has a business and is
+  // creating a second on a one-location plan — and an uncaught
+  // GetBooqinError would render that as a 500 in the middle of signup,
+  // which is the worst possible place to say "something went wrong"
+  // instead of "your plan includes one business".
+  try {
+    if (intent === "step1") return await handleStep1(session.userId, form);
+    if (intent === "step2") return await handleStep2(session.userId, form);
+    if (intent === "golive") return await handleGoLive(session.userId, form);
+  } catch (err) {
+    if (isGetBooqinError(err)) return { error: err.message };
+    throw err;
+  }
   return { error: "Unknown step." };
 }
 
