@@ -105,7 +105,13 @@ describe("every plan feature is enforced somewhere", () => {
     // The audit that produced this file: `embed` was in the ladder with
     // no embed snippet in the product, so Starter claimed something that
     // did not exist. Keep this list honest as features are added.
-    const enforced: FeatureKey[] = ["no_badge", "waitlist", "team_roles", "email_templates", "shopify", "export"];
+    // "branding" is enforced in Settings.setSettings() — a save that
+    // sets a logo or accent colour calls assertFeature, and the booking
+    // page re-checks the entitlement rather than trusting the stored
+    // value, so a lapsed account's page reverts on its own.
+    const enforced: FeatureKey[] = [
+      "no_badge", "branding", "waitlist", "team_roles", "email_templates", "shopify", "export",
+    ];
     const markers: FeatureKey[] = ["priority_support", "early_access"];
     for (const plan of Object.values(PLANS)) {
       for (const feature of plan.features) {
@@ -151,12 +157,29 @@ describe("waitlist", () => {
 });
 
 describe("team roles", () => {
-  it("without the feature, an invite still works but lands as 'write'", async () => {
+  it("refuses a role the plan doesn't include, rather than quietly granting another", async () => {
+    // This used to downgrade the request to "write" and report success.
+    // A merchant inviting a receptionist as **read** got a success
+    // toast and an account that could create, edit and delete bookings,
+    // services and customers — with nothing on the form, in the toast,
+    // or on the pending-invite row saying why. updateMemberRole already
+    // refused the same operation loudly; inviting is the commoner path
+    // and now does too.
+    await setPlan("starter");
+
+    await expect(
+      Team.inviteMember({
+        connectionId, email: `role-a-${RUN}@example.com`, role: "read", invitedByUserId: ownerId,
+      })
+    ).rejects.toMatchObject({ code: "getbooqin_plan_feature" });
+  });
+
+  it("still invites at 'write' without the feature — the seat is what the plan sells", async () => {
     // The seat is what the *limit* sells; role choice is the upgrade.
-    // Refusing the invite would gate the wrong thing.
+    // Refusing every invite would gate the wrong thing.
     await setPlan("starter");
     const { invite } = await Team.inviteMember({
-      connectionId, email: `role-a-${RUN}@example.com`, role: "admin", invitedByUserId: ownerId,
+      connectionId, email: `role-w-${RUN}@example.com`, role: "write", invitedByUserId: ownerId,
     });
     expect(invite.role).toBe("write");
   });

@@ -16,7 +16,9 @@
 import prisma from "../db.js";
 import { GetBooqinError } from "../booking/errors.js";
 import { entitlementsFor } from "./entitlements.js";
-import { createSubscription, cancelSubscription, providerPlanId } from "./providers/razorpay.js";
+import { providerForNewSubscription, providerForSubscription } from "./providers/index.js";
+import { reconcileSubscription } from "./reconcile.js";
+import type { BillingProvider } from "./providers/provider.js";
 import { ensureSubscription } from "./subscriptions.js";
 import { getSettings } from "../booking/settings.js";
 import { validateTaxIdentity, type TaxIdentity } from "./tax.js";
@@ -91,12 +93,32 @@ export async function startCheckout(args: {
   cycle: BillingCycle;
   country?: string | null;
   taxId?: string | null;
+  /** Who the invoice is made out to, and where. Required to issue one. */
+  billingName?: string | null;
+  billingAddress?: string | null;
+  /** Where the provider should return the merchant. PayPal honours these; Razorpay ignores them. */
+  returnUrl?: string;
+  cancelUrl?: string;
 }): Promise<CheckoutStart> {
   const { connectionId } = args;
 
 
+  await ensureSubscription(connectionId);
+
+  // Ask the provider first, every time. If a previous attempt actually
+  // succeeded and we never heard about it, the guards below are being
+  // evaluated against a stale row — and the specific thing they would
+  // then wave through is a *second* live mandate on an account that is
+  // already paying. Cheap, and it runs only when there is an
+  // unactivated mandate to ask about.
+  await reconcileSubscription(connectionId).catch(() => undefined);
+
   const existing = await ensureSubscription(connectionId);
   const entitlements = await entitlementsFor(connectionId);
+  const owner = await prisma.connection.findUnique({
+    where: { id: connectionId },
+    select: { user: { select: { email: true } } },
+  });
 
   // Currency is decided at the *first mandate*, not when the row was
   // created. A subscription row exists from signup, long before anyone
@@ -147,10 +169,28 @@ export async function startCheckout(args: {
     throw new GetBooqinError("getbooqin_tax_identity", tax.problems[0]!.message, 400);
   }
 
-  if (providerForCurrency(currency) !== "razorpay") {
+  // Which rail this subscription starts on, or stays on. An account
+  // that already has a mandate keeps its existing provider even if the
+  // currency would now route elsewhere — migrating a live subscription
+  // means cancel-and-re-authorise, which loses the customer.
+  const provider = providerForSubscription({ ...existing, currency });
+
+  if (!provider.isConfigured()) {
     throw new GetBooqinError(
       "getbooqin_provider_unavailable",
       "Card payments aren't available for your region yet.",
+      503
+    );
+  }
+  // A price existing in plans.ts says nothing about whether anyone can
+  // be charged it — that needs a plan created at the vendor, in this
+  // mode. Checked here as well as in sellablePrices() so a hand-posted
+  // form is refused the same way the button is hidden, and refused
+  // *before* a mandate could be created rather than as a 502 afterwards.
+  if (!provider.planId(args.plan, currency, args.cycle)) {
+    throw new GetBooqinError(
+      "getbooqin_provider_unavailable",
+      "That plan isn't available in your currency yet.",
       503
     );
   }
@@ -159,9 +199,16 @@ export async function startCheckout(args: {
   // or the merchant ends up with two recurring debits. Razorpay has no
   // "swap the plan on this mandate" for a live subscription, so a change
   // of tier is genuinely cancel-then-resubscribe.
-  if (existing.providerSubscriptionId && entitlements.status === "active") {
+  //
+  // The condition used to be `entitlements.status === "active"`, which
+  // reads the *local* row — so a mandate that was created, authorised
+  // and charged at Razorpay while the activation never reached us was
+  // not cancelled, and clicking the still-offered "Switch to …" button
+  // authorised a second recurring debit beside it. The provider's own
+  // answer is the only trustworthy one here, so that is what is asked.
+  if (existing.providerSubscriptionId && (await liveMandateExists(provider, existing.providerSubscriptionId))) {
     try {
-      await cancelSubscription(existing.providerSubscriptionId, { immediately: false });
+      await provider.cancelSubscription(existing.providerSubscriptionId, { immediately: false });
     } catch (err) {
       // Worth failing on: proceeding would leave two mandates live, and
       // the merchant discovers that through their bank statement. The
@@ -178,7 +225,21 @@ export async function startCheckout(args: {
 
   let created;
   try {
-    created = await createSubscription({ connectionId, plan: args.plan, currency, cycle: args.cycle });
+    created = await provider.createSubscription({
+      connectionId,
+      plan: args.plan,
+      currency,
+      cycle: args.cycle,
+      // So Razorpay's own payment receipts can actually reach someone.
+      // Without a customer email it creates the customer anyway, emails
+      // nothing, and `customer_notify: 1` is quietly inert.
+      customer: {
+        name: args.billingName?.trim() || existing.billingName || undefined,
+        email: owner?.user.email || undefined,
+      },
+      returnUrl: args.returnUrl,
+      cancelUrl: args.cancelUrl,
+    });
   } catch (err) {
     console.error(`[getbooqin billing] checkout failed for ${connectionId}:`, err);
     throw new GetBooqinError(
@@ -196,10 +257,15 @@ export async function startCheckout(args: {
     where: { connectionId },
     data: {
       providerSubscriptionId: created.providerSubscriptionId,
-      billingProvider: "razorpay",
+      billingProvider: provider.id,
       taxCountry: tax.identity.country,
       taxId: tax.identity.taxId,
       taxStatus: tax.identity.status,
+      // Only overwrite when something was actually supplied — a
+      // returning merchant who leaves these alone keeps what they gave
+      // last time rather than having it blanked.
+      ...(args.billingName?.trim() ? { billingName: args.billingName.trim() } : {}),
+      ...(args.billingAddress?.trim() ? { billingAddress: args.billingAddress.trim() } : {}),
     },
   });
 
@@ -213,6 +279,25 @@ export async function startCheckout(args: {
 }
 
 /**
+ * Is there still a mandate at the provider that could take money?
+ *
+ * Errs toward "yes". A lookup that fails tells us nothing, and the two
+ * wrong answers are not symmetrical: believing a dead mandate is alive
+ * costs one redundant cancel call, believing a live one is dead charges
+ * the merchant twice.
+ */
+async function liveMandateExists(provider: BillingProvider, providerSubscriptionId: string): Promise<boolean> {
+  try {
+    const snapshot = await provider.fetchSubscription(providerSubscriptionId);
+    if (!snapshot) return false; // The provider has never heard of it.
+    return provider.isLive(snapshot.providerStatus);
+  } catch (err) {
+    console.error(`[getbooqin billing] could not check ${providerSubscriptionId} before re-subscribing:`, err);
+    return true;
+  }
+}
+
+/**
  * Cancels at the provider and lets the webhook record it. Access
  * continues to the end of the paid period — see entitlementsFor().
  */
@@ -221,7 +306,8 @@ export async function cancelAtPeriodEnd(connectionId: string): Promise<void> {
   if (!row?.providerSubscriptionId) {
     throw new GetBooqinError("getbooqin_no_subscription", "There's no active subscription to cancel.", 400);
   }
-  await cancelSubscription(row.providerSubscriptionId, { immediately: false });
+  // Whichever rail this mandate is actually on.
+  await providerForSubscription(row).cancelSubscription(row.providerSubscriptionId, { immediately: false });
 }
 
 /**
@@ -239,7 +325,9 @@ export function sellablePrices(currency: Currency): Record<string, boolean> {
   const out: Record<string, boolean> = {};
   for (const plan of ["starter", "growth", "business"] as const) {
     for (const cycle of ["monthly", "yearly"] as const) {
-      out[`${plan}:${cycle}`] = providerPlanId(plan, currency, cycle) !== null;
+      // Asked of the rail this currency routes to, so a EUR account is
+      // told what PayPal can sell rather than what Razorpay can.
+      out[`${plan}:${cycle}`] = !!providerForNewSubscription(currency).planId(plan, currency, cycle);
     }
   }
   return out;

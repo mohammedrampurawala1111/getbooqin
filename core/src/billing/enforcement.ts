@@ -114,7 +114,19 @@ export function countBookingsThisMonth(shop: string, platform: string, now = new
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
   return prisma.booking.count({
-    where: { shop, platform, source: "form", createdAt: { gte: start, lt: end } },
+    where: {
+      shop,
+      platform,
+      source: "form",
+      createdAt: { gte: start, lt: end },
+      // A cancelled or declined booking is not a booking the merchant
+      // got the value of, and counting them made the quota a weapon: an
+      // attacker could book a Free shop's fifty slots with throwaway
+      // details, cancel every one, and every genuine customer for the
+      // rest of the month is refused with a 402 — while the merchant's
+      // calendar sits visibly empty and nothing explains why.
+      status: { notIn: ["cancelled", "declined"] },
+    },
   });
 }
 

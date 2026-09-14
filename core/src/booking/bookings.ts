@@ -11,6 +11,7 @@ import type { CatalogService } from "./data.js";
 import * as Availability from "./availability.js";
 import { getSettings, type Settings } from "./settings.js";
 import { term, money } from "./settingsShared.js";
+import { amountDueFor } from "./paymentLinks.js";
 import { zoneAbbr } from "./tz.js";
 import { uid, now } from "./ids.js";
 import { GetBooqinError } from "./errors.js";
@@ -71,7 +72,14 @@ export interface CreateBookingArgs {
   notes?: string;
   custom_fields?: Record<string, unknown>;
   addon_ids?: number[];
-  source?: "form" | "chat" | "waitlist";
+  /**
+   * Where the booking came from. `form` is the public booking page and
+   * the storefront widget — the only source the monthly quota meters.
+   * `staff` is a merchant typing in a walk-in, which is admin rather
+   * than consumption; `test` is onboarding's "send yourself a test
+   * booking", which must not spend a customer's allowance either.
+   */
+  source?: "form" | "chat" | "waitlist" | "staff" | "test";
   /** Merchant's explicit "book outside business hours anyway" — see assertSlotBookable's own doc. Never set from the public form. */
   override?: boolean;
   /**
@@ -136,6 +144,13 @@ export async function create(shop: string, platform: string, shopTimezone: strin
   const resolvedAddons = await Data.addonsForServiceByIds(shop, service.id, args.addon_ids ?? []);
   const addonDurationMin = resolvedAddons.reduce((sum, a) => sum + a.durationMin, 0);
   const addonPrice = resolvedAddons.reduce((sum, a) => sum + a.price, 0);
+  // Add-ons are part of what is being bought, so a percentage deposit
+  // is taken on the total rather than on the bare service price.
+  const amountDue = amountDueFor(service.price + addonPrice, {
+    paymentRequired: service.paymentRequired ?? false,
+    depositPercent: service.depositPercent ?? 100,
+    depositAmount: service.depositAmount ?? 0,
+  });
 
   const candidates = args.resource_id
     ? [await Data.resource(shop, args.resource_id)].filter((r): r is NonNullable<typeof r> => !!r)
@@ -281,13 +296,18 @@ export async function create(shop: string, platform: string, shopTimezone: strin
         timezone: tzName,
         status,
         price: service.price + addonPrice,
-        // Payment columns stay in the schema (no destructive migrations
-        // in this trim) but nothing writes a live value into them any
-        // more — merchant deposits came out with the rest of the dark
-        // surfaces, so every new booking is simply "nothing to collect".
-        amountDue: 0,
+        // What this booking asks for up front, from the service's own
+        // deposit policy. Computed here rather than when someone opens
+        // the orders screen, so the figure is the one that applied on
+        // the day it was booked — a merchant changing their deposit to
+        // 50% next week must not silently re-price bookings already
+        // taken.
+        amountDue,
         currency: settings.currency,
-        paymentStatus: "not_required",
+        // "unpaid" only when something is genuinely owed. A booking with
+        // no deposit policy is not a debt, and showing it as one would
+        // fill the orders screen with rows nobody needs to act on.
+        paymentStatus: amountDue > 0 ? "unpaid" : "not_required",
         notes: args.notes ?? "",
         customFields: args.custom_fields ? JSON.stringify(args.custom_fields) : null,
         source: args.source ?? "form",
@@ -921,12 +941,17 @@ export async function queryCount(shop: string, platform: string, args: QueryArgs
   });
 }
 
-export async function count(shop: string, platform: string, args: { status?: string; from?: Date; to?: Date } = {}) {
+export async function count(
+  shop: string,
+  platform: string,
+  args: { status?: string; from?: Date; to?: Date; excludeSources?: string[] } = {}
+) {
   return prisma.booking.count({
     where: {
       shop,
       platform,
       ...(args.status ? { status: args.status } : {}),
+      ...(args.excludeSources?.length ? { source: { notIn: args.excludeSources } } : {}),
       ...(args.from ? { startUtc: { gte: args.from } } : {}),
       ...(args.to ? { startUtc: { lte: args.to } } : {}),
     },

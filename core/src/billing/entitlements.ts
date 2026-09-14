@@ -57,9 +57,12 @@ export type SubscriptionStatus = "trialing" | "active" | "past_due" | "canceled"
  */
 export const PAST_DUE_GRACE_DAYS = 7;
 
-/** A new account's trial, in days. Growth (the middle tier), not the cheapest — people downgrade to what they need, they rarely upgrade into something they've never used. */
-export const TRIAL_DAYS = 30;
-export const TRIAL_PLAN: PlanId = "growth";
+/**
+ * Re-exported, not defined here. They live in plans.ts because the
+ * signup and onboarding screens need to say "30 days of Growth, free"
+ * and this module imports Prisma, so it cannot reach a browser bundle.
+ */
+export { TRIAL_DAYS, TRIAL_PLAN } from "./plans.js";
 
 export interface Entitlements {
   connectionId: string;
@@ -83,15 +86,31 @@ export interface Entitlements {
 }
 
 /**
- * Whole days a merchant still has access for. Rounds **up**, which is
- * the question being asked: a trial ending in "10 days minus the
- * millisecond it took to read the row" is 10 days of access, not 9, and
- * flooring it would also show "0 days left" on an account that still
- * works perfectly. The last partial day counts as a day, and the
- * countdown reaches 0 only once the trial has actually ended.
+ * Whole days a merchant still has access for.
+ *
+ * Counted in **calendar days**, not 24-hour blocks from the exact
+ * instant the trial was created. Rounding a raw millisecond difference
+ * up — which this used to do — produces a number that changes at
+ * whatever time of day the account happened to sign up, so a banner
+ * reading "30 days left, until 12 Oct" sits on 30 across a date change
+ * and then jumps two days at once in the middle of an afternoon. It
+ * looks broken, and reasonably so: the figure and the date beside it
+ * are answering the same question and should move together.
+ *
+ * Counted against the end date rather than the end instant, so it ticks
+ * down once a day at midnight. UTC, deliberately: the alternative is
+ * threading a shop timezone through every caller of entitlementsFor()
+ * for a figure that is always shown next to the actual end date.
+ *
+ * Never returns 0 while the trial is genuinely still running — the last
+ * partial day is a day of access, and "0 days left" on an account that
+ * works perfectly is worse than a day's imprecision.
  */
 function daysRemaining(from: Date, to: Date): number {
-  return Math.ceil((to.getTime() - from.getTime()) / 86_400_000);
+  if (to.getTime() <= from.getTime()) return 0;
+  const startOfDay = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  const days = Math.round((startOfDay(to) - startOfDay(from)) / 86_400_000);
+  return Math.max(days, 1);
 }
 
 /**

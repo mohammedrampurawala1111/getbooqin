@@ -29,6 +29,7 @@
 import prisma from "../db.js";
 import { applyProviderState } from "./subscriptions.js";
 import { sendPaymentFailed, sendPaymentFailedFinal } from "./emails.js";
+import { issueAndSendInvoice } from "./invoiceDelivery.js";
 import type { BillingProvider, NormalisedEvent } from "./providers/provider.js";
 
 export type WebhookOutcome =
@@ -76,7 +77,7 @@ export async function handleWebhook(
 ): Promise<WebhookOutcome> {
   // Verify before parsing. An unverified body is attacker-controlled
   // input and must not reach a JSON parser, let alone a state change.
-  if (!provider.verifyWebhook(rawBody, headers)) {
+  if (!(await provider.verifyWebhook(rawBody, headers))) {
     return { ok: false, status: "unverified" };
   }
 
@@ -139,24 +140,86 @@ export async function handleWebhook(
     : event.type === "subscription_ended" ? "canceled"
     : null;
 
+  // Resolved outside the `if` because the invoice below needs the same
+  // answers the state change used.
+  const existing = await prisma.subscription.findUnique({ where: { connectionId } });
+  // An event for a plan id we don't recognise (created in the
+  // dashboard but never added to plans.ts / the env) must not
+  // silently downgrade someone to whatever `plan` defaults to.
+  const plan = event.plan ?? (existing?.plan as never) ?? "free";
+  const currency = event.currency ?? (existing?.currency as never) ?? "INR";
+  const billingCycle = event.billingCycle ?? (existing?.billingCycle as never) ?? "monthly";
+
+  /**
+   * When the paid-for period runs to.
+   *
+   * PayPal puts `billing_info.next_billing_time` on the *subscription*
+   * resource, and a renewal arrives as `PAYMENT.SALE.COMPLETED`, whose
+   * resource is a sale with no such field. Left alone, the value written
+   * at activation was preserved forever by applyProviderState's
+   * `?? existing` — so a year of renewals never advanced it, and
+   * cancelling in month twelve dropped the merchant to Free
+   * *immediately*, throwing away the month they had just paid for.
+   *
+   * One extra provider call per renewal, only when the event itself
+   * couldn't say. Failure is survivable: the period end simply stays
+   * where it was, which is the old behaviour.
+   */
+  let currentPeriodEnd = event.currentPeriodEnd;
+  if (!currentPeriodEnd && event.payment && event.providerSubscriptionId) {
+    currentPeriodEnd = await provider
+      .fetchSubscription(event.providerSubscriptionId)
+      .then((snapshot) => snapshot?.currentPeriodEnd ?? null)
+      .catch((err) => {
+        console.error(`[getbooqin billing] could not refresh the period end for ${connectionId}:`, err);
+        return null;
+      });
+  }
+
   try {
     if (status) {
-      const existing = await prisma.subscription.findUnique({ where: { connectionId } });
-      // An event for a plan id we don't recognise (created in the
-      // dashboard but never added to plans.ts / the env) must not
-      // silently downgrade someone to whatever `plan` defaults to.
-      const plan = event.plan ?? (existing?.plan as never) ?? "free";
-
       await applyProviderState(connectionId, {
         plan,
         status,
         provider: provider.id,
         providerSubscriptionId: event.providerSubscriptionId ?? existing?.providerSubscriptionId ?? "",
         providerCustomerId: event.providerCustomerId,
-        currency: event.currency ?? (existing?.currency as never) ?? "INR",
-        billingCycle: event.billingCycle ?? (existing?.billingCycle as never) ?? "monthly",
-        currentPeriodEnd: event.currentPeriodEnd,
+        currency,
+        billingCycle,
+        currentPeriodEnd,
         cancelAtPeriodEnd: event.cancelAtPeriodEnd,
+      });
+    }
+
+    // The invoice, for an event that actually took money. After the
+    // state change and before the event is marked processed, but not
+    // *inside* the state change: issuing is idempotent on the payment
+    // id, so a retry cannot double-invoice, and a failure here must not
+    // roll back a plan the customer has paid for.
+    //
+    // Deliberately awaited, unlike the dunning emails below. An invoice
+    // is a legal record with a consecutive number; it is worth the
+    // provider waiting a moment for, and issueAndSendInvoice() never
+    // throws.
+    //
+    // Gated on the *resolved* plan, not on `event.plan`. On the PayPal
+    // rail the two are never the same thing: the only event carrying
+    // money is PAYMENT.SALE.COMPLETED, whose resource is a sale with no
+    // `plan_id` — so `event.plan` is always null there, and requiring it
+    // meant no PayPal charge was ever invoiced. Not the first one, not
+    // any renewal. The resolved plan falls back to the subscription's
+    // own, which is exactly what the state change above just used.
+    if (event.payment && status === "active" && plan !== "free") {
+      await issueAndSendInvoice({
+        connectionId,
+        provider: provider.id,
+        providerPaymentId: event.payment.id,
+        providerInvoiceId: event.payment.providerInvoiceId,
+        amountMinor: event.payment.amountMinor,
+        currency: (event.currency ?? event.payment.currency) as never,
+        plan,
+        cycle: billingCycle,
+        periodEnd: currentPeriodEnd,
       });
     }
 

@@ -7,7 +7,8 @@
 import { describe, expect, it } from "vitest";
 import {
   PLANS, PLAN_ORDER, PRICES, FEATURE_KEYS, LIMIT_KEYS,
-  currencyForCountry, providerForCountry, priceFor, formatPrice, billingCurrencyFor,
+  currencyForCountry, providerForCountry,
+  providerForCurrency, priceFor, formatPrice, billingCurrencyFor,
   formatLimit, limitToString, limitFromString, planRank, visiblePlans,
   type Currency, type PlanId, type LimitKey,
 } from "../plans.js";
@@ -179,10 +180,23 @@ describe("currency and provider routing", () => {
     }
   });
 
-  it("every currency routes to Razorpay — PayPal is a later iteration", () => {
-    for (const country of ["IN", "NL", "US", "AU"]) {
-      expect(providerForCountry(country), country).toBe("razorpay");
+  it("sends India to Razorpay and everywhere else to PayPal", () => {
+    // Razorpay can charge a euro card, but it settles to an Indian
+    // account and presents as an Indian merchant — worse checkout for a
+    // customer who already has a PayPal wallet, and the kind of
+    // friction that shows up as an abandoned upgrade rather than an
+    // error.
+    expect(providerForCountry("IN")).toBe("razorpay");
+
+    for (const country of ["NL", "DE", "FR", "US", "AU", "GB", "", null, undefined]) {
+      expect(providerForCountry(country as string), String(country)).toBe("paypal");
     }
+  });
+
+  it("routes on currency, which is what a mandate is actually denominated in", () => {
+    expect(providerForCurrency("INR")).toBe("razorpay");
+    expect(providerForCurrency("EUR")).toBe("paypal");
+    expect(providerForCurrency("USD")).toBe("paypal");
   });
 
   it("is case- and whitespace-insensitive about country codes", () => {

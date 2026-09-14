@@ -85,6 +85,7 @@ export type ProviderId = "razorpay" | "paypal" | "manual";
  */
 export type FeatureKey =
   | "no_badge"
+  | "branding"
   | "waitlist"
   | "team_roles"
   | "email_templates"
@@ -94,13 +95,18 @@ export type FeatureKey =
   | "early_access";
 
 export const FEATURE_KEYS: readonly FeatureKey[] = [
-  "no_badge", "waitlist", "team_roles",
+  "no_badge", "branding", "waitlist", "team_roles",
   "email_templates", "shopify", "export", "priority_support", "early_access",
 ];
 
 /** Human copy for the feature catalogue in /admin, so the keys don't become magic strings. */
 export const FEATURE_LABELS: Record<FeatureKey, string> = {
   no_badge: "Remove the “Powered by GetBooqin” badge",
+  // Sold beside no_badge deliberately. "Pay us to remove our name" is a
+  // grudging purchase; "pay us and the page becomes yours" is the same
+  // money for something a merchant actually wants, and it is what makes
+  // the cheapest paid tier feel like a purchase rather than a toll.
+  branding: "Your logo and colour on the booking page",
   waitlist: "Waitlist with automatic offer cascade",
   team_roles: "Team roles (admin / write / read)",
   email_templates: "Editable email templates",
@@ -163,10 +169,10 @@ export const PLANS: Record<PlanId, Plan> = {
   starter: {
     id: "starter",
     name: "Starter",
-    blurb: "Take the badge off and add a waitlist.",
+    blurb: "Make the booking page yours, and add a waitlist.",
     visible: true,
     limits: { resources: 3, services: Infinity, teamMembers: 2, bookingsPerMonth: Infinity, businesses: 1 },
-    features: ["no_badge", "waitlist"],
+    features: ["no_badge", "branding", "waitlist"],
   },
   growth: {
     id: "growth",
@@ -174,7 +180,7 @@ export const PLANS: Record<PlanId, Plan> = {
     blurb: "A team with roles, and your own email wording.",
     visible: true,
     limits: { resources: 10, services: Infinity, teamMembers: 6, bookingsPerMonth: Infinity, businesses: 1 },
-    features: ["no_badge", "waitlist", "team_roles", "email_templates", "export"],
+    features: ["no_badge", "branding", "waitlist", "team_roles", "email_templates", "export"],
   },
   business: {
     id: "business",
@@ -186,7 +192,7 @@ export const PLANS: Record<PlanId, Plan> = {
       bookingsPerMonth: Infinity, businesses: 5,
     },
     features: [
-      "no_badge", "waitlist", "team_roles", "email_templates",
+      "no_badge", "branding", "waitlist", "team_roles", "email_templates",
       "export", "priority_support", "early_access",
     ],
   },
@@ -194,6 +200,20 @@ export const PLANS: Record<PlanId, Plan> = {
 
 /** Cheapest first — the order the pricing page and the upgrade picker render in. */
 export const PLAN_ORDER: readonly PlanId[] = ["free", "starter", "growth", "business"];
+
+/**
+ * A new account's trial.
+ *
+ * Growth — the middle tier, not the cheapest. People downgrade to what
+ * they turn out to need; they rarely upgrade into something they have
+ * never used.
+ *
+ * Here rather than in entitlements.ts, which enforces them, because
+ * this file is the one with no imports: the signup and onboarding
+ * screens have to state the offer, and they run in the browser.
+ */
+export const TRIAL_DAYS = 30;
+export const TRIAL_PLAN: PlanId = "growth";
 
 export type PaidPlanId = Exclude<PlanId, "free">;
 
@@ -245,7 +265,18 @@ export interface ProviderPlanIds {
 export interface Price {
   /** Integer minor units — paise for INR, cents for USD/EUR. */
   amount: number;
+  /**
+   * The vendor's own plan id, per rail and per mode.
+   *
+   * Both rails carry every currency in the table even though only one
+   * is ever used for a given one — INR goes to Razorpay, USD and EUR to
+   * PayPal (see providerForCurrency). The unused slots stay empty
+   * rather than being deleted, because an account that started on the
+   * other rail before the split still has to be reconciled and
+   * cancelled there, and that needs its plan id to still resolve.
+   */
   razorpay: ProviderPlanIds;
+  paypal?: ProviderPlanIds;
 }
 
 /**
@@ -262,12 +293,12 @@ export const PRICES: Record<PaidPlanId, Record<Currency, Record<BillingCycle, Pr
       yearly: { amount: 399_000, razorpay: { test: "plan_TbDcfyTcaaGoaG", live: "plan_TbDRyOPpAbW8PW" } },
     },
     USD: {
-      monthly: { amount: 500, razorpay: { test: "plan_TbEJl53SjngQhB", live: "" } },
-      yearly: { amount: 5_000, razorpay: { test: "plan_TbEJlXlTVjNx2o", live: "" } },
+      monthly: { amount: 500, razorpay: { test: "plan_TbEJl53SjngQhB", live: "" }, paypal: { test: "", live: "" } },
+      yearly: { amount: 5_000, razorpay: { test: "plan_TbEJlXlTVjNx2o", live: "" }, paypal: { test: "", live: "" } },
     },
     EUR: {
-      monthly: { amount: 500, razorpay: { test: "plan_TbEJildXewGMHz", live: "" } },
-      yearly: { amount: 5_000, razorpay: { test: "plan_TbEJjamIDOP9q3", live: "" } },
+      monthly: { amount: 500, razorpay: { test: "plan_TbEJildXewGMHz", live: "" }, paypal: { test: "", live: "" } },
+      yearly: { amount: 5_000, razorpay: { test: "plan_TbEJjamIDOP9q3", live: "" }, paypal: { test: "", live: "" } },
     },
   },
   growth: {
@@ -284,12 +315,12 @@ export const PRICES: Record<PaidPlanId, Record<Currency, Record<BillingCycle, Pr
       yearly: { amount: 799_000, razorpay: { test: "plan_TbDdFi79xihffD", live: "" } },
     },
     USD: {
-      monthly: { amount: 1_000, razorpay: { test: "plan_TbEJm05s3QoX7Z", live: "" } },
-      yearly: { amount: 10_000, razorpay: { test: "plan_TbEJmSjhRMH2yJ", live: "" } },
+      monthly: { amount: 1_000, razorpay: { test: "plan_TbEJm05s3QoX7Z", live: "" }, paypal: { test: "", live: "" } },
+      yearly: { amount: 10_000, razorpay: { test: "plan_TbEJmSjhRMH2yJ", live: "" }, paypal: { test: "", live: "" } },
     },
     EUR: {
-      monthly: { amount: 1_000, razorpay: { test: "plan_TbEJk5hXqnTEYh", live: "" } },
-      yearly: { amount: 10_000, razorpay: { test: "plan_TbEJkbTWSa1VNN", live: "" } },
+      monthly: { amount: 1_000, razorpay: { test: "plan_TbEJk5hXqnTEYh", live: "" }, paypal: { test: "", live: "" } },
+      yearly: { amount: 10_000, razorpay: { test: "plan_TbEJkbTWSa1VNN", live: "" }, paypal: { test: "", live: "" } },
     },
   },
   business: {
@@ -298,12 +329,12 @@ export const PRICES: Record<PaidPlanId, Record<Currency, Record<BillingCycle, Pr
       yearly: { amount: 1_199_000, razorpay: { test: "", live: "" } },
     },
     USD: {
-      monthly: { amount: 1_500, razorpay: { test: "", live: "" } },
-      yearly: { amount: 15_000, razorpay: { test: "", live: "" } },
+      monthly: { amount: 1_500, razorpay: { test: "", live: "" }, paypal: { test: "", live: "" } },
+      yearly: { amount: 15_000, razorpay: { test: "", live: "" }, paypal: { test: "", live: "" } },
     },
     EUR: {
-      monthly: { amount: 1_500, razorpay: { test: "", live: "" } },
-      yearly: { amount: 15_000, razorpay: { test: "", live: "" } },
+      monthly: { amount: 1_500, razorpay: { test: "", live: "" }, paypal: { test: "", live: "" } },
+      yearly: { amount: 15_000, razorpay: { test: "", live: "" }, paypal: { test: "", live: "" } },
     },
   },
 };
@@ -320,7 +351,7 @@ export function priceFor(plan: PlanId, currency: Currency, cycle: BillingCycle):
 export const CURRENCY_SYMBOL: Record<Currency, string> = { INR: "₹", USD: "$", EUR: "€" };
 
 /** Minor units per major unit. All three are 100; named so the maths below reads. */
-const MINOR_UNITS: Record<Currency, number> = { INR: 100, USD: 100, EUR: 100 };
+export const MINOR_UNITS: Record<Currency, number> = { INR: 100, USD: 100, EUR: 100 };
 
 /**
  * ISO-3166 alpha-2 codes billing in EUR. Only countries that actually use
@@ -348,14 +379,21 @@ export function currencyForCountry(country: string | null | undefined): Currency
  * loses people.
  */
 export function providerForCurrency(currency: Currency): Exclude<ProviderId, "manual"> {
-  // One rail today. Kept as a function rather than a constant because
-  // the decision it encodes — which vendor holds this mandate — is
-  // per-subscription and permanent once made: a live subscription is
-  // never migrated between providers, since that means
-  // cancel-and-re-authorise and loses the customer. When PayPal lands
-  // for USD/EUR, this is the only line that changes.
-  void currency;
-  return "razorpay";
+  // India on Razorpay, everywhere else on PayPal.
+  //
+  // Razorpay can technically charge a euro or dollar card, but it
+  // settles to an Indian account and presents as an Indian merchant —
+  // for a European or American customer that is a worse checkout than
+  // the wallet they already have, and it is the kind of friction that
+  // shows up as an abandoned upgrade rather than as an error.
+  //
+  // This answers the question only for a **new** subscription. Which
+  // vendor holds an existing mandate is read from
+  // `Subscription.billingProvider`, because a live subscription is
+  // never migrated: that means cancel-and-re-authorise, which loses the
+  // customer. An account that started on Razorpay in EUR before this
+  // split stays on Razorpay for the rest of its life.
+  return currency === "INR" ? "razorpay" : "paypal";
 }
 
 export function providerForCountry(country: string | null | undefined): Exclude<ProviderId, "manual"> {

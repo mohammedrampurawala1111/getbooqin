@@ -12,6 +12,8 @@ import prisma from "../db.js";
 import { defaultTerms, withDefaultTerms } from "./presets.js";
 import type { Settings } from "./settingsShared.js";
 import { assertFeature } from "../billing/enforcement.js";
+import { GetBooqinError } from "./errors.js";
+import { validateBranding } from "./settingsShared.js";
 
 export type { Settings, BookingRuleField, BookingRuleInput } from "./settingsShared.js";
 export {
@@ -71,6 +73,10 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
     // showing zeroes for a gateway that was never reachable). Existing
     // rows may still carry the key; nothing reads it any more.
     hidden_overview_cards: [],
+    brand_logo: "",
+    brand_accent: "",
+    upi_id: "",
+    paypal_me: "",
   };
 }
 
@@ -117,8 +123,36 @@ export async function setSettings(
     await assertFeature(shop, platform, "email_templates");
   }
 
+  // Branding is what the cheapest paid tier is actually sold on, so the
+  // gate is here rather than in the route — the Shopify admin and any
+  // future client write through this same function, and a check that
+  // only one caller performs is not a gate.
+  //
+  // Clearing branding is always allowed. A merchant whose trial ends
+  // must be able to take their logo back off, and refusing that would
+  // trap them with a page they can no longer edit.
+  if ((values.brand_logo !== undefined && values.brand_logo !== "") ||
+      (values.brand_accent !== undefined && values.brand_accent !== "")) {
+    await assertFeature(shop, platform, "branding");
+
+    const problems = validateBranding({ logo: values.brand_logo, accent: values.brand_accent });
+    if (problems.length > 0) {
+      throw new GetBooqinError("getbooqin_invalid_branding", problems[0].message, 400);
+    }
+  }
+
   const current = await getSettings(shop, platform);
-  const merged: Settings = { ...current, ...values };
+
+  // Undefined means "not in this submission" and must not overwrite.
+  // Prisma-style partial updates are what every caller assumes, and the
+  // spread alone gave that — but a form that posts only some of a
+  // section's fields turns the rest into `""` before they ever reach
+  // here, so the guard has to be at the boundary that knows the
+  // difference. Callers that genuinely mean "clear this" pass "".
+  const patch = Object.fromEntries(
+    Object.entries(values).filter(([, value]) => value !== undefined)
+  ) as Partial<Settings>;
+  const merged: Settings = { ...current, ...patch };
 
   await prisma.shopSettings.upsert({
     where: { platform_shop: { platform, shop } },

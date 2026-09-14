@@ -19,6 +19,14 @@ export type { Role } from "./team.js";
 // way.
 export * as Data from "./booking/data.js";
 export * as Bookings from "./booking/bookings.js";
+// Asking a customer for a deposit, and recording that it arrived.
+// GetBooqin never holds the money — see src/booking/payments.ts.
+export * as Payments from "./booking/payments.js";
+// QR images — the printable booking-link code, and the payment one.
+export * as Qr from "./booking/qr.js";
+// Onboarding's "send yourself a test booking" — a real booking through
+// the real path. See src/booking/testBooking.ts.
+export * as TestBooking from "./booking/testBooking.js";
 // DB-free subset of bookings.js — safe for client components to import
 // without pulling Prisma (and core/db.js's `global.prismaGlobal`) into the
 // browser bundle. See bookingsShared.ts's header comment.
@@ -38,6 +46,9 @@ export { boot } from "./booking/boot.js";
 // Scheduled-job bookkeeping — see src/jobs.ts on why a cron that never
 // runs has to be observable rather than assumed (Phase 0's B1).
 export * as Jobs from "./jobs.js";
+// What this deployment needs, and what it loses without it. Checked at
+// boot by server/combined.js. See src/env.ts.
+export * as Env from "./env.js";
 
 // Billing (§W7). `Plans` is a pure data table with zero imports and is
 // also exposed at the ./billing/plans subpath, so the pricing page and
@@ -48,8 +59,20 @@ export * as Entitlements from "./billing/entitlements.js";
 export * as Subscriptions from "./billing/subscriptions.js";
 export * as Billing from "./billing/enforcement.js";
 export * as BillingWebhooks from "./billing/webhooks.js";
+export { providerFor, providerForNewSubscription, providerForSubscription } from "./billing/providers/index.js";
 export * as Checkout from "./billing/checkout.js";
+// Pulling the provider's own state when a webhook never arrived. See
+// src/billing/reconcile.ts.
+export * as BillingReconcile from "./billing/reconcile.js";
+// Tax invoices — issuing, rendering and delivering them. See
+// src/billing/invoices.ts.
+export * as Invoices from "./billing/invoices.js";
+export * as InvoiceDelivery from "./billing/invoiceDelivery.js";
+export * as InvoicePdf from "./billing/invoicePdf.js";
+export * as Seller from "./billing/seller.js";
 export * as BillingEmails from "./billing/emails.js";
+// Welcome / first-booking / trial-nudge emails. See src/lifecycle.ts.
+export * as Lifecycle from "./lifecycle.js";
 export * as Tax from "./billing/tax.js";
 
 // Platform admin console (§W8) — internal-only, above all accounts.
@@ -64,5 +87,6 @@ export * as AdminAccess from "./admin/access.js";
 // erasure at all.
 export * as AccountDeletion from "./account/deletion.js";
 export { RazorpayProvider, providerPlanId } from "./billing/providers/razorpay.js";
+export { PayPalProvider } from "./billing/providers/paypal.js";
 export type { BillingProvider, NormalisedEvent, BillingEventType } from "./billing/providers/provider.js";
 export * as ShopifyAdmin from "./platforms/shopifyAdmin.js";

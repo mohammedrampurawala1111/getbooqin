@@ -124,6 +124,24 @@ export interface Settings {
   // Empty = everything shown.
   hidden_overview_cards: string[];
 
+  // Booking-page branding, sold with the `branding` entitlement.
+  //
+  // The logo is a data URL rather than a file in object storage. There
+  // is no blob store in this deployment, and adding one to hold a
+  // 40KB image would be the most infrastructure in the product for one
+  // of its smallest features. The upload is downscaled in the browser
+  // before it ever reaches us and capped server-side — see
+  // BRAND_LOGO_MAX_BYTES.
+  brand_logo: string;
+  /** Hex, e.g. "#8f3aa9". Empty means the GetBooqin default. */
+  brand_accent: string;
+
+  // Where a customer's booking payment goes. Both are the merchant's
+  // own — GetBooqin never receives the money, so these are rendered
+  // into a link and nothing more. See booking/paymentLinks.ts.
+  upi_id: string;
+  paypal_me: string;
+
 
 }
 
@@ -225,4 +243,53 @@ export function cancelCutoffExceedsNotice(settings: Pick<Settings, "cancel_cutof
  */
 export function bookingWindowIsClosed(settings: Pick<Settings, "min_notice_hours" | "max_advance_days">): boolean {
   return settings.min_notice_hours >= settings.max_advance_days * 24;
+}
+
+/**
+ * How large a stored logo may be, after the browser has downscaled it.
+ *
+ * 48KB of base64 is roughly a 36KB image — comfortably enough for a
+ * 512px logo and small enough to sit inside the settings row and be
+ * inlined into the booking page without anyone noticing. The cap is
+ * enforced server-side because the downscale happens in the browser,
+ * and anything that happens in the browser is a suggestion.
+ */
+export const BRAND_LOGO_MAX_BYTES = 48 * 1024;
+
+/** Only formats every browser renders, and never SVG — it can carry script. */
+const LOGO_PREFIXES = ["data:image/png;base64,", "data:image/jpeg;base64,", "data:image/webp;base64,"];
+
+export interface BrandingProblem {
+  field: "brand_logo" | "brand_accent";
+  message: string;
+}
+
+/**
+ * Checks a logo and accent colour before they are stored.
+ *
+ * SVG is refused outright. It is an image format that can contain
+ * script, and this value is inlined into a page served on our origin —
+ * accepting one would be a stored-XSS hole dressed up as a logo upload.
+ */
+export function validateBranding(input: { logo?: string; accent?: string }): BrandingProblem[] {
+  const problems: BrandingProblem[] = [];
+  const logo = (input.logo ?? "").trim();
+  const accent = (input.accent ?? "").trim();
+
+  if (logo) {
+    if (!LOGO_PREFIXES.some((p) => logo.startsWith(p))) {
+      problems.push({ field: "brand_logo", message: "Upload a PNG, JPEG or WebP image." });
+    } else if (Buffer.byteLength(logo, "utf8") > BRAND_LOGO_MAX_BYTES) {
+      problems.push({ field: "brand_logo", message: "That image is too large — try one under 500×500." });
+    }
+  }
+
+  // Six-digit hex only. Named colours and rgb() are valid CSS but would
+  // be interpolated into a style attribute, so the narrow form is the
+  // one that cannot carry anything else.
+  if (accent && !/^#[0-9a-fA-F]{6}$/.test(accent)) {
+    problems.push({ field: "brand_accent", message: "Pick a colour, or enter a hex code like #8f3aa9." });
+  }
+
+  return problems;
 }

@@ -15,7 +15,7 @@
  *    never hand back a blank.
  */
 import { describe, expect, it } from "vitest";
-import { STARTER_TEMPLATES, defaultTerms, withDefaultTerms, starterTemplate, termSuggestions, type Terms } from "../presets.js";
+import { STARTER_TEMPLATES, defaultTerms, withDefaultTerms, starterTemplate, termSuggestions, termSuggestionPairs, guessPlural, type Terms } from "../presets.js";
 
 const KEYS = [
   "resource_single", "resource_plural",
@@ -110,5 +110,63 @@ describe("termSuggestions()", () => {
     expect(suggestions).toContain("Appointment");
     expect(suggestions).toContain("Reservation");
     expect(new Set(suggestions).size).toBe(suggestions.length);
+  });
+});
+
+/**
+ * Plural derivation — only ever used to prefill the plural field while
+ * it still agrees with the singular, never to overwrite a word the
+ * merchant typed. It has to be right for the ordinary cases and it is
+ * allowed to be wrong for the rest, which is exactly why the field
+ * stays editable.
+ */
+describe("guessPlural", () => {
+  it("adds an s to an ordinary word", () => {
+    expect(guessPlural("Booking")).toBe("Bookings");
+    expect(guessPlural("Patient")).toBe("Patients");
+    expect(guessPlural("Doctor")).toBe("Doctors");
+  });
+
+  it("adds es after a sibilant, where a bare s is unpronounceable", () => {
+    expect(guessPlural("Class")).toBe("Classes");
+    expect(guessPlural("Box")).toBe("Boxes");
+    expect(guessPlural("Pitch")).toBe("Pitches");
+    expect(guessPlural("Wash")).toBe("Washes");
+  });
+
+  it("turns a consonant + y into ies", () => {
+    expect(guessPlural("Therapy")).toBe("Therapies");
+    expect(guessPlural("Facility")).toBe("Facilities");
+  });
+
+  it("leaves a vowel + y alone", () => {
+    expect(guessPlural("Day")).toBe("Days");
+    expect(guessPlural("Journey")).toBe("Journeys");
+  });
+
+  it("returns nothing for an empty singular, rather than a bare s", () => {
+    // The merchant clearing the field must not leave "s" behind in the
+    // one beside it.
+    expect(guessPlural("")).toBe("");
+    expect(guessPlural("   ")).toBe("");
+  });
+});
+
+describe("termSuggestionPairs", () => {
+  it("carries the plural that belongs with each singular", () => {
+    const pairs = termSuggestionPairs("customer_single", "customer_plural");
+
+    expect(pairs.length).toBeGreaterThan(1);
+    for (const pair of pairs) {
+      expect(pair.single).toBeTruthy();
+      expect(pair.plural).toBeTruthy();
+    }
+  });
+
+  it("offers each singular once", () => {
+    const pairs = termSuggestionPairs("booking_single", "booking_plural");
+    const singles = pairs.map((p) => p.single);
+
+    expect(new Set(singles).size).toBe(singles.length);
   });
 });

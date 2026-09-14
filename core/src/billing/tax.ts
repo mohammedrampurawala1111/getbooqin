@@ -61,14 +61,48 @@ export function looksLikeGstin(value: string): boolean {
 }
 
 /**
- * EU VAT numbers are a country prefix plus 2–12 alphanumerics. Again
- * shape only: the authoritative check is VIES, which is an external
- * service that goes down, and blocking a sale on someone else's uptime
- * is the wrong trade. Capturing the number is what the tax position
- * rests on; verifying it is a reconciliation job, not a checkout gate.
+ * A business tax number, anywhere in the world.
+ *
+ * This used to require an EU VAT shape — two letters then 2–12
+ * alphanumerics — while being applied to **every** country outside
+ * India, where a tax id is mandatory. The effect was that no business
+ * in the United States, Canada, Australia, Singapore or Japan could
+ * subscribe at all: a US EIN (`12-3456789`) normalises to `123456789`,
+ * fails `[A-Z]{2}`, and the customer is told "that doesn't look like a
+ * VAT or business tax number" with no way past it. USD is the largest
+ * addressable segment and none of it could check out.
+ *
+ * So this is now a sanity check, not a format: 5–20 alphanumerics with
+ * at least one digit. That accepts an EU VAT number, an EIN, an ABN, a
+ * UEN, a Canadian BN, a Japanese corporate number — and still rejects
+ * "n/a", "none", "-" and a stray word, which is all a shape check can
+ * honestly claim to do.
+ *
+ * Shape only, deliberately. The authoritative check is VIES, which is
+ * an external service that goes down, and blocking a sale on someone
+ * else's uptime is the wrong trade. Capturing the number is what the
+ * tax position rests on.
  */
 export function looksLikeTaxId(value: string): boolean {
-  return /^[A-Z]{2}[0-9A-Z]{2,12}$/.test(value.replace(/[\s-]/g, "").trim().toUpperCase());
+  const normalized = normalizeTaxId(value);
+  return /^[0-9A-Z]{5,20}$/.test(normalized) && /[0-9]/.test(normalized);
+}
+
+/**
+ * EU member states, for deciding whether the reverse charge is even
+ * relevant. Wider than the eurozone list in plans.ts, which is about
+ * which currency to bill in — Poland and Sweden are in the EU and
+ * outside the euro, and the reverse charge applies to both.
+ */
+const EUROZONE_OR_EU: readonly string[] = [
+  "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR",
+  "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK",
+  "SI", "ES", "SE",
+];
+
+/** True for a customer the EU reverse charge could apply to. */
+export function isEuCountry(country: string): boolean {
+  return EUROZONE_OR_EU.includes(normalizeCountry(country));
 }
 
 export function normalizeTaxId(value: string | null | undefined): string {
@@ -119,8 +153,12 @@ export function validateTaxIdentity(input: { country?: string | null; taxId?: st
 export function taxNote(status: TaxStatus | string, country: string): string {
   if (status === "india_gst") return "Indian GST applies. Prices include tax.";
   if (status === "export_zero_rated") {
-    return country && country !== "IN"
-      ? "Zero-rated export of services. If you're in the EU, VAT is accounted for by you under the reverse charge."
+    // The reverse-charge sentence is about EU VAT, so it belongs only on
+    // an invoice going to the EU. Shown to a customer in the US,
+    // Australia or the UAE it is noise; shown to a UK customer it has
+    // been wrong since 2020.
+    return EUROZONE_OR_EU.includes(country)
+      ? "Zero-rated export of services. VAT is accounted for by you under the reverse charge."
       : "Zero-rated export of services.";
   }
   return "";

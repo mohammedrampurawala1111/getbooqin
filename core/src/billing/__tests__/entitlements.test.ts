@@ -83,6 +83,46 @@ describe("entitlementsFor()", () => {
     expect(ent.features.has("team_roles")).toBe(true);
   });
 
+  it("counts down a day at a time, on the date — not on the hour the account signed up", async () => {
+    // The reported symptom: a banner reading "30 days left, until 12
+    // Oct" that did not move across a date change, because the figure
+    // was a rounded-up millisecond difference from whatever time of day
+    // the trial was created. The number and the date beside it answer
+    // the same question and have to move together.
+    const id = await connection("rollover");
+    await prisma.subscription.create({
+      data: {
+        connectionId: id,
+        plan: "growth",
+        status: "trialing",
+        trialEndsAt: new Date("2026-10-12T10:00:00Z"),
+      },
+    });
+
+    const on = async (iso: string) => (await entitlementsFor(id, new Date(iso))).trialDaysLeft;
+
+    expect(await on("2026-09-12T10:00:00Z")).toBe(30);
+    // Later the same day: still 30. Nothing has changed but the clock.
+    expect(await on("2026-09-12T23:00:00Z")).toBe(30);
+    // The date changes, so the counter does.
+    expect(await on("2026-09-13T00:30:00Z")).toBe(29);
+    expect(await on("2026-09-13T22:00:00Z")).toBe(29);
+    expect(await on("2026-09-14T01:00:00Z")).toBe(28);
+  });
+
+  it("says a day rather than zero while the last day is still running", async () => {
+    const id = await connection("last-day");
+    await prisma.subscription.create({
+      data: { connectionId: id, plan: "growth", status: "trialing", trialEndsAt: new Date("2026-10-12T10:00:00Z") },
+    });
+
+    // Same calendar day as the end, hours before it: the account works
+    // perfectly, so "0 days left" would be a lie.
+    const ent = await entitlementsFor(id, new Date("2026-10-12T07:00:00Z"));
+    expect(ent.trialDaysLeft).toBe(1);
+    expect(ent.plan).toBe("growth");
+  });
+
   it("an expired trial resolves as Free even though the row still says trialing", async () => {
     // The whole point of lazy expiry: correctness must not depend on a
     // sweep having run.

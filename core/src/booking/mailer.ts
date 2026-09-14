@@ -14,9 +14,11 @@ import * as Data from "./data.js";
 import * as Bookings from "./bookings.js";
 import { manageUrl as waitlistManageUrl } from "./waitlist.js";
 import { getSettings, template as settingTemplate, type Settings } from "./settings.js";
+import { term } from "./settingsShared.js";
 import events from "./events.js";
 import { GetBooqinError } from "./errors.js";
 import { tokens, previewTokens, replace } from "./notificationTokens.js";
+import { buildIcs, icsFilename } from "./calendar.js";
 
 export { tokens, previewTokens };
 
@@ -216,14 +218,33 @@ export function fromHeaders(settings: Settings): { from: string; replyTo?: strin
   };
 }
 
-async function mail(to: string, subject: string, body: string, settings: Settings): Promise<void> {
+interface Attachment {
+  filename: string;
+  content: string;
+  contentType: string;
+}
+
+async function mail(
+  to: string,
+  subject: string,
+  body: string,
+  settings: Settings,
+  attachments: Attachment[] = []
+): Promise<void> {
   const t = getTransporter();
   if (!t) {
     console.warn(`[getbooqin mailer] SMTP not configured — dropping email to ${to}: ${subject}`);
     return;
   }
   const { from, replyTo } = fromHeaders(settings);
-  const info = await t.sendMail({ to, from, ...(replyTo ? { replyTo } : {}), subject, text: body });
+  const info = await t.sendMail({
+    to,
+    from,
+    ...(replyTo ? { replyTo } : {}),
+    subject,
+    text: body,
+    ...(attachments.length ? { attachments } : {}),
+  });
   console.log(
     `[getbooqin mailer] sent "${subject}" to ${to} from ${from}${replyTo ? ` (reply-to ${replyTo})` : ""} — messageId=${info.messageId} accepted=${JSON.stringify(info.accepted)} rejected=${JSON.stringify(info.rejected)} response=${info.response}`
   );
@@ -238,7 +259,62 @@ export function renderTemplate(text: string, sampleTokens: Record<string, string
 
 export { templateEnabled };
 
-async function sendToCustomer(shop: string, booking: Booking, settings: Settings, subject: string, body: string) {
+/**
+ * The .ics to attach to a customer email, or nothing.
+ *
+ * Only for a booking that is actually on: attaching a calendar entry to a
+ * pending request would put an appointment in someone's diary that the
+ * business has not agreed to yet, and attaching one to a cancellation
+ * would re-add the thing being cancelled.
+ *
+ * Never fails a send. A calendar file is a convenience; losing the email
+ * itself because a service name could not be read is a real failure, so
+ * this swallows its own errors and lets the email go without it.
+ */
+async function calendarAttachment(shop: string, booking: Booking, settings: Settings): Promise<Attachment[]> {
+  if (booking.status !== "confirmed") return [];
+  try {
+    const service = await Data.catalogService(shop, booking.serviceId);
+    const resource = await Data.resource(shop, booking.resourceId);
+    const title = [service?.name || term(settings, "booking_single"), resource?.name && `with ${resource.name}`]
+      .filter(Boolean)
+      .join(" ");
+
+    const ics = buildIcs({
+      uid: booking.uid,
+      start: booking.startUtc,
+      end: booking.endUtc,
+      title,
+      description: `Booked with ${settings.business_name}`.trim(),
+      // A video link is where the appointment actually happens; the
+      // street address is only right when it doesn't.
+      location: booking.meetingUrl || settings.business_address || undefined,
+      url: Bookings.manageUrl(booking, settings),
+    });
+
+    return [
+      {
+        filename: icsFilename(service?.name || "booking"),
+        content: ics,
+        // METHOD has to agree with the one inside the file, or Outlook
+        // treats the mismatch as a malformed invitation.
+        contentType: "text/calendar; charset=utf-8; method=PUBLISH",
+      },
+    ];
+  } catch (err) {
+    console.warn(`[getbooqin mailer] could not build .ics for booking ${booking.uid} — sending without it:`, err);
+    return [];
+  }
+}
+
+async function sendToCustomer(
+  shop: string,
+  booking: Booking,
+  settings: Settings,
+  subject: string,
+  body: string,
+  opts: { calendar?: boolean } = {}
+) {
   const customer = await Data.customer(shop, booking.customerId);
   if (!customer || !Bookings.isRealEmail(customer.email)) {
     console.warn(
@@ -247,7 +323,8 @@ async function sendToCustomer(shop: string, booking: Booking, settings: Settings
     return;
   }
   const t = await tokens(shop, booking, settings);
-  await mail(customer.email, replace(subject, t), replace(body, t), settings);
+  const attachments = opts.calendar ? await calendarAttachment(shop, booking, settings) : [];
+  await mail(customer.email, replace(subject, t), replace(body, t), settings, attachments);
 }
 
 async function sendToAdmin(shop: string, booking: Booking, settings: Settings, subject: string, body: string) {
@@ -289,7 +366,8 @@ export async function resendConfirmation(shop: string, platform: string, booking
     booking,
     settings,
     settingTemplate(settings, `${copy.key}_subject`, copy.subject),
-    settingTemplate(settings, `${copy.key}_body`, copy.body)
+    settingTemplate(settings, `${copy.key}_body`, copy.body),
+    { calendar: true }
   );
 }
 
@@ -307,7 +385,8 @@ async function onCreated(booking: Booking) {
         fresh,
         settings,
         settingTemplate(settings, `${copy.key}_subject`, copy.subject),
-        settingTemplate(settings, `${copy.key}_body`, copy.body)
+        settingTemplate(settings, `${copy.key}_body`, copy.body),
+        { calendar: true }
       );
     } else {
       console.log(`[getbooqin mailer] booking_created customer email skipped for ${fresh.uid} — template "${copy.key}" disabled`);
@@ -346,7 +425,8 @@ async function onStatusChanged(booking: Booking, oldStatus: string, newStatus: s
         settings,
         "customer_confirmed_body",
         "Hi {{customer_name}},\n\nGood news — your {{booking_term}} is now confirmed.\n\n{{service}} with {{resource}}\n{{date}} at {{time}} {{timezone}}\n\n{{manage_url}}\n\nSee you then,\n{{business_name}}"
-      )
+      ),
+      { calendar: true }
     );
   }
 
@@ -403,7 +483,10 @@ async function onRescheduled(booking: Booking) {
       settings,
       "customer_moved_body",
       "Hi {{customer_name}},\n\nYour {{booking_term}} for {{service}} has been rescheduled.\n\nNew time: {{date}} at {{time}} {{timezone}}\nWith: {{resource}}\n\n{{manage_url}}\n\n{{business_name}}"
-    )
+    ),
+    // Same UID as the original, so a calendar moves the existing entry
+    // rather than leaving the customer with two.
+    { calendar: true }
   );
 }
 
@@ -530,6 +613,31 @@ export async function sendBillingNotice(
 ): Promise<void> {
   const settings = await getSettings(connection.shop, connection.platform);
   await mail(to, subject, body, settings);
+}
+
+/**
+ * The invoice, attached to the email that says the payment went
+ * through.
+ *
+ * One email, not two. A "payment received" note and an invoice
+ * delivered separately are the same fact arriving twice, and the second
+ * one always looks like a duplicate charge to somebody.
+ */
+export async function sendInvoiceEmail(
+  connection: Connection,
+  to: string,
+  subject: string,
+  body: string,
+  attachment: { filename: string; content: Buffer }
+): Promise<void> {
+  const settings = await getSettings(connection.shop, connection.platform);
+  await mail(to, subject, body, settings, [
+    {
+      filename: attachment.filename,
+      content: attachment.content as unknown as string,
+      contentType: "application/pdf",
+    },
+  ]);
 }
 
 export async function sendTeamInvite(connection: Connection, invite: ConnectionInvite, inviterEmail: string): Promise<void> {

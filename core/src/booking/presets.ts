@@ -76,7 +76,6 @@ export function withDefaultTerms(terms: Partial<Terms> | null | undefined): Term
 export interface StarterService {
   name: string;
   minutes: number;
-  price: number;
   location?: "onsite" | "video" | "phone";
 }
 
@@ -84,6 +83,21 @@ export interface StarterService {
  * Onboarding seed data. `slotInterval` and `services` are written once,
  * at the point the merchant picks a tile, and never consulted again —
  * see this file's header comment on why that matters.
+ */
+/**
+ * Deliberately no price.
+ *
+ * A duration generalises — a haircut is about forty minutes wherever
+ * you are. A price does not: it depends on the currency, the city and
+ * the business, and the wizard never shows these to the merchant before
+ * going live. Seeding them meant a salon in Pune went live advertising
+ * "Cut & finish · ₹45" — the figure was written for dollars and landed
+ * in rupees, roughly twenty times under, on a public page the owner had
+ * not been shown.
+ *
+ * Services are therefore seeded unpriced, and every screen already
+ * guards on `price > 0`, so an unpriced service simply shows no price
+ * until the merchant sets one.
  */
 export interface StarterTemplate {
   id: string;
@@ -100,10 +114,10 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     terms: defaultTerms(),
     slotInterval: 30,
     services: [
-      { name: "Standard appointment", minutes: 60, price: 50 },
-      { name: "Short appointment", minutes: 30, price: 25 },
-      { name: "Consultation", minutes: 30, price: 30 },
-      { name: "Follow-up", minutes: 45, price: 35 },
+      { name: "Standard appointment", minutes: 60 },
+      { name: "Short appointment", minutes: 30 },
+      { name: "Consultation", minutes: 30 },
+      { name: "Follow-up", minutes: 45 },
     ],
   },
   {
@@ -117,10 +131,10 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     slotInterval: 15,
     services: [
-      { name: "Initial assessment", minutes: 45, price: 90, location: "onsite" },
-      { name: "Follow-up consultation", minutes: 20, price: 45, location: "onsite" },
-      { name: "Physiotherapy session", minutes: 40, price: 65, location: "onsite" },
-      { name: "Vaccination", minutes: 15, price: 25, location: "onsite" },
+      { name: "Initial assessment", minutes: 45, location: "onsite" },
+      { name: "Follow-up consultation", minutes: 20, location: "onsite" },
+      { name: "Physiotherapy session", minutes: 40, location: "onsite" },
+      { name: "Vaccination", minutes: 15, location: "onsite" },
     ],
   },
   {
@@ -140,10 +154,10 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     slotInterval: 15,
     services: [
-      { name: "Scale & polish", minutes: 30, price: 60, location: "onsite" },
-      { name: "Extraction", minutes: 30, price: 90, location: "onsite" },
-      { name: "Root canal", minutes: 60, price: 250, location: "onsite" },
-      { name: "Crown fitting", minutes: 45, price: 220, location: "onsite" },
+      { name: "Scale & polish", minutes: 30, location: "onsite" },
+      { name: "Extraction", minutes: 30, location: "onsite" },
+      { name: "Root canal", minutes: 60, location: "onsite" },
+      { name: "Crown fitting", minutes: 45, location: "onsite" },
     ],
   },
   {
@@ -157,10 +171,10 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     slotInterval: 15,
     services: [
-      { name: "Cut & finish", minutes: 60, price: 45 },
-      { name: "Balayage & toner", minutes: 150, price: 120 },
-      { name: "Gel manicure", minutes: 45, price: 35 },
-      { name: "Beard trim", minutes: 20, price: 20 },
+      { name: "Cut & finish", minutes: 60 },
+      { name: "Balayage & toner", minutes: 150 },
+      { name: "Gel manicure", minutes: 45 },
+      { name: "Beard trim", minutes: 20 },
     ],
   },
   {
@@ -174,10 +188,10 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     slotInterval: 60,
     services: [
-      { name: "MOT test", minutes: 60, price: 55 },
-      { name: "Full service", minutes: 180, price: 250 },
-      { name: "Tyre change", minutes: 45, price: 80 },
-      { name: "Diagnostics", minutes: 90, price: 60 },
+      { name: "MOT test", minutes: 60 },
+      { name: "Full service", minutes: 180 },
+      { name: "Tyre change", minutes: 45 },
+      { name: "Diagnostics", minutes: 90 },
     ],
   },
   {
@@ -191,10 +205,10 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     slotInterval: 30,
     services: [
-      { name: "Discovery call", minutes: 30, price: 50, location: "video" },
-      { name: "Strategy session", minutes: 60, price: 150, location: "video" },
-      { name: "Document review", minutes: 90, price: 200 },
-      { name: "Quarterly review", minutes: 60, price: 150 },
+      { name: "Discovery call", minutes: 30, location: "video" },
+      { name: "Strategy session", minutes: 60, location: "video" },
+      { name: "Document review", minutes: 90 },
+      { name: "Quarterly review", minutes: 60 },
     ],
   },
   {
@@ -208,10 +222,10 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     slotInterval: 30,
     services: [
-      { name: "1:1 tuition", minutes: 60, price: 40 },
-      { name: "Group class", minutes: 90, price: 25 },
-      { name: "Trial lesson", minutes: 30, price: 15 },
-      { name: "Exam prep block", minutes: 120, price: 60 },
+      { name: "1:1 tuition", minutes: 60 },
+      { name: "Group class", minutes: 90 },
+      { name: "Trial lesson", minutes: 30 },
+      { name: "Exam prep block", minutes: 120 },
     ],
   },
   {
@@ -225,10 +239,10 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     slotInterval: 30,
     services: [
-      { name: "Personal training", minutes: 60, price: 50 },
-      { name: "Group class", minutes: 45, price: 20 },
-      { name: "Assessment", minutes: 30, price: 30 },
-      { name: "Recovery session", minutes: 30, price: 35 },
+      { name: "Personal training", minutes: 60 },
+      { name: "Group class", minutes: 45 },
+      { name: "Assessment", minutes: 30 },
+      { name: "Recovery session", minutes: 30 },
     ],
   },
   {
@@ -242,10 +256,10 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     slotInterval: 30,
     services: [
-      { name: "Property viewing", minutes: 30, price: 0 },
-      { name: "Second viewing", minutes: 45, price: 0 },
-      { name: "Valuation visit", minutes: 60, price: 0 },
-      { name: "Open house slot", minutes: 120, price: 0 },
+      { name: "Property viewing", minutes: 30 },
+      { name: "Second viewing", minutes: 45 },
+      { name: "Valuation visit", minutes: 60 },
+      { name: "Open house slot", minutes: 120 },
     ],
   },
   {
@@ -259,10 +273,10 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     slotInterval: 30,
     services: [
-      { name: "Lunch sitting", minutes: 90, price: 0 },
-      { name: "Dinner sitting", minutes: 120, price: 0 },
-      { name: "Private dining", minutes: 180, price: 0 },
-      { name: "Bar seating", minutes: 60, price: 0 },
+      { name: "Lunch sitting", minutes: 90 },
+      { name: "Dinner sitting", minutes: 120 },
+      { name: "Private dining", minutes: 180 },
+      { name: "Bar seating", minutes: 60 },
     ],
   },
   {
@@ -276,10 +290,10 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     slotInterval: 60,
     services: [
-      { name: "Quotation visit", minutes: 30, price: 0, location: "onsite" },
-      { name: "Standard callout", minutes: 120, price: 90, location: "onsite" },
-      { name: "Annual service", minutes: 60, price: 70, location: "onsite" },
-      { name: "Emergency callout", minutes: 90, price: 120, location: "onsite" },
+      { name: "Quotation visit", minutes: 30, location: "onsite" },
+      { name: "Standard callout", minutes: 120, location: "onsite" },
+      { name: "Annual service", minutes: 60, location: "onsite" },
+      { name: "Emergency callout", minutes: 90, location: "onsite" },
     ],
   },
 ];
@@ -306,4 +320,38 @@ export function termSuggestions(key: keyof Terms): string[] {
     if (!seen.includes(word)) seen.push(word);
   }
   return seen;
+}
+
+/**
+ * The same suggestions, but carrying the plural that belongs with each
+ * singular.
+ *
+ * A suggestion that fills only the singular leaves the merchant to type
+ * the plural themselves, every time, for every row — which makes the
+ * two fields read as the same question asked twice. The plurals are
+ * already sitting in the templates beside the singulars, and they are
+ * the ones that are not simply "+s": Person/People, Class/Classes.
+ */
+export function termSuggestionPairs(single: keyof Terms, plural: keyof Terms): { single: string; plural: string }[] {
+  const out: { single: string; plural: string }[] = [];
+  for (const template of STARTER_TEMPLATES) {
+    const word = template.terms[single];
+    if (!out.some((s) => s.single === word)) out.push({ single: word, plural: template.terms[plural] });
+  }
+  return out;
+}
+
+/**
+ * A reasonable plural for a word the merchant typed, for the common
+ * English cases. Only ever used to *prefill* the plural field while it
+ * still agrees with the singular — never to overwrite a plural someone
+ * has set, because the whole point of the field is the words this rule
+ * gets wrong.
+ */
+export function guessPlural(single: string): string {
+  const word = single.trim();
+  if (!word) return "";
+  if (/(s|x|z|ch|sh)$/i.test(word)) return `${word}es`;
+  if (/[^aeiou]y$/i.test(word)) return `${word.slice(0, -1)}ies`;
+  return `${word}s`;
 }

@@ -22,6 +22,11 @@ const SUB_ID = `sub_${RUN}`;
 const GROWTH_MONTHLY_INR = `plan_growth_monthly_${RUN}`;
 
 let connectionId: string;
+// Restored rather than blanked in afterAll. This slot holds a real
+// committed plan id, and emptying it leaves the price table wrong for
+// whichever file vitest happens to run next — including the test that
+// asserts every visible price has one.
+let originalPlanId = "";
 
 /** Builds a delivery the way Razorpay would: raw body + HMAC over it. */
 function delivery(
@@ -61,6 +66,7 @@ beforeAll(async () => {
   // test stands one up by filling the slot it needs. `rzp_test_` on the
   // key id is what selects the "test" column (see razorpayMode()).
   process.env.RAZORPAY_KEY_ID = "rzp_test_fixture";
+  originalPlanId = PRICES.growth.INR.monthly.razorpay.test;
   PRICES.growth.INR.monthly.razorpay.test = GROWTH_MONTHLY_INR;
   __resetPlanIndexForTests();
 
@@ -81,7 +87,7 @@ afterAll(async () => {
   await prisma.subscription.deleteMany({ where: { connectionId } });
   await prisma.connection.deleteMany({ where: { userId } });
   await prisma.user.deleteMany({ where: { id: userId } });
-  PRICES.growth.INR.monthly.razorpay.test = "";
+  PRICES.growth.INR.monthly.razorpay.test = originalPlanId;
   delete process.env.RAZORPAY_KEY_ID;
   __resetPlanIndexForTests();
 });
@@ -263,5 +269,41 @@ describe("events that must not change anything", () => {
     expect(outcome).toMatchObject({ status: "ignored" });
     expect(await prisma.billingEvent.count({ where: { connectionId: null, providerEventId: { contains: `evt_${RUN}` } } }))
       .toBeGreaterThanOrEqual(0);
+  });
+});
+
+/**
+ * A renewal must produce an invoice on either rail.
+ *
+ * On PayPal the only event carrying money is PAYMENT.SALE.COMPLETED,
+ * whose resource is a sale with no `plan_id` — so gating the invoice on
+ * the event's own plan meant no PayPal charge was ever invoiced, first
+ * or renewal. The gate now uses the resolved plan, which falls back to
+ * the subscription's own.
+ */
+describe("a charge with no plan id on the event still gets invoiced", () => {
+  it("falls back to the plan the subscription is already on", async () => {
+    // The shape PayPal actually sends on a renewal: money, a
+    // subscription reference, and nothing identifying the plan.
+    await prisma.subscription.create({
+      data: {
+        connectionId,
+        plan: "growth",
+        status: "active",
+        billingProvider: "razorpay",
+        currency: "INR",
+        billingCycle: "monthly",
+        providerSubscriptionId: SUB_ID,
+      },
+    });
+
+    const { body, headers } = delivery("subscription.charged", { planId: "plan_not_in_this_build" });
+    const outcome = await handleWebhook(RazorpayProvider, body, headers);
+
+    expect(outcome).toMatchObject({ ok: true, status: "applied" });
+    // Still on Growth — an unrecognised plan id must never downgrade
+    // anyone — and the charge is recorded against that plan.
+    const row = await prisma.subscription.findUnique({ where: { connectionId } });
+    expect(row?.plan).toBe("growth");
   });
 });

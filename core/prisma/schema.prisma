@@ -104,6 +104,8 @@ model Connection {
 
   @@unique([platform, shop])
   @@index([userId])
+  lifecycleEmails LifecycleEmail[]
+  invoices        Invoice[]
 }
 
 // One row per user granted access to a Connection — the multi-user team
@@ -229,8 +231,19 @@ model ServiceConfig {
   bufferAfterMin               Int               @default(0)
   capacity                     Int               @default(1)
   locationType                 String            @default("onsite") // onsite | video | phone
+  // Deposit policy for this service. Dormant since the gateway code was
+  // cut; the fields survived because tables were left alone.
+  //
+  //   paymentRequired false  -> nothing is owed at booking time
+  //   depositAmount   > 0    -> that fixed amount
+  //   depositPercent  1-99   -> that share of the price
+  //   depositPercent  100    -> the full price
+  //
+  // Fixed wins over percent when both are set: a merchant who typed an
+  // amount meant the amount.
   paymentRequired              Boolean           @default(false)
   depositPercent               Int               @default(100)
+  depositAmount                Float             @default(0)
   // Storefront services-grid swatch colour — a GetBooqin-only display
   // preference, not a platform product concept, so unlike the rest of
   // ServiceConfig this is plain local state, not synced via metafields.
@@ -624,16 +637,55 @@ model Waitlist {
   @@index([platform, shop, customerId, status])
 }
 
+/// One payment asked for against a booking, and whether it arrived.
+///
+/// A *request*, not a gateway transaction — that is the difference from
+/// what this table was originally written for. GetBooqin never touches
+/// the money: the merchant supplies a UPI ID or a PayPal.me handle, we
+/// render a link and a QR the customer pays through directly, and the
+/// merchant confirms it. There is no provider to ask and no webhook to
+/// wait for, so `status` is the merchant's own assertion rather than
+/// something verified.
+///
+/// Shaped so that can stop being true without a rewrite: the day a
+/// merchant connects their own Razorpay key, `link` becomes a Payment
+/// Link, `transactionId` holds the provider's payment id, and a webhook
+/// sets `status` instead of a person. The policy, the screens and the
+/// emails around it do not change.
 model Payment {
   id            Int      @id @default(autoincrement())
   shop          String
   platform      String   @default("shopify")
   bookingId     Int
+
+  /// deposit|balance|full — what this request is for.
+  kind          String   @default("deposit")
+  /// upi|paypal|cash|bank|other — how the customer was asked to pay.
+  method        String   @default("upi")
+  /// Short human reference, shown to both sides and carried in the UPI
+  /// link, so a line on a bank statement can be matched to a booking.
+  reference     String   @default("")
+  /// The upi:// or paypal.me link the customer was given. Stored rather
+  /// than rebuilt, so resending cannot quietly change the amount or the
+  /// payee after the fact.
+  link          String   @default("")
+
+  /// Retained for a future provider-backed payment. Empty for a request
+  /// a merchant confirmed by hand.
   gateway       String   @default("")
   transactionId String   @default("")
+  /// The UTR the customer quoted. Evidence, not proof — it is what the
+  /// merchant matches against their statement.
+  utr           String   @default("")
+
   amount        Float    @default(0)
   currency      String   @default("USD")
-  status        String   @default("pending") // pending|paid|failed|refunded
+  /// pending|paid|cancelled|refunded
+  status        String   @default("pending")
+  /// Who marked it paid. Null when nobody has.
+  confirmedByUserId String?
+  paidAt        DateTime?
+
   payload       String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -758,6 +810,15 @@ model Subscription {
   taxId      String @default("")
   taxStatus  String @default("")
 
+  // Who the invoice is made out to, and where they are. Captured at
+  // checkout beside the tax identity rather than derived from
+  // settings.business_name, which is a trading name someone typed for a
+  // booking page — an invoice has to name the entity being billed, and
+  // a tax invoice has to carry its address. Blank until the first
+  // checkout; invoicing refuses rather than guessing.
+  billingName    String @default("")
+  billingAddress String @default("")
+
   providerCustomerId     String?
   providerSubscriptionId String? @unique
 
@@ -862,4 +923,105 @@ model AdminAuditLog {
   @@index([actorUserId])
   @@index([targetType, targetId])
   @@index([createdAt])
+}
+
+/// One row per lifecycle email we have decided to send to an account —
+/// welcome, first booking, trial nudges. Exists purely so each of them
+/// is sent exactly once.
+///
+/// The unique index is the guard, not application logic: the trial
+/// sweep runs every ten minutes and would otherwise re-send "your trial
+/// ends in 3 days" every ten minutes for three days. The row is claimed
+/// *before* the send and deleted again if the send throws, so a crashed
+/// send is retried by the next sweep rather than silently swallowed.
+model LifecycleEmail {
+  id           String   @id @default(cuid())
+  connectionId String
+  /// welcome|first_booking|trial_ending|trial_ended — see core/src/lifecycle.ts.
+  /// Not an enum, for the same reason plan isn't: adding a touch should
+  /// not need a migration.
+  kind         String
+  sentAt       DateTime @default(now())
+
+  connection Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, kind])
+  @@index([kind])
+}
+
+/// A tax invoice that has been issued. One row per payment taken.
+///
+/// Every field is a **snapshot**, including our own name, address and
+/// GSTIN. That is not redundancy: an invoice is a legal document that
+/// must continue to say what it said on the day it was issued, and
+/// rendering one from today's configuration would silently rewrite
+/// history the first time the company moves office or the price
+/// changes. Nothing here is ever updated after insert.
+model Invoice {
+  id           String @id @default(cuid())
+  connectionId String
+
+  /// The full human-readable number, e.g. "GB/2026-27/0001". Unique
+  /// across the system — India requires a consecutive series, and a
+  /// duplicate is the kind of thing an auditor opens with.
+  number String @unique
+  /// The series this number was drawn from, e.g. "GB/2026-27".
+  series   String
+  issuedAt DateTime @default(now())
+
+  // --- Seller, as it stood when this was issued ------------------
+  sellerName    String
+  sellerAddress String
+  sellerGstin   String @default("")
+  sellerCountry String @default("IN")
+
+  // --- Buyer -----------------------------------------------------
+  buyerName    String
+  buyerAddress String @default("")
+  buyerEmail   String
+  buyerTaxId   String @default("")
+  buyerCountry String @default("")
+
+  /// india_gst|export_zero_rated — see core/src/billing/tax.ts.
+  taxStatus String
+  /// The declaration this invoice carries. Frozen with the rest.
+  taxNote   String @default("")
+
+  currency String
+  /// Minor units, like every other amount in the billing code.
+  amountMinor    Int
+  taxAmountMinor Int @default(0)
+
+  planId       String
+  billingCycle String
+  periodStart  DateTime?
+  periodEnd    DateTime?
+
+  provider String
+  /// The payment this invoices. Unique, and that uniqueness is the
+  /// idempotency guard: a webhook redelivery, a reconciliation running
+  /// beside it, and a manual replay all try to insert the same payment
+  /// id, and exactly one wins. Nobody is ever invoiced twice for one
+  /// charge.
+  providerPaymentId String? @unique
+  providerInvoiceId String?
+
+  createdAt  DateTime   @default(now())
+  connection Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, issuedAt])
+}
+
+/// The next number in each invoice series.
+///
+/// A separate table rather than a Postgres sequence because the series
+/// resets every Indian financial year and the reset has to be visible
+/// and auditable, not an implementation detail of a sequence object.
+/// Handed out inside a transaction with the row locked — see
+/// core/src/billing/invoiceNumber.ts.
+model InvoiceCounter {
+  series String @id
+  next   Int    @default(1)
+
+  updatedAt DateTime @updatedAt
 }

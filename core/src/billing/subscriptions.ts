@@ -200,3 +200,31 @@ export async function applyProviderState(
     },
   });
 }
+
+/**
+ * The invoice recipient and tax identity, saved without starting a
+ * checkout.
+ *
+ * These have to be settable on their own: an invoice cannot be issued
+ * without a billing name and address, and a merchant who has already
+ * subscribed would otherwise have no way to supply them at all.
+ *
+ * Deliberately does not touch plan, status, currency or the mandate —
+ * this is contact information, not a billing change.
+ */
+export async function saveBillingDetails(
+  connectionId: string,
+  details: { country: string; taxId: string; taxStatus: string; billingName: string; billingAddress: string }
+): Promise<void> {
+  await ensureSubscription(connectionId);
+  await prisma.subscription.update({
+    where: { connectionId },
+    data: {
+      taxCountry: details.country,
+      taxId: details.taxId,
+      taxStatus: details.taxStatus,
+      billingName: details.billingName,
+      billingAddress: details.billingAddress,
+    },
+  });
+}

@@ -172,11 +172,23 @@ export async function inviteMember({
     where: { id: connectionId },
     select: { shop: true, platform: true },
   });
-  let effectiveRole = role;
+  // Refuse, rather than quietly granting a different role.
+  //
+  // This used to downgrade the request to "write" and report success —
+  // so a merchant inviting a receptionist as **read** got a success
+  // toast, and an account that could create, edit and delete bookings,
+  // services and customers. Nothing on the form, in the toast, or on
+  // the pending-invite row said why.
+  //
+  // updateMemberRole already refuses the same operation loudly, with
+  // the reasoning written above it: "a select that appears to work and
+  // doesn't is worse than one that says why." That applies at least as
+  // much to assigning a role as to changing one, since inviting is the
+  // more common path.
   if (connection && role !== "write") {
-    const ent = await entitlementsForShop(connection.shop, connection.platform);
-    if (ent && !ent.features.has("team_roles")) effectiveRole = "write";
+    await assertFeature(connection.shop, connection.platform, "team_roles");
   }
+  const effectiveRole = role;
 
   // Case-insensitive: Clerk-side emails aren't guaranteed to already be
   // lower-cased, so an exact-match lookup against a hand-typed invite email

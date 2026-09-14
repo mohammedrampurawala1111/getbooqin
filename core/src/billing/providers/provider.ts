@@ -51,14 +51,120 @@ export interface NormalisedEvent {
   billingCycle: BillingCycle | null;
   currentPeriodEnd: Date | null;
   cancelAtPeriodEnd: boolean;
+  /**
+   * The money that actually moved, when this event is one that moved
+   * any. Only a charge carries it — an activation or a cancellation
+   * has no payment attached — and it is what an invoice is issued
+   * against, so its `id` doubles as the once-per-payment key.
+   *
+   * Null rather than zero when absent: "no payment in this event" and
+   * "a payment of nothing" are different facts, and only one of them
+   * should produce an invoice.
+   */
+  payment: {
+    id: string;
+    /** Minor units, as the provider reports them. */
+    amountMinor: number;
+    currency: string;
+    /** The provider's own invoice for this charge, if it makes one. */
+    providerInvoiceId: string | null;
+  } | null;
 }
 
+/** What a provider knows about a subscription when asked directly. */
+export interface ProviderSubscriptionSnapshot {
+  providerSubscriptionId: string;
+  /** The vendor's own word for the state, kept for logs and support questions. */
+  providerStatus: string;
+  /** Null when the subscription is on a plan id this build doesn't know. */
+  plan: PlanId | null;
+  currency: Currency | null;
+  billingCycle: BillingCycle | null;
+  providerCustomerId: string | null;
+  currentPeriodEnd: Date | null;
+  cancelAtPeriodEnd: boolean;
+}
+
+/** One payment that was actually taken. An invoice is issued against one of these. */
+export interface ProviderCharge {
+  paymentId: string;
+  providerInvoiceId: string;
+  amountMinor: number;
+  currency: string;
+  paidAt: Date | null;
+  periodStart: Date | null;
+  periodEnd: Date | null;
+}
+
+export interface CreatedSubscription {
+  providerSubscriptionId: string;
+  /** Where to send the merchant to authorise the mandate. */
+  approvalUrl: string;
+}
+
+export interface CreateSubscriptionArgs {
+  connectionId: string;
+  plan: PlanId;
+  currency: Currency;
+  cycle: BillingCycle;
+  customer?: { name?: string; email?: string };
+  /**
+   * Where the provider should return the merchant afterwards.
+   *
+   * Honoured by whoever can. PayPal takes return/cancel URLs on the
+   * subscription itself; Razorpay's hosted page has no per-request
+   * equivalent and ignores this. A provider that ignores it is not
+   * broken — the Billing page reconciles on load either way.
+   */
+  returnUrl?: string;
+  cancelUrl?: string;
+}
+
+/**
+ * Everything the billing code needs from a payment vendor.
+ *
+ * Wider than it was: it used to cover only the webhook edge, while
+ * checkout.ts reached straight into the Razorpay module for creating
+ * and cancelling mandates. That was fine with one rail and became the
+ * thing in the way the moment there were two — so the lifecycle is part
+ * of the seam now, and nothing outside `providers/` names a vendor.
+ */
 export interface BillingProvider {
   id: Exclude<ProviderId, "manual">;
-  /** True only if the raw body genuinely came from the provider. Never parse before this passes. */
-  verifyWebhook(rawBody: string, headers: Headers): boolean;
+
+  /**
+   * True only if the raw body genuinely came from the provider. Never
+   * parse before this passes.
+   *
+   * Async because PayPal's answer is a round trip: verification posts
+   * the headers and body back to PayPal along with the webhook id.
+   * Razorpay's is a local HMAC and returns immediately, but one
+   * signature has to cover both.
+   */
+  verifyWebhook(rawBody: string, headers: Headers): Promise<boolean>;
+
   /** Vendor payload → our vocabulary. Returns null for a shape we don't recognise at all. */
   parseEvent(rawBody: string, headers: Headers): NormalisedEvent | null;
+
   /** Is this provider configured well enough to be used at all? */
   isConfigured(): boolean;
+
+  /** The vendor's own id for one of our plans, or "" when it has none. */
+  planId(plan: PlanId, currency: Currency, cycle: BillingCycle): string;
+
+  createSubscription(args: CreateSubscriptionArgs): Promise<CreatedSubscription>;
+
+  /** Null when the vendor has never heard of it — a live id after a mode switch reads like this. */
+  fetchSubscription(id: string): Promise<ProviderSubscriptionSnapshot | null>;
+
+  /** Every paid charge on a subscription, oldest or newest first — callers sort. */
+  fetchPaidCharges(id: string): Promise<ProviderCharge[]>;
+
+  cancelSubscription(id: string, opts: { immediately?: boolean }): Promise<void>;
+
+  /** The vendor's state in our terms, or null for states that grant nothing. */
+  statusFor(providerStatus: string): "active" | "past_due" | "canceled" | null;
+
+  /** Could this mandate still take money? Errs toward true when unsure. */
+  isLive(providerStatus: string): boolean;
 }

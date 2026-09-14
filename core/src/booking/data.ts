@@ -38,6 +38,7 @@ export interface CatalogService {
   locationType: string;
   paymentRequired: boolean;
   depositPercent: number;
+  depositAmount: number;
   color: string;
   position: number;
   status: boolean;
@@ -64,6 +65,7 @@ function mergeCatalog(config: ServiceConfig, product: ProductCache | null): Cata
     locationType: config.locationType,
     paymentRequired: config.paymentRequired,
     depositPercent: config.depositPercent,
+    depositAmount: config.depositAmount,
     color: config.color,
     position: config.position,
     status: config.status,
@@ -124,6 +126,7 @@ export interface ServiceConfigInput {
   location_type?: "onsite" | "video" | "phone";
   payment_required?: boolean;
   deposit_percent?: number;
+  deposit_amount?: number;
   color?: string;
   position?: number;
   status?: boolean;
@@ -175,6 +178,8 @@ export async function saveServiceConfig(shop: string, platform: string, data: Se
     // not supplied, same as `color` below, so a service edited today
     // doesn't silently zero a percentage a merchant set before the trim.
     ...(data.payment_required !== undefined ? { paymentRequired: data.payment_required } : {}),
+    ...(data.deposit_percent !== undefined ? { depositPercent: data.deposit_percent } : {}),
+    ...(data.deposit_amount !== undefined ? { depositAmount: data.deposit_amount } : {}),
     // A 100% default on an unset (or 0) price is meaningless and becomes a
     // live billing rule the moment a merchant later sets a price without
     // ever touching this field (Defect Dossier's BQ-22 finding — Legal's
@@ -205,9 +210,20 @@ export async function saveServiceConfig(shop: string, platform: string, data: Se
   const exclusive = row.capacity <= 1;
   const saved = await translateOverlapViolation(() =>
     prisma.$transaction(async (tx) => {
-      const service = id
-        ? await tx.serviceConfig.update({ where: { id }, data: row })
-        : await tx.serviceConfig.create({ data: row });
+      // Scoped by shop for the same reason as saveResource above —
+      // ServiceConfig.id is likewise a global autoincrement. This
+      // caller happens to pre-check ownership, but the function must
+      // not depend on that.
+      let service;
+      if (id) {
+        const { count } = await tx.serviceConfig.updateMany({ where: { id, shop, platform }, data: row });
+        if (count === 0) {
+          throw new GetBooqinError("getbooqin_not_found", "That isn't a service on this account.", 404);
+        }
+        service = await tx.serviceConfig.findFirstOrThrow({ where: { id, shop, platform } });
+      } else {
+        service = await tx.serviceConfig.create({ data: row });
+      }
 
       await tx.booking.updateMany({
         where: { shop, serviceId: service.id, startUtc: { gt: new Date() }, exclusive: !exclusive },
@@ -465,9 +481,28 @@ export async function saveResource(shop: string, platform: string, data: Resourc
     status: data.status ?? true,
   };
 
-  const saved = id
-    ? await prisma.resource.update({ where: { id }, data: row })
-    : await prisma.resource.create({ data: row });
+  // `updateMany` scoped by shop, not `update` by id alone.
+  //
+  // Resource.id is a global autoincrement shared across every tenant, so
+  // an id from a URL is a guess at somebody else's row. Updating by id
+  // with the *caller's* shop in `row` did not merely leak the row — it
+  // re-parented it: `UPDATE Resource SET shop='attacker' WHERE id=42`
+  // moved a victim's practitioner into the attacker's business, where it
+  // vanished from the victim's lists, their availability and every
+  // future booking. Iterating ids would have emptied the platform.
+  //
+  // Scoping the write itself rather than trusting the caller to
+  // pre-check: one caller already did (services.$serviceId.tsx), the
+  // other did not, and a function that is only safe when called
+  // correctly is not safe.
+  let saved;
+  if (id) {
+    const { count } = await prisma.resource.updateMany({ where: { id, shop, platform }, data: row });
+    if (count === 0) throw new GetBooqinError("getbooqin_not_found", "That isn't a resource on this account.", 404);
+    saved = (await prisma.resource.findFirstOrThrow({ where: { id, shop, platform } }));
+  } else {
+    saved = await prisma.resource.create({ data: row });
+  }
 
   if (data.schedule) {
     await setSchedule(shop, saved.id, data.schedule);

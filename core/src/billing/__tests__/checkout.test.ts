@@ -8,7 +8,7 @@
  * mandate alongside a live one, a re-submitted form, a plan nobody can
  * actually be billed for.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import prisma from "../../db.js";
 import { startCheckout, parsePlanSelection } from "../checkout.js";
 import { PRICES } from "../plans.js";
@@ -31,6 +31,18 @@ beforeAll(async () => {
     data: { userId, platform: "manual", shop: `co-${RUN}`, credentials: "", status: "active" },
   });
   connectionId = conn.id;
+
+  // The shop's own currency, which is what resolveBillingCurrency()
+  // reads. Without it every test here silently billed in USD — which
+  // did not matter while one rail carried all three currencies, and
+  // matters entirely now that USD routes to PayPal and INR to Razorpay.
+  await prisma.shopSettings.create({
+    data: {
+      shop: conn.shop,
+      platform: conn.platform,
+      data: JSON.stringify({ currency: "INR", timezone: "Asia/Kolkata" }),
+    },
+  });
 });
 
 afterEach(async () => {
@@ -38,6 +50,7 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
+  await prisma.shopSettings.deleteMany({ where: { shop: `co-${RUN}` } });
   await prisma.subscription.deleteMany({ where: { connectionId } });
   await prisma.connection.deleteMany({ where: { userId } });
   await prisma.user.deleteMany({ where: { id: userId } });
@@ -144,12 +157,50 @@ describe("startCheckout() refusals", () => {
       .rejects.not.toMatchObject({ code: "getbooqin_plan_unavailable" });
   });
 
-  it("surfaces a provider failure as a 502 without leaking vendor detail to the merchant", async () => {
+  it("refuses before touching the vendor when no plan exists there for this currency", async () => {
+    // A price in plans.ts is not a plan at the provider. Refusing here
+    // rather than letting createSubscription fail means no mandate can
+    // be half-created, and the merchant gets an answer about their
+    // currency instead of a generic failure.
     await subscribe({ plan: "free", status: "free" });
+
     await expect(startCheckout({ connectionId, country: "IN", plan: "growth", cycle: "monthly" })).rejects.toMatchObject({
-      code: "getbooqin_checkout_failed",
-      status: 502,
+      code: "getbooqin_provider_unavailable",
+      status: 503,
     });
+  });
+
+  it("surfaces a genuine provider failure as a 502 without leaking vendor detail", async () => {
+    // Past every guard, so what fails is the vendor call itself. The
+    // merchant must get one plain sentence, never Razorpay's own error
+    // text — that is operator detail and it reads as our product being
+    // broken in a way they could fix.
+    const original = PRICES.growth.INR.monthly.razorpay;
+    PRICES.growth.INR.monthly.razorpay = { test: `plan_fail_${RUN}`, live: "" };
+    process.env.RAZORPAY_KEY_ID = "rzp_test_fixture";
+    process.env.RAZORPAY_KEY_SECRET = "secret_fixture";
+    process.env.RAZORPAY_WEBHOOK_SECRET = "whsec_fixture";
+    __resetPlanIndexForTests();
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: { description: "Merchant account is suspended" } }), { status: 400 })
+    );
+
+    await subscribe({ plan: "free", status: "free" });
+
+    const failure = await startCheckout({ connectionId, country: "IN", plan: "growth", cycle: "monthly" }).catch(
+      (e) => e
+    );
+
+    expect(failure).toMatchObject({ code: "getbooqin_checkout_failed", status: 502 });
+    expect(String(failure.message)).not.toContain("suspended");
+
+    vi.restoreAllMocks();
+    PRICES.growth.INR.monthly.razorpay = original;
+    delete process.env.RAZORPAY_KEY_ID;
+    delete process.env.RAZORPAY_KEY_SECRET;
+    delete process.env.RAZORPAY_WEBHOOK_SECRET;
+    __resetPlanIndexForTests();
   });
 
   it("writes no plan or status when checkout fails", async () => {
@@ -161,6 +212,64 @@ describe("startCheckout() refusals", () => {
     expect(row?.plan).toBe("free");
     expect(row?.status).toBe("free");
     expect(row?.providerSubscriptionId).toBeNull();
+  });
+});
+
+describe("the mandate the app doesn't know is live", () => {
+  /**
+   * The failure these guard is the one a QA pass hit in production: a
+   * subscription went active at Razorpay, the webhook never arrived, and
+   * the local row still said "trialing". Every guard in startCheckout
+   * reads that row — so the merchant was offered, and could take, a
+   * second recurring debit beside the one already charging them.
+   */
+  function providerSays(body: unknown, status = 200) {
+    return vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+      );
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("asks the provider before trusting a row that says the account isn't paying", async () => {
+    process.env.RAZORPAY_KEY_ID = "rzp_test_fixture";
+    process.env.RAZORPAY_KEY_SECRET = "secret_fixture";
+    // Saved, not assumed empty: this slot carries a real committed plan
+    // id, and restoring it to "" leaves the price table wrong for every
+    // test that runs after this one.
+    const original = PRICES.growth.INR.monthly.razorpay.test;
+    PRICES.growth.INR.monthly.razorpay.test = `plan_co_${RUN}`;
+    __resetPlanIndexForTests();
+
+    await subscribe({
+      plan: "growth",
+      status: "trialing",
+      billingCycle: "monthly",
+      billingProvider: "razorpay",
+      providerSubscriptionId: `sub_co_${RUN}`,
+      trialEndsAt: new Date(Date.now() + 20 * 86_400_000),
+    });
+
+    // Razorpay: this is active, and on Growth monthly.
+    providerSays({
+      id: `sub_co_${RUN}`,
+      plan_id: `plan_co_${RUN}`,
+      status: "active",
+      current_end: Math.floor(Date.now() / 1000) + 30 * 86_400,
+    });
+
+    // Reconciled first, so the "already subscribed" guard now sees the
+    // truth and refuses — instead of cheerfully starting a second one.
+    await expect(startCheckout({ connectionId, country: "IN", plan: "growth", cycle: "monthly" })).rejects.toMatchObject({
+      code: "getbooqin_already_subscribed",
+    });
+
+    PRICES.growth.INR.monthly.razorpay.test = original;
+    delete process.env.RAZORPAY_KEY_ID;
+    delete process.env.RAZORPAY_KEY_SECRET;
+    __resetPlanIndexForTests();
   });
 });
 

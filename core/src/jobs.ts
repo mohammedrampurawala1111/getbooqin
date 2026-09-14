@@ -64,6 +64,7 @@
  */
 import prisma from "./db.js";
 import * as Mailer from "./booking/mailer.js";
+import { runTrialNudges, type TrialNudgeResult } from "./lifecycle.js";
 
 /** Every job this module knows about, with how often it's expected to run. */
 export const JOBS = {
@@ -84,6 +85,16 @@ export const JOBS = {
      * only a *concurrent* one is turned away.
      */
      leaseSeconds: 300,
+  },
+  /** Trial-ending and trial-ended emails. See runTrialNudges(). */
+  lifecycle: {
+    label: "Lifecycle emails",
+    // Shares the reminder interval — one timer in combined.js drives
+    // both. A trial nudge is not time-critical to the minute; what it
+    // must not do is miss a day, and ten minutes is comfortably inside
+    // that.
+    expectedEveryMinutes: 10,
+    leaseSeconds: 300,
   },
 } as const;
 
@@ -228,6 +239,16 @@ export function runReminders(): Promise<JobOutcome<RemindersResult>> {
     const reminders = await Mailer.sendReminders();
     return { reminders_sent: reminders.sent };
   });
+}
+
+/**
+ * Trial nudges. Separate from the reminder sweep rather than folded into
+ * it, so that a failure in one is not recorded as a failure of the
+ * other: reminders going out is a promise to a customer, and it must not
+ * read as broken because a trial email bounced.
+ */
+export function runLifecycle(): Promise<JobOutcome<TrialNudgeResult>> {
+  return record("lifecycle", () => runTrialNudges());
 }
 
 /** Current state of one job, including "it has never run". */

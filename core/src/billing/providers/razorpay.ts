@@ -122,11 +122,23 @@ function fromUnixSeconds(value: unknown): Date | null {
 export const RazorpayProvider: BillingProvider = {
   id: "razorpay",
 
+  /**
+   * Both halves, deliberately.
+   *
+   * API credentials alone would let this rail create mandates it can
+   * never be told about — money taken, plan never granted, which is the
+   * exact failure reconciliation exists to survive rather than to
+   * make acceptable. A rail missing either half is not usable, and
+   * saying so up front beats discovering it after a customer has paid.
+   */
   isConfigured(): boolean {
-    return !!process.env.RAZORPAY_WEBHOOK_SECRET;
+    return !!process.env.RAZORPAY_KEY_ID && !!process.env.RAZORPAY_KEY_SECRET && !!process.env.RAZORPAY_WEBHOOK_SECRET;
   },
 
-  verifyWebhook(rawBody: string, headers: Headers): boolean {
+  // Async only to match the interface — Razorpay's answer is a local
+  // HMAC and needs no round trip. PayPal's does, and one signature has
+  // to cover both.
+  async verifyWebhook(rawBody: string, headers: Headers): Promise<boolean> {
     const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
     // No secret configured means nothing can be trusted. Fail closed —
     // this is the one place in billing where falling open would let
@@ -170,6 +182,20 @@ export const RazorpayProvider: BillingProvider = {
       headers.get(EVENT_ID_HEADER) ||
       `${eventName}:${String(subscription?.id ?? "unknown")}:${String(body.created_at ?? "0")}`;
 
+    // subscription.charged carries the payment beside the subscription.
+    // No other event does, which is exactly right — a charge is the
+    // only thing there is to invoice.
+    const paymentEntity = asRecord(asRecord(payload?.payment)?.entity);
+    const payment =
+      paymentEntity && typeof paymentEntity.id === "string" && typeof paymentEntity.amount === "number"
+        ? {
+            id: paymentEntity.id,
+            amountMinor: paymentEntity.amount,
+            currency: typeof paymentEntity.currency === "string" ? paymentEntity.currency : "",
+            providerInvoiceId: typeof paymentEntity.invoice_id === "string" ? paymentEntity.invoice_id : null,
+          }
+        : null;
+
     const notes = asRecord(subscription?.notes);
     const connectionId =
       typeof notes?.connection_id === "string" && notes.connection_id ? notes.connection_id : null;
@@ -193,8 +219,24 @@ export const RazorpayProvider: BillingProvider = {
       // inside its paid period.
       cancelAtPeriodEnd:
         subscription?.status === "cancelled" && !!fromUnixSeconds(subscription?.current_end),
+      payment,
     };
   },
+
+  // The lifecycle half of the interface. These are thin wrappers over
+  // the functions below rather than the implementations themselves,
+  // because those predate the seam and are imported by name in a few
+  // places (and by the plan-creation scripts); moving them wholesale
+  // would be churn for no gain.
+  // "" rather than null for "no plan here", matching the interface —
+  // the two mean the same thing and one shape is easier to check.
+  planId: (plan, currency, cycle) => providerPlanId(plan, currency, cycle) ?? "",
+  createSubscription: (args) => createSubscription(args),
+  fetchSubscription: (id) => fetchSubscription(id),
+  fetchPaidCharges: (id) => fetchPaidCharges(id),
+  cancelSubscription: (id, opts) => cancelSubscription(id, opts),
+  statusFor: statusFromProvider,
+  isLive: isLiveAtProvider,
 };
 
 /** Resets the memoised plan index. Tests only — production rebuilds on a mode change. */
@@ -251,6 +293,8 @@ export async function createSubscription(args: {
   currency: Currency;
   cycle: BillingCycle;
   customerNotify?: boolean;
+  /** Passed to Razorpay so its own receipts have somewhere to go. */
+  customer?: { name?: string; email?: string };
 }): Promise<CreatedSubscription> {
   const authorization = auth();
   if (!authorization) {
@@ -278,7 +322,35 @@ export async function createSubscription(args: {
       // merchant authorising a recurring debit should get a record of it
       // from the party taking the money, not only from us.
       customer_notify: args.customerNotify === false ? 0 : 1,
+      // customer_notify on its own does nothing: Razorpay creates a
+      // customer from the checkout with only a phone number, so there
+      // is no address for it to notify and its per-charge invoice is
+      // generated and never sent. Supplying these is what makes that
+      // setting mean anything.
+      ...(args.customer?.email || args.customer?.name
+        ? {
+            customer: {
+              ...(args.customer.name ? { name: args.customer.name } : {}),
+              ...(args.customer.email ? { email: args.customer.email } : {}),
+            },
+          }
+        : {}),
       notes: { connection_id: args.connectionId },
+      // No callback_url here, deliberately. It looks like the obvious
+      // fix for a merchant being stranded on api.razorpay.com after
+      // paying — but it is a *Checkout widget* option, not a
+      // Subscriptions API one: create-subscription accepts only
+      // plan_id, total_count, quantity, start_at, expire_by,
+      // customer_notify, addons, offer_id and notes, and Razorpay
+      // rejects a request carrying anything else. Sending it would turn
+      // "no return redirect" into "no checkout at all".
+      //
+      // Getting the merchant back needs the hosted short_url replaced
+      // with Razorpay Standard Checkout (subscription_id passed to
+      // checkout.js), which is a different integration, not a
+      // parameter. Until then the Billing page reconciles against the
+      // API on load, so a merchant who navigates back themselves sees
+      // the right plan.
     }),
   });
 
@@ -295,6 +367,159 @@ export async function createSubscription(args: {
   }
 
   return { providerSubscriptionId: body.id, approvalUrl: body.short_url };
+}
+
+/**
+ * What Razorpay currently believes about a subscription.
+ *
+ * The webhook is how we normally learn this, and for renewals it is the
+ * only way — month two has no browser and no session. But a webhook is
+ * a message someone else has to deliver, and when it does not arrive
+ * the account silently stays on its old plan while the card is being
+ * charged. That is the one failure a billing system must not have, so
+ * this exists to *ask* rather than wait: same question, pull instead of
+ * push.
+ *
+ * Razorpay keeps webhooks separately per mode, so a test-mode payment
+ * against an endpoint only registered in live mode delivers nothing at
+ * all — no error anywhere, just an account that never activates.
+ */
+export interface ProviderSubscriptionSnapshot {
+  providerSubscriptionId: string;
+  /** Razorpay's own word: created|authenticated|active|pending|halted|cancelled|completed|expired|paused. */
+  providerStatus: string;
+  /** Null when the subscription is on a plan id this build doesn't know. */
+  plan: PlanId | null;
+  currency: Currency | null;
+  billingCycle: BillingCycle | null;
+  providerCustomerId: string | null;
+  currentPeriodEnd: Date | null;
+  cancelAtPeriodEnd: boolean;
+}
+
+export async function fetchSubscription(id: string): Promise<ProviderSubscriptionSnapshot | null> {
+  const authorization = auth();
+  if (!authorization) throw new Error("RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not configured.");
+
+  const response = await fetch(`${API_BASE}/subscriptions/${encodeURIComponent(id)}`, {
+    headers: { Authorization: authorization },
+  });
+
+  // A subscription created in the other mode is simply not there. Null,
+  // not an exception: "Razorpay has never heard of this" is an answer,
+  // and the caller decides what it means.
+  if (response.status === 404) return null;
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: { description?: string } };
+    throw new Error(`Razorpay refused the lookup (${response.status}): ${body.error?.description ?? "no detail"}`);
+  }
+
+  const sub = asRecord(await response.json());
+  if (!sub || typeof sub.id !== "string") return null;
+
+  const matched = typeof sub.plan_id === "string" ? planIdIndex().get(sub.plan_id) : undefined;
+
+  return {
+    providerSubscriptionId: sub.id,
+    providerStatus: typeof sub.status === "string" ? sub.status : "",
+    plan: matched?.plan ?? null,
+    currency: matched?.currency ?? null,
+    billingCycle: matched?.cycle ?? null,
+    providerCustomerId: typeof sub.customer_id === "string" ? sub.customer_id : null,
+    currentPeriodEnd: fromUnixSeconds(sub.current_end),
+    cancelAtPeriodEnd: sub.status === "cancelled" && !!fromUnixSeconds(sub.current_end),
+  };
+}
+
+/**
+ * Razorpay's subscription status in our terms, or null for the states
+ * that are not a subscription outcome at all.
+ *
+ * `created` and `authenticated` are both "no money has moved" —
+ * authenticated in particular is a mandate that exists and may still
+ * fail its first charge, so granting a paid plan on it would hand out a
+ * tier for an authorisation alone. Same reasoning as the webhook's
+ * mandate_authenticated branch, deliberately identical.
+ */
+export function statusFromProvider(providerStatus: string): "active" | "past_due" | "canceled" | null {
+  switch (providerStatus) {
+    case "active":
+      return "active";
+    // Retrying, and given up retrying. Both past_due: the grace window
+    // in entitlementsFor() runs from currentPeriodEnd, so access lapses
+    // on our clock rather than the instant Razorpay stops trying.
+    case "pending":
+    case "halted":
+      return "past_due";
+    case "cancelled":
+    case "completed":
+    case "expired":
+      return "canceled";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Every paid charge on a subscription, as Razorpay records it.
+ *
+ * The webhook is how we normally hear about a charge, and it carries
+ * the payment inline. When it never arrives, this is the only way to
+ * find out that money moved — and an invoice has to be issued against
+ * a real payment, not against the fact that a plan looks active.
+ *
+ * Razorpay creates one invoice object per charge on a subscription,
+ * which makes this the authoritative list of "times this customer was
+ * billed".
+ */
+export interface ProviderCharge {
+  paymentId: string;
+  providerInvoiceId: string;
+  amountMinor: number;
+  currency: string;
+  paidAt: Date | null;
+  periodStart: Date | null;
+  periodEnd: Date | null;
+}
+
+export async function fetchPaidCharges(subscriptionId: string): Promise<ProviderCharge[]> {
+  const authorization = auth();
+  if (!authorization) throw new Error("RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not configured.");
+
+  const response = await fetch(
+    `${API_BASE}/invoices?subscription_id=${encodeURIComponent(subscriptionId)}&count=100`,
+    { headers: { Authorization: authorization } }
+  );
+  if (response.status === 404) return [];
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: { description?: string } };
+    throw new Error(`Razorpay refused the invoice lookup (${response.status}): ${body.error?.description ?? "no detail"}`);
+  }
+
+  const body = asRecord(await response.json());
+  const items = Array.isArray(body?.items) ? body.items : [];
+
+  return items
+    .map((item) => asRecord(item))
+    .filter((inv): inv is Record<string, unknown> => !!inv && inv.status === "paid")
+    // A paid invoice with no payment id has nothing to invoice against,
+    // and the payment id is what makes issuing once-per-charge work.
+    .filter((inv) => typeof inv.payment_id === "string" && inv.payment_id)
+    .map((inv) => ({
+      paymentId: inv.payment_id as string,
+      providerInvoiceId: typeof inv.id === "string" ? inv.id : "",
+      amountMinor: typeof inv.amount === "number" ? inv.amount : 0,
+      currency: typeof inv.currency === "string" ? inv.currency : "",
+      paidAt: fromUnixSeconds(inv.paid_at),
+      periodStart: fromUnixSeconds(inv.billing_start),
+      periodEnd: fromUnixSeconds(inv.billing_end),
+    }));
+}
+
+/** Non-terminal at the provider — a mandate that could still take money. */
+export function isLiveAtProvider(providerStatus: string): boolean {
+  return ["created", "authenticated", "active", "pending", "halted", "paused"].includes(providerStatus);
 }
 
 /**

@@ -4,6 +4,7 @@
  */
 import * as Mailer from "./mailer.js";
 import * as Waitlist from "./waitlist.js";
+import * as Lifecycle from "../lifecycle.js";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -19,6 +20,7 @@ export function boot() {
 
   Mailer.init();
   Waitlist.init();
+  Lifecycle.init();
 }
 
 boot();

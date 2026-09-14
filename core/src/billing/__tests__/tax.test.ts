@@ -53,8 +53,27 @@ describe("identifier shapes", () => {
     expect(normalizeTaxId(" nl1234-5678 9b01 ")).toBe("NL123456789B01");
   });
 
-  it("rejects something with no country prefix at all", () => {
-    expect(looksLikeTaxId("123456789")).toBe(false);
+  it("accepts the business numbers the rest of the world actually has", () => {
+    // This used to require an EU country prefix, applied to every
+    // country outside India — so no US, Canadian, Australian,
+    // Singaporean or Japanese business could subscribe at all.
+    expect(looksLikeTaxId("12-3456789"), "US EIN").toBe(true);
+    expect(looksLikeTaxId("51 824 753 556"), "Australian ABN").toBe(true);
+    expect(looksLikeTaxId("123456789RT0001"), "Canadian BN").toBe(true);
+    expect(looksLikeTaxId("201012345K"), "Singapore UEN").toBe(true);
+    expect(looksLikeTaxId("1234567890123"), "Japanese corporate number").toBe(true);
+  });
+
+  it("still rejects what is obviously not a tax number", () => {
+    // All a shape check can honestly claim: catch the empty gesture,
+    // not validate a real registration.
+    for (const junk of ["", "n/a", "none", "-", "abc", "12"]) {
+      expect(looksLikeTaxId(junk), junk).toBe(false);
+    }
+  });
+
+  it("requires at least one digit, so a word is never a tax number", () => {
+    expect(looksLikeTaxId("NOTAPPLICABLE")).toBe(false);
   });
 });
 
