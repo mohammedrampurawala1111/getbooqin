@@ -122,6 +122,8 @@ function fromUnixSeconds(value: unknown): Date | null {
 export const RazorpayProvider: BillingProvider = {
   id: "razorpay",
 
+  mode: razorpayMode,
+
   /**
    * Both halves, deliberately.
    *

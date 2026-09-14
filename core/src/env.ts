@@ -188,8 +188,20 @@ export function assertEnvironment(log: (line: string) => void = console.log): vo
     log(`[getbooqin] disabled: ${lost.capability}  (set ${lost.vars.join(", ")})`);
   }
 
+  // Printed after the missing-capability lines and before the throw,
+  // because a deployment can be fully configured and still be a
+  // rehearsal — see productionWarnings(). Never fatal: staging is
+  // supposed to look like this.
+  const warnings = productionWarnings();
+  for (const w of warnings) {
+    log(`[getbooqin] NOT PRODUCTION-READY: ${w.problem}`);
+    log(`[getbooqin]              fix: ${w.fix}`);
+  }
+
   if (report.ok) {
-    if (report.lostCapabilities.length === 0) log("[getbooqin] environment: fully configured");
+    if (report.lostCapabilities.length === 0 && warnings.length === 0) {
+      log("[getbooqin] environment: fully configured");
+    }
     return;
   }
 
@@ -200,4 +212,104 @@ export function assertEnvironment(log: (line: string) => void = console.log): vo
       `Set them with \`fly secrets set\` (or in .env locally) and deploy again. ` +
       `See core/src/env.ts for the full list, including the optional ones and what each turns off.`
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* Set, but set to something that isn't production                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The checks above answer "is it configured". This one answers a
+ * different and, at launch, more dangerous question: **is what it is
+ * configured with the real thing?**
+ *
+ * Every item here passes `checkEnvironment()` completely. A Clerk
+ * development key is set. A Razorpay test key is set. `PAYPAL_ENV` is
+ * set, to `sandbox`. `APP_URL` is set, to a fly.dev host. Nothing is
+ * missing, nothing warns, and the app serves — it just serves a
+ * rehearsal to a real customer.
+ *
+ * That is the failure this exists to catch, because it is the one with
+ * no symptom. A missing secret breaks something visibly on the first
+ * request; a sandbox credential works perfectly, takes no money, and
+ * looks like a successful upgrade to everyone involved.
+ *
+ * These print as warnings and never block a boot. A staging deployment
+ * is *supposed* to hold test keys, and a check that refused to start
+ * over one would be ripped out within a week. The line in the log is
+ * the whole mechanism: it is read at every boot, it cannot drift from
+ * the code the way a launch checklist does, and it says what to do.
+ */
+export interface ProductionWarning {
+  /** What is true right now, in terms of consequence rather than config. */
+  problem: string;
+  /** The specific thing that resolves it. */
+  fix: string;
+}
+
+interface ProductionCheck {
+  /** Truthy when the deployment is NOT production-ready in this respect. */
+  failing: (env: NodeJS.ProcessEnv) => boolean;
+  problem: string;
+  fix: string;
+}
+
+const PRODUCTION_CHECKS: ProductionCheck[] = [
+  {
+    // Clerk development instances carry a capped user count, relaxed
+    // security, unbranded shared OAuth consent screens and email
+    // delivery that does not match production — and none of that shows
+    // up as an error, only as a ceiling you hit later.
+    failing: (env) => (env.VITE_CLERK_PUBLISHABLE_KEY ?? "").startsWith("pk_test_"),
+    problem:
+      "Clerk is a development instance — capped users, shared unbranded OAuth consent screens, non-production email",
+    fix: "Create a Clerk production instance and rebuild with its pk_live_ key (fly.toml [build.args]) plus its sk_live_ CLERK_SECRET_KEY",
+  },
+  {
+    failing: (env) => (env.CLERK_SECRET_KEY ?? "").startsWith("sk_test_"),
+    problem: "CLERK_SECRET_KEY is a development key, so sessions are issued by Clerk's dev instance",
+    fix: "fly secrets set CLERK_SECRET_KEY=sk_live_… from the Clerk production instance",
+  },
+  {
+    // Every emailed link — confirmations, reminders, invoices, manage
+    // and cancel — is built from APP_URL. On a fly.dev host the link a
+    // customer receives is on a different domain from the address it
+    // arrives from, which is both a trust problem and a DMARC-alignment
+    // signal.
+    failing: (env) => /\.fly\.dev/i.test(env.APP_URL ?? ""),
+    problem:
+      "APP_URL is a fly.dev host, so every booking link and emailed link a customer sees is on a domain that isn't yours",
+    fix: "Point your own domain at the app (fly certs add …) and fly secrets set APP_URL=https://your-domain",
+  },
+  {
+    failing: (env) => (env.RAZORPAY_KEY_ID ?? "").startsWith("rzp_test_"),
+    problem: "Razorpay is in test mode — upgrades appear to succeed and no money moves",
+    fix: "fly secrets set RAZORPAY_KEY_ID=rzp_live_… RAZORPAY_KEY_SECRET=… and confirm the live plan ids in billing/plans.ts",
+  },
+  {
+    failing: (env) => !!(env.PAYPAL_CLIENT_ID ?? "").trim() && env.PAYPAL_ENV !== "live",
+    problem: "PayPal is in sandbox — upgrades appear to succeed and no money moves",
+    fix: "fly secrets set PAYPAL_ENV=live with live PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET / PAYPAL_WEBHOOK_ID",
+  },
+  {
+    // The mailer refuses to send without MAIL_FROM_EMAIL, so this is
+    // about alignment rather than delivery: a relay's own login address
+    // is a domain you cannot publish SPF, DKIM or DMARC records for, so
+    // there is nothing for a receiver to verify you against.
+    failing: (env) => /@(smtp-)?(brevo|sendinblue|sendgrid|mailgun)\b/i.test(env.MAIL_FROM_EMAIL ?? ""),
+    problem:
+      "MAIL_FROM_EMAIL is the relay's own address, not a domain you can authenticate — confirmations and reminders send unaligned",
+    fix: "Publish DKIM + SPF for a domain you own, then fly secrets set MAIL_FROM_EMAIL=notify@your-domain",
+  },
+];
+
+/**
+ * Production-readiness problems, in the order they should be fixed.
+ *
+ * Returns nothing outside production: a developer running against test
+ * keys is not misconfigured, they are developing.
+ */
+export function productionWarnings(env: NodeJS.ProcessEnv = process.env): ProductionWarning[] {
+  if (env.NODE_ENV !== "production") return [];
+  return PRODUCTION_CHECKS.filter((c) => c.failing(env)).map(({ problem, fix }) => ({ problem, fix }));
 }

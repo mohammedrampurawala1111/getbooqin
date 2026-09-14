@@ -263,6 +263,8 @@ function asDate(value: unknown): Date | null {
 export const PayPalProvider: BillingProvider = {
   id: "paypal",
 
+  mode,
+
   isConfigured(): boolean {
     return !!credentials() && !!process.env.PAYPAL_WEBHOOK_ID;
   },

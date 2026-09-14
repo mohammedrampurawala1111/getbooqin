@@ -32,7 +32,9 @@ import {
   isPlanId,
   type BillingCycle,
   type Currency,
+  type PaidPlanId,
   type PlanId,
+  type ProviderId,
 } from "./plans.js";
 
 export interface CheckoutStart {
@@ -331,4 +333,79 @@ export function sellablePrices(currency: Currency): Record<string, boolean> {
     }
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* What can actually be charged, right now                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Every price point, and whether the rail it routes to can charge it in
+ * the mode this deployment is running in.
+ *
+ * `sellablePrices()` above answers this for one merchant, on their own
+ * Billing screen, at the moment they try to upgrade. That is the right
+ * place to *refuse*, and the wrong place to *find out* — by then a
+ * customer has already reached a page with nothing to buy on it, and we
+ * learn about it from them.
+ *
+ * A plan id is created by hand at the provider and pasted into
+ * plans.ts, and an empty slot is the normal state of a price nobody has
+ * got round to creating yet. It looks identical to a configured one
+ * from everywhere except here. So this is the same question asked from
+ * the operator's side and asked about *all* of it: which of the
+ * eighteen paid price points a customer can complete today, which rail
+ * each would go to, and which mode that rail is in.
+ *
+ * Read by /admin, where somebody sees it before a merchant does.
+ */
+export interface PriceCoverage {
+  plan: PaidPlanId;
+  currency: Currency;
+  cycle: BillingCycle;
+  /** The rail this currency routes a new subscription to. */
+  provider: Exclude<ProviderId, "manual">;
+  /** "test" | "live" | "sandbox" — whichever word that provider uses. */
+  mode: string;
+  /** False when the provider has no plan id for this price in this mode. */
+  sellable: boolean;
+}
+
+export interface BillingCoverage {
+  prices: PriceCoverage[];
+  /** Currencies with no purchasable plan at all — a merchant there cannot upgrade. */
+  deadCurrencies: Currency[];
+  sellableCount: number;
+  totalCount: number;
+}
+
+export function billingCoverage(): BillingCoverage {
+  const prices: PriceCoverage[] = [];
+
+  for (const plan of ["starter", "growth", "business"] as const) {
+    for (const currency of ["INR", "USD", "EUR"] as const) {
+      const provider = providerForNewSubscription(currency);
+      for (const cycle of ["monthly", "yearly"] as const) {
+        prices.push({
+          plan,
+          currency,
+          cycle,
+          provider: providerForCurrency(currency),
+          mode: provider.mode(),
+          sellable: !!provider.planId(plan, currency, cycle),
+        });
+      }
+    }
+  }
+
+  const deadCurrencies = (["INR", "USD", "EUR"] as const).filter(
+    (c) => !prices.some((p) => p.currency === c && p.sellable)
+  );
+
+  return {
+    prices,
+    deadCurrencies,
+    sellableCount: prices.filter((p) => p.sellable).length,
+    totalCount: prices.length,
+  };
 }

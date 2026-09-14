@@ -1,6 +1,6 @@
 import { Form, Link, useSearchParams } from "react-router";
 import type { Route } from "./+types/admin._index";
-import { AdminAccounts, Jobs } from "getbooqin-core";
+import { AdminAccounts, Checkout, Env, Jobs } from "getbooqin-core";
 import { requirePlatformAdmin } from "~/admin.server";
 
 /**
@@ -22,6 +22,15 @@ export async function loader({ request }: Route.LoaderArgs) {
     Jobs.statuses(),
   ]);
 
+  // Two things a running deployment knows about itself that nobody
+  // finds out from a screen full of accounts: which price points can
+  // actually be charged, and whether the credentials behind them are
+  // the real ones. Both are read here rather than from a checklist,
+  // because a checklist is a record of an intention and this is a
+  // reading of the process that is serving customers right now.
+  const coverage = Checkout.billingCoverage();
+  const readiness = Env.productionWarnings();
+
   const counts = {
     total: accounts.length,
     trialing: accounts.filter((a) => a.status === "trialing").length,
@@ -30,7 +39,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     pastDue: accounts.filter((a) => a.status === "past_due").length,
   };
 
-  return { accounts, jobs, counts, filter, search };
+  return { accounts, jobs, counts, coverage, readiness, filter, search };
 }
 
 const FILTERS: { value: string; label: string }[] = [
@@ -48,7 +57,7 @@ function date(value: string | Date | null): string {
 }
 
 export default function AdminAccountsList({ loaderData }: Route.ComponentProps) {
-  const { accounts, jobs, counts } = loaderData;
+  const { accounts, jobs, counts, coverage, readiness } = loaderData;
   const [params] = useSearchParams();
   const active = params.get("filter") ?? "all";
 
@@ -68,6 +77,71 @@ export default function AdminAccountsList({ loaderData }: Route.ComponentProps) 
           </div>
         ))}
       </div>
+
+      {/* Not decoration. Every item here is a state in which the app
+          serves perfectly and takes no money, or sends a customer a
+          link on a domain that isn't ours — failures whose defining
+          property is that nothing else reports them. */}
+      {readiness.length > 0 && (
+        <div className="card border-danger">
+          <div className="card-header">
+            <h2 className="card-title text-danger">Not production-ready</h2>
+          </div>
+          <ul className="m-0 flex list-none flex-col gap-[10px] p-[14px]">
+            {readiness.map((w) => (
+              <li key={w.problem} className="text-[12.5px]">
+                <span className="block font-medium text-danger">{w.problem}</span>
+                <span className="block text-muted">{w.fix}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {coverage.sellableCount < coverage.totalCount && (
+        <div className="card">
+          <div className="card-header flex-wrap gap-2">
+            <h2 className="card-title">
+              Billing coverage — {coverage.sellableCount} of {coverage.totalCount} price points can be charged
+            </h2>
+          </div>
+          <div className="p-[14px] text-[12.5px]">
+            {coverage.deadCurrencies.length > 0 && (
+              <p className="m-0 mb-[10px] rounded-[8px] bg-danger-bg px-3 py-2 font-medium text-danger">
+                Nothing can be bought in {coverage.deadCurrencies.join(", ")}. A merchant billed in{" "}
+                {coverage.deadCurrencies.length === 1 ? "that currency" : "those currencies"} reaches a Billing
+                screen with no plan on it.
+              </p>
+            )}
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left">
+                <thead>
+                  <tr className="text-[11.5px] text-muted">
+                    <th className="py-1 pr-3 font-normal">Price</th>
+                    <th className="py-1 pr-3 font-normal">Rail</th>
+                    <th className="py-1 pr-3 font-normal">Mode</th>
+                    <th className="py-1 font-normal">Chargeable</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {coverage.prices.filter((p) => !p.sellable).map((p) => (
+                    <tr key={`${p.plan}:${p.currency}:${p.cycle}`} className="border-t border-line">
+                      <td className="py-[5px] pr-3 capitalize">{p.plan} · {p.currency} · {p.cycle}</td>
+                      <td className="py-[5px] pr-3 capitalize">{p.provider}</td>
+                      <td className="py-[5px] pr-3">{p.mode}</td>
+                      <td className="py-[5px] text-danger">No plan id</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="m-0 mt-[10px] text-muted">
+              A plan is created at the provider by hand and its id pasted into <code>core/src/billing/plans.ts</code>.
+              See docs/launch-runbook.md.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Silent job failure is the thing Phase 0 set out to make visible;
           this is where a human sees it without curling a health check. */}

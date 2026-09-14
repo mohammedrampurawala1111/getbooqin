@@ -8,7 +8,7 @@
  * anything.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ENV_VARS, checkEnvironment, assertEnvironment } from "../env.js";
+import { ENV_VARS, checkEnvironment, assertEnvironment, productionWarnings } from "../env.js";
 
 const SAVED = { ...process.env };
 
@@ -143,5 +143,84 @@ describe("the list itself", () => {
     ]) {
       expect(names, expected).toContain(expected);
     }
+  });
+});
+
+describe("configured, but configured with a rehearsal", () => {
+  /**
+   * The property under test is that these are invisible to
+   * checkEnvironment(): every one of them is a variable that is *set*.
+   * A test that only asserted the warning fires would still pass if the
+   * two checks were merged, which is the design mistake worth guarding.
+   */
+  const PRODUCTION: NodeJS.ProcessEnv = {
+    NODE_ENV: "production",
+    VITE_CLERK_PUBLISHABLE_KEY: "pk_live_abc",
+    CLERK_SECRET_KEY: "sk_live_abc",
+    APP_URL: "https://app.getbooqin.com",
+    RAZORPAY_KEY_ID: "rzp_live_abc",
+    PAYPAL_CLIENT_ID: "paypal-id",
+    PAYPAL_ENV: "live",
+    MAIL_FROM_EMAIL: "notify@getbooqin.com",
+  };
+
+  it("says nothing when production really is production", () => {
+    expect(productionWarnings(PRODUCTION)).toEqual([]);
+  });
+
+  it("stays quiet outside production, where test keys are the point", () => {
+    const dev = { ...PRODUCTION, NODE_ENV: "development", RAZORPAY_KEY_ID: "rzp_test_abc" };
+    expect(productionWarnings(dev)).toEqual([]);
+  });
+
+  it.each([
+    ["a Clerk development instance", { VITE_CLERK_PUBLISHABLE_KEY: "pk_test_abc" }, /Clerk is a development instance/],
+    ["a Clerk development secret", { CLERK_SECRET_KEY: "sk_test_abc" }, /development key/],
+    ["a fly.dev public origin", { APP_URL: "https://getbooqin.fly.dev" }, /isn't yours/],
+    ["Razorpay in test mode", { RAZORPAY_KEY_ID: "rzp_test_abc" }, /no money moves/],
+    ["PayPal in sandbox", { PAYPAL_ENV: "sandbox" }, /no money moves/],
+    ["a relay's own From address", { MAIL_FROM_EMAIL: "b675ff001@smtp-brevo.com" }, /unaligned/],
+  ])("warns about %s", (_label, override, expected) => {
+    const warnings = productionWarnings({ ...PRODUCTION, ...override });
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.problem).toMatch(expected);
+    // Every warning has to name the action, not just the state.
+    expect(warnings[0]!.fix.length).toBeGreaterThan(20);
+  });
+
+  it("is invisible to checkEnvironment, which is the whole problem", () => {
+    // A deployment holding nothing but sandbox credentials is
+    // "fully configured" by the missing-variable check. If this ever
+    // fails, the two checks have been merged and the launch blocker
+    // this file exists for is being reported as a missing secret.
+    fullyConfigured();
+    process.env.NODE_ENV = "production";
+    process.env.RAZORPAY_KEY_ID = "rzp_test_abc";
+    process.env.APP_URL = "https://getbooqin.fly.dev";
+
+    expect(checkEnvironment().ok).toBe(true);
+    expect(checkEnvironment().lostCapabilities).toEqual([]);
+    expect(productionWarnings()).not.toEqual([]);
+  });
+
+  it("never stops a boot over a rehearsal credential", () => {
+    fullyConfigured();
+    process.env.NODE_ENV = "production";
+    process.env.RAZORPAY_KEY_ID = "rzp_test_abc";
+
+    expect(() => assertEnvironment(() => {})).not.toThrow();
+  });
+
+  it("logs the problem and its fix, so the line is actionable on its own", () => {
+    fullyConfigured();
+    process.env.NODE_ENV = "production";
+    process.env.APP_URL = "https://getbooqin.fly.dev";
+
+    const lines: string[] = [];
+    assertEnvironment((l) => lines.push(l));
+
+    expect(lines.some((l) => l.includes("NOT PRODUCTION-READY"))).toBe(true);
+    expect(lines.some((l) => l.includes("fly certs add"))).toBe(true);
   });
 });

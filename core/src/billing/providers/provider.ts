@@ -149,6 +149,18 @@ export interface BillingProvider {
   /** Is this provider configured well enough to be used at all? */
   isConfigured(): boolean;
 
+  /**
+   * Which set of books this rail is keeping, in the vendor's own word —
+   * "test" / "live" at Razorpay, "sandbox" / "live" at PayPal.
+   *
+   * Part of the seam rather than a detail inside it, because the one
+   * thing an operator has to be able to read off a running deployment
+   * is whether an upgrade would move real money. Both rails already
+   * derive it (Razorpay from its key's prefix, PayPal from PAYPAL_ENV);
+   * this is what lets something ask without naming a vendor.
+   */
+  mode(): string;
+
   /** The vendor's own id for one of our plans, or "" when it has none. */
   planId(plan: PlanId, currency: Currency, cycle: BillingCycle): string;
 
