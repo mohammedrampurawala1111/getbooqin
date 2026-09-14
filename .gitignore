@@ -35,3 +35,14 @@ desgin/
 my-tanstack-app/
 scratch-recordings/
 Repo connection needed.zip
+
+# Credentials that were being kept as loose files in the repo root.
+# rzp-test-key.csv was committed once and is removed here; because it is
+# still in history, the key it held must be rolled at Razorpay — see the
+# launch runbook. Nothing of this shape belongs in git: provider keys go
+# in `fly secrets set` and a local .env, never a file a glob can pick up.
+**/*-key
+**/*-key.csv
+**/*-key.txt
+**/*secret*.csv
+**/*credentials*.json
