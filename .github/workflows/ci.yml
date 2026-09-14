@@ -105,3 +105,66 @@ jobs:
           npm run start &
           for i in $(seq 1 30); do curl -sf http://localhost:3100/login > /dev/null && break; sleep 2; done
           A11Y_BASE_URL=http://localhost:3100 npm run test:a11y
+
+  # The public end-to-end suite — "does it work in a real browser", as
+  # opposed to a11y's "is it usable by everyone". Read-only and
+  # unauthenticated, so unlike the auth suite it needs no Clerk test
+  # users and can run on every pull request.
+  #
+  # Shares the a11y job's shape rather than being folded into it because
+  # a failure here means something different: a11y red is a regression to
+  # fix, this red is the product not working.
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: pass
+          POSTGRES_DB: getbooqin_core
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:pass@localhost:5432/getbooqin_core
+      APP_URL: http://localhost:3100
+      CONNECTION_ENCRYPTION_KEY: ${{ secrets.CONNECTION_ENCRYPTION_KEY }}
+      SESSION_SIGNING_SECRET: ${{ secrets.SESSION_SIGNING_SECRET }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run prisma:deploy --workspace=core
+      - name: Seed a test connection
+        id: seed
+        working-directory: core
+        run: |
+          out=$(npx tsx scripts_seed_local.ts)
+          echo "$out"
+          echo "connection_id=$(echo "$out" | grep -oE 'connection id: \S+' | cut -d' ' -f3)" >> "$GITHUB_OUTPUT"
+      - run: npx playwright install --with-deps chromium
+        working-directory: cloud
+      - run: npm run build --workspace=cloud
+      - name: Start the app and run the public suite
+        working-directory: cloud
+        env:
+          E2E_BOOKING_SLUG: ${{ steps.seed.outputs.connection_id }}
+        run: |
+          npm run start &
+          for i in $(seq 1 30); do curl -sf http://localhost:3100/login > /dev/null && break; sleep 2; done
+          npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-traces
+          path: cloud/test-results
+          retention-days: 7

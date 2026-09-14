@@ -1,0 +1,52 @@
+# The post-deploy release gate.
+#
+# Not part of CI, because it asks a question CI cannot: not "is this
+# change good" but "is what is serving customers right now working".
+# It runs against a real deployment, it is read-only, it never signs in
+# and never writes, and its failure means roll back rather than fix
+# forward.
+#
+# Manual and scheduled rather than on push: deploys are run from a
+# laptop (see docs/launch-runbook.md), so there is no push event that
+# reliably corresponds to "a new version is live". Run it by hand
+# straight after a deploy; the hourly schedule is the backstop that
+# notices a deployment that broke without anyone deploying — an expired
+# certificate, a database that filled up, a provider that changed an
+# API.
+name: Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Deployment to check"
+        required: false
+        default: "https://getbooqin.fly.dev"
+  schedule:
+    # Hourly, on the half hour — offset from the top of the hour so this
+    # is not competing with every other cron on the internet.
+    - cron: "30 * * * *"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+        working-directory: cloud
+      - name: Smoke the deployment
+        working-directory: cloud
+        env:
+          E2E_BASE_URL: ${{ github.event.inputs.base_url || 'https://getbooqin.fly.dev' }}
+        run: npm run smoke
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: smoke-traces
+          path: cloud/test-results
+          retention-days: 7
