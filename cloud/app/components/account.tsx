@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from "react";
-import { termSuggestions, type Terms } from "../lib/presets";
+import { useRef, useState, type ReactNode } from "react";
+import { termSuggestionPairs, guessPlural, type Terms } from "../lib/presets";
 import { LogoutButton, ConfirmDialog } from "./ui";
 
 /* ==================================================================
@@ -268,16 +268,35 @@ export function DashboardLayoutCard({
 }: {
   vocab: { booking: string; service: string; services: string; resource: string };
   hidden: Record<string, boolean>;
-  onToggle?: (key: OverviewCardKey) => void;
+  onToggle: (key: OverviewCardKey) => void;
 }) {
   return (
     <div className="flex flex-col gap-2">
       {overviewCards(vocab).map((c, i) => {
         const on = !hidden[c.key] && !c.disabled;
         return (
-          <label key={c.key} onClick={() => !c.disabled && onToggle?.(c.key)}
+          // No onClick on the label. It used to carry one *and* wrap the
+          // checkbox, so a single click ran the handler twice — once for
+          // the click on the label, once for the click the label forwards
+          // to the input and which bubbles back up through it. The state
+          // toggled and untoggled, the checkbox ended up back where it
+          // started, and the submitted "cards" list was always whatever
+          // it had been on load: switching a card off changed the
+          // highlight and then saved nothing.
+          <label key={c.key}
             className={`group flex items-center gap-3 rounded-[9px] border px-[13px] py-[11px] ${c.disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${on ? "border-brand-200 bg-surface" : "border-line bg-canvas-alt"}`}>
-            <input type="checkbox" name="cards" value={c.key} defaultChecked={on} disabled={c.disabled} className="peer sr-only" />
+            {/* Controlled, so React state and the field that actually
+                gets submitted cannot disagree — which is the whole bug
+                above. */}
+            <input
+              type="checkbox"
+              name="cards"
+              value={c.key}
+              checked={on}
+              disabled={c.disabled}
+              onChange={() => onToggle(c.key)}
+              className="peer sr-only"
+            />
             <span className="num w-[14px] text-[11px] text-subtle">{i + 1}</span>
             <span className="flex flex-1 flex-col gap-px">
               <span className="text-body font-medium">{c.name}</span>
@@ -312,63 +331,134 @@ const VOCAB_ROWS: { single: keyof Terms; plural: keyof Terms; label: string; hin
   { single: "customer_single", plural: "customer_plural", label: "Customers are called", hint: "The people booking" },
 ];
 
-export function VocabularyFields({ terms }: { terms: Terms }) {
+export function VocabularyFields({
+  terms, onChange,
+}: {
+  terms: Terms;
+  /** A patch, not the whole object — a row only ever knows its own two keys. */
+  onChange: (patch: Partial<Terms>) => void;
+}) {
   return (
     <div className="flex flex-col gap-[18px]">
       {VOCAB_ROWS.map((row) => (
-        <div key={row.single} className="flex flex-col gap-[7px]">
+        <VocabRow key={row.single} row={row} terms={terms} onChange={onChange} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * One singular/plural pair. Its own component only so it can hold a ref
+ * to the last singular it saw — which is how the plural field knows
+ * whether it still holds a value we derived (ours to update) or a word
+ * the merchant typed (never ours to touch).
+ */
+/**
+ * One noun, asked once.
+ *
+ * This used to be two text boxes side by side, singular and plural, for
+ * every row — and since the plural is "the singular plus an s" almost
+ * every time, the pair read as the same question asked twice. Four rows
+ * of that is eight boxes to fill in to answer four questions.
+ *
+ * So the plural is derived and shown as a fact, not a field. The field
+ * is still there for the words the rule gets wrong — Person/People,
+ * Class/Classes — but it stays out of the way until it is wanted, and
+ * it opens by itself for an account whose plural is already irregular,
+ * because that word must never be silently overwritten by a guess.
+ */
+function VocabRow({
+  row, terms, onChange,
+}: {
+  row: (typeof VOCAB_ROWS)[number];
+  terms: Terms;
+  onChange: (patch: Partial<Terms>) => void;
+}) {
+  const single = terms[row.single];
+  const plural = terms[row.plural];
+
+  // Irregular already? Then the merchant (or a template) chose that word
+  // deliberately: show it, and never derive over it.
+  const [custom, setCustom] = useState(() => terms[row.plural] !== guessPlural(terms[row.single]));
+
+  // The row owns both keys, so a change to the singular carries the
+  // derived plural with it in one update — no second render where the
+  // two disagree.
+  function changeSingle(value: string) {
+    onChange(custom ? { [row.single]: value } : { [row.single]: value, [row.plural]: guessPlural(value) });
+  }
+
+  return (
+        <div className="flex flex-col gap-[7px]">
           <div className="flex flex-col gap-px">
             <span className="text-body font-medium">{row.label}</span>
             <span className="text-[12px] text-muted">{row.hint}</span>
           </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+
+          <input
+            className="input w-full min-w-0"
+            name={`term_${row.single}`}
+            value={single}
+            onChange={(e) => changeSingle(e.currentTarget.value)}
+            aria-label={row.label}
+            placeholder="Singular"
+            maxLength={40}
+          />
+
+          {/* Always in the DOM, so the form submits a plural whether or
+              not anyone has looked at it. Hidden, not unmounted. */}
+          <div hidden={!custom} className="flex flex-col gap-[5px]">
+            <label className="text-[12px] text-muted" htmlFor={`term_${row.plural}`}>
+              Plural
+            </label>
             <input
-              className="input w-full min-w-0"
-              name={`term_${row.single}`}
-              defaultValue={terms[row.single]}
-              aria-label={`${row.label} (singular)`}
-              placeholder="Singular"
-              maxLength={40}
-            />
-            <input
+              id={`term_${row.plural}`}
               className="input w-full min-w-0"
               name={`term_${row.plural}`}
-              defaultValue={terms[row.plural]}
+              value={plural}
+              onChange={(e) => onChange({ [row.plural]: e.currentTarget.value })}
               aria-label={`${row.label} (plural)`}
               placeholder="Plural"
               maxLength={40}
             />
           </div>
-          {/* Chips fill the inputs rather than replacing them — the field
-              is free text, and the suggestions exist to show that the
-              product means it, not to fence the answer in. */}
-          <div className="flex flex-wrap gap-[6px]">
-            {termSuggestions(row.single).slice(0, 6).map((word) => (
+
+          {!custom && (
+            <p className="m-0 text-[12px] text-subtle">
+              Plural: <span className="text-muted">{plural || "—"}</span>{" "}
               <button
-                key={word}
+                type="button"
+                // Named per row: four "Change" buttons on one screen are
+                // indistinguishable to anyone not looking at where they sit.
+                aria-label={`Change the plural of ${row.label.toLowerCase()}`}
+                className="bg-transparent p-0 text-[12px] font-medium text-brand-600 underline"
+                onClick={() => setCustom(true)}
+              >
+                Change
+              </button>
+            </p>
+          )}
+
+          {/* Suggestions fill the field rather than replacing it — it is
+              free text, and these exist to show the product means it,
+              not to fence the answer in. A suggestion whose own plural
+              is irregular brings that plural with it, and opens the
+              field so it is visible rather than silently applied. */}
+          <div className="flex flex-wrap gap-[6px]">
+            {termSuggestionPairs(row.single, row.plural).slice(0, 6).map((pair) => (
+              <button
+                key={pair.single}
                 type="button"
                 className="rounded-full border border-line bg-surface px-[10px] py-[3px] text-meta text-ink-2 hover:border-brand-500"
-                onClick={(e) => {
-                  // By name off the owning form, not by DOM walking — the
-                  // inputs are real named fields, so this can't be broken
-                  // by rearranging the markup around them. The dispatched
-                  // input event is what lets the live preview above
-                  // update; React doesn't see a direct `.value` write.
-                  const input = e.currentTarget.form?.elements.namedItem(
-                    `term_${row.single}`
-                  ) as HTMLInputElement | null;
-                  if (!input) return;
-                  input.value = word;
-                  input.dispatchEvent(new Event("input", { bubbles: true }));
-                  input.focus();
+                onClick={() => {
+                  onChange({ [row.single]: pair.single, [row.plural]: pair.plural });
+                  if (pair.plural !== guessPlural(pair.single)) setCustom(true);
                 }}
               >
-                {word}
+                {pair.single}
               </button>
             ))}
           </div>
         </div>
-      ))}
-    </div>
   );
 }

@@ -95,6 +95,16 @@ export async function action({ request, params }: Route.ActionArgs) {
   const { shop, platform } = await requireTenant(request, params.connectionId, "write");
   const isNew = params.resourceId === "new";
   const id = isNew ? 0 : Number(params.resourceId);
+
+  // The loader checks ownership; the action did not, and the id comes
+  // straight from the URL. Core now scopes the write itself, but the
+  // route refuses first so the answer is a clean 404 rather than an
+  // error surfaced from a save — the same guard services.$serviceId.tsx
+  // already had.
+  if (!isNew && !(await Data.resource(shop, id))) {
+    throw data("Resource not found", { status: 404 });
+  }
+
   const form = await request.formData();
 
   if (form.get("_action") === "delete") {

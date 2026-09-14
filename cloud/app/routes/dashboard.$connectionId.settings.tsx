@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Form, redirect, useFetcher, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.settings";
-import { Settings, Data, Mailer, Team, Entitlements, Billing, Checkout, Subscriptions, Tax, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
+import { Settings, Data, Mailer, Team, Entitlements, Billing, Checkout, BillingReconcile, Invoices, Plans, Qr, Subscriptions, Tax, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
 // Client-safe subpath for the two rule-checks the component below calls at
 // render time — importing these off the main `Settings` namespace instead
 // would pull core's *entire* barrel (nodemailer, the Razorpay/Shopify HMAC
@@ -13,8 +13,11 @@ import { Settings, Data, Mailer, Team, Entitlements, Billing, Checkout, Subscrip
 import { type BookingRuleField, bookingWindowIsClosed, cancelCutoffExceedsNotice } from "getbooqin-core/booking/settingsShared";
 import { requireTenant } from "~/tenant.server";
 import { getClerkClient } from "~/session.server";
-import { Badge, TimezoneSelect, Toggle, useToast } from "~/components/ui";
-import { IntegrationRow } from "~/components/onboarding";
+import { AlertError, Badge, TimezoneSelect, Toggle, useToast } from "~/components/ui";
+import { IntegrationRow, LogoMark } from "~/components/onboarding";
+import { UpgradePrompt } from "~/components/upgrade";
+import type { PlanId } from "getbooqin-core/billing/plans";
+import * as PaymentLinks from "getbooqin-core/booking/paymentLinks";
 import { DashboardLayoutCard, VocabularyFields, overviewCards, type OverviewCardKey } from "~/components/account";
 import {
   SettingsShell, Row, RowInput, RowSelect, RowTextarea, ToggleRow, Segmented, ValueRow, SettingsCard, isSettingsPage,
@@ -143,6 +146,21 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // Billing snapshot for the page below. Read-only in 2a — there is no
   // upgrade path until the payment rails go in (2c), and a button that
   // 404s is worse than a plan you can see but not yet change.
+  // Before reading entitlements, not after: if the merchant has just
+  // paid and the webhook never arrived, everything below would render
+  // the stale plan — still badged "Current", still offering the upgrade
+  // they already bought. Asks the provider only when there is an
+  // unactivated mandate to ask about, so an account that is already
+  // active costs no round trip.
+  //
+  // Errors are swallowed on purpose. Reconciling is an improvement on
+  // the page, not a precondition for it; Razorpay being slow must not
+  // stop someone reading their own billing settings.
+  const preRow = await Subscriptions.get(connection.id);
+  if (preRow && BillingReconcile.worthReconciling(preRow)) {
+    await BillingReconcile.reconcileSubscription(connection.id).catch(() => undefined);
+  }
+
   const entitlements = await Entitlements.entitlementsFor(connection.id);
   const subscriptionRow = await Subscriptions.get(connection.id);
   // What the merchant would actually be billed in, not what the row
@@ -152,7 +170,12 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const billingCurrency = await Checkout.resolveBillingCurrency(connection.id, entitlements.currency);
   const usage = await Billing.usageSnapshot(shop, platform, connection.id, userId);
 
+  // Small enough to inline, so the card shows the real code rather than
+  // a placeholder the merchant has to download to check.
+  const bookingQr = await Qr.qrDataUrl(settings.booking_page_url, { width: 240 });
+
   return {
+    bookingQr,
     settings,
     billing: {
       plan: entitlements.plan,
@@ -169,9 +192,24 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         country: subscriptionRow?.taxCountry || (billingCurrency === "INR" ? "IN" : ""),
         taxId: subscriptionRow?.taxId ?? "",
         note: Tax.taxNote(subscriptionRow?.taxStatus ?? "", subscriptionRow?.taxCountry ?? ""),
+        billingName: subscriptionRow?.billingName ?? "",
+        billingAddress: subscriptionRow?.billingAddress ?? "",
       },
       billingCycle: entitlements.billingCycle,
       inGrace: entitlements.inGrace,
+      providerName: billingCurrency === "INR" ? "Razorpay" : "PayPal",
+      returnedFromCheckout: url.searchParams.get("checkout") === "return",
+      // A mandate exists at the provider but nothing has been paid on
+      // it yet — an authorisation that has not been charged, or a
+      // payment still settling.
+      awaitingActivation: !!preRow?.providerSubscriptionId && entitlements.status !== "active",
+      invoices: (await Invoices.listInvoices(connection.id)).map((inv) => ({
+        id: inv.id,
+        number: inv.number,
+        issuedAt: inviteDateFormatter.format(inv.issuedAt),
+        amount: Invoices.invoiceAmount(inv.amountMinor, inv.currency),
+        planName: Plans.PLANS[inv.planId as keyof typeof Plans.PLANS]?.name ?? inv.planId,
+      })),
       features: [...entitlements.features],
       limits: Object.fromEntries(
         Object.entries(entitlements.limits).map(([k, v]) => [k, Number.isFinite(v) ? v : null])
@@ -267,6 +305,33 @@ export async function action({ request, params }: Route.ActionArgs) {
       if (isGetBooqinError(err)) return { error: err.message };
       throw err;
     }
+  } else if (section === "payments") {
+    // Nothing here reaches a payment provider. These two strings are
+    // rendered into a link the customer pays through directly, so the
+    // only validation that matters is "will this produce a working
+    // link" — and a merchant sending themselves one rupee is the only
+    // check that catches a valid-but-wrong address.
+    const upi = String(form.get("upi_id") ?? "").trim();
+    const payPal = String(form.get("paypal_me") ?? "").trim();
+
+    if (upi && !PaymentLinks.isUpiId(upi)) {
+      return { error: "That doesn't look like a UPI ID. It should look like name@bank." };
+    }
+    if (payPal && !PaymentLinks.payPalMeHandle(payPal)) {
+      return { error: "That doesn't look like a PayPal.me link. Try paypal.me/yourname." };
+    }
+
+    await Settings.setSettings(shop, platform, {
+      upi_id: upi,
+      paypal_me: PaymentLinks.payPalMeHandle(payPal),
+    });
+    return { saved: true };
+  } else if (section === "branding") {
+    await Settings.setSettings(shop, platform, {
+      brand_logo: String(form.get("brand_logo") ?? ""),
+      brand_accent: String(form.get("brand_accent") ?? "").trim(),
+    });
+    return { saved: true };
   } else if (section === "general") {
     await Settings.setSettings(shop, platform, {
       business_name: String(form.get("business_name") ?? ""),
@@ -324,6 +389,14 @@ export async function action({ request, params }: Route.ActionArgs) {
         cycle,
         country: String(form.get("country") ?? ""),
         taxId: String(form.get("tax_id") ?? ""),
+        billingName: String(form.get("billing_name") ?? ""),
+        billingAddress: String(form.get("billing_address") ?? ""),
+        // Honoured by PayPal, ignored by Razorpay — see the provider
+        // interface. Landing back in the product is the difference
+        // between a successful payment reading as successful and
+        // reading as a dead end.
+        returnUrl: `${new URL(request.url).origin}/dashboard/${params.connectionId}/settings?page=billing&checkout=return`,
+        cancelUrl: `${new URL(request.url).origin}/dashboard/${params.connectionId}/settings?page=billing`,
       });
       // A 303 so the browser re-issues as GET — a POST redirected to
       // Razorpay's page would be re-submitted on back-navigation.
@@ -332,6 +405,25 @@ export async function action({ request, params }: Route.ActionArgs) {
       if (isGetBooqinError(err)) return { error: err.message };
       throw err;
     }
+  } else if (section === "billing_details") {
+    // The tax identity and the invoice recipient, saved on their own
+    // rather than only riding along with an upgrade. Validated with the
+    // same function checkout uses, so a merchant finds out here that
+    // their tax number is unusable rather than at the moment they try
+    // to pay.
+    const country = String(form.get("country") ?? "").trim();
+    const taxId = String(form.get("tax_id") ?? "").trim();
+    const tax = Tax.validateTaxIdentity({ country, taxId });
+    if (!tax.identity) return { error: tax.problems[0]!.message };
+
+    await Subscriptions.saveBillingDetails(params.connectionId!, {
+      country: tax.identity.country,
+      taxId: tax.identity.taxId,
+      taxStatus: tax.identity.status,
+      billingName: String(form.get("billing_name") ?? "").trim(),
+      billingAddress: String(form.get("billing_address") ?? "").trim(),
+    });
+    return { saved: true, detailsSaved: true };
   } else if (section === "billing_cancel") {
     try {
       await Checkout.cancelAtPeriodEnd(params.connectionId!);
@@ -430,7 +522,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 export default function SettingsPage({ loaderData, actionData }: Route.ComponentProps) {
   const {
-    settings, billing, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites,
+    settings, billing, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites, bookingQr,
   } = loaderData;
   const v = useVocabulary();
   // defaultSettings() seeds business_name to the connection's own opaque
@@ -522,6 +614,17 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
             <TimezoneSelect defaultValue={settings.timezone} />
           </Row>
         </SettingsCard>
+      )}
+
+      {page === "general" && (
+        <BrandingCard
+          connectionId={currentConnectionId}
+          canBrand={billing.features.includes("branding")}
+          currentPlan={billing.plan}
+          logo={settings.brand_logo}
+          accent={settings.brand_accent}
+          savedAt={savedAt}
+        />
       )}
 
       {page === "general" && <VocabularySection settings={settings} saved={!!actionData?.saved} savedAt={savedAt} />}
@@ -647,10 +750,24 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
         </div>
       )}
 
-      {page === "billing" && <BillingPage billing={billing} error={actionData && "error" in actionData ? actionData.error : undefined} />}
+      {page === "billing" && <BillingPage billing={billing} connectionId={currentConnectionId} saved={!!actionData && "detailsSaved" in actionData && !!actionData.detailsSaved} error={actionData && "error" in actionData ? actionData.error : undefined} />}
+
+      {page === "payments" && (
+        <PaymentsPage
+          connectionId={currentConnectionId}
+          currency={settings.currency}
+          businessName={settings.business_name}
+          upiId={settings.upi_id}
+          payPalMe={settings.paypal_me}
+          savedAt={savedAt}
+          error={actionData && "error" in actionData ? actionData.error : undefined}
+        />
+      )}
 
       {page === "integrations" && (
         <>
+          <BookingQrCard connectionId={currentConnectionId} bookingUrl={settings.booking_page_url} vocab={v} qr={bookingQr} />
+          <EmbedSnippetCard bookingUrl={settings.booking_page_url} vocab={v} />
           <div className="card">
             {INTEGRATIONS.filter((integ) => integ.id !== "shopify" || canUseShopify).map((integ) => {
               if (integ.id === "shopify") {
@@ -748,7 +865,14 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
       )}
 
       {page === "team" && (
-        <TeamSection members={members} pendingInvites={pendingInvites} canManageTeam={canManageTeam} actionData={actionData} />
+        <TeamSection
+          members={members}
+          pendingInvites={pendingInvites}
+          canManageTeam={canManageTeam}
+          canChooseRole={billing.features.includes("team_roles")}
+          connectionId={currentConnectionId}
+          actionData={actionData}
+        />
       )}
     </SettingsShell>
   );
@@ -1005,13 +1129,17 @@ function CurrencyRowSelect({ defaultCode, defaultSymbol }: { defaultCode: string
 function VocabularySection({
   settings, saved, savedAt,
 }: { settings: { terms: Terms; hidden_overview_cards: string[] }; saved: boolean; savedAt?: string }) {
+  // Raw, not run through withDefaultTerms on every keystroke: that fills
+  // a blank with the default, which would fight someone clearing a field
+  // to retype it. The fallback is applied where it is actually needed —
+  // the preview below — and again on the server at save.
   const [terms, setTerms] = useState<Terms>(() => withDefaultTerms(settings.terms));
   const [hidden, setHidden] = useState<Record<string, boolean>>(
     () => Object.fromEntries(settings.hidden_overview_cards.map((key) => [key, true]))
   );
   const toast = useToast();
   const navigation = useNavigation();
-  const v = vocabFor(terms);
+  const v = vocabFor(withDefaultTerms(terms));
 
   const wasSubmitting = useRef(false);
   useEffect(() => {
@@ -1025,25 +1153,8 @@ function VocabularySection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigation.state]);
 
-  // Reads the whole card's inputs back out on any change, so the preview
-  // line and the Overview card labels below track what's actually typed
-  // rather than needing a controlled input per field.
-  function syncFromForm(e: React.FormEvent<HTMLFormElement>) {
-    const form = e.currentTarget;
-    const read = (key: keyof Terms) =>
-      (form.elements.namedItem(`term_${key}`) as HTMLInputElement | null)?.value ?? "";
-    setTerms(
-      withDefaultTerms({
-        booking_single: read("booking_single"), booking_plural: read("booking_plural"),
-        service_single: read("service_single"), service_plural: read("service_plural"),
-        resource_single: read("resource_single"), resource_plural: read("resource_plural"),
-        customer_single: read("customer_single"), customer_plural: read("customer_plural"),
-      })
-    );
-  }
-
   return (
-    <Form method="post" onInput={syncFromForm} className="flex flex-col gap-[14px]">
+    <Form method="post" className="flex flex-col gap-[14px]">
       <input type="hidden" name="_section" value="vocabulary" />
 
       <div className="card" id="vocabulary">
@@ -1058,7 +1169,7 @@ function VocabularySection({
           </div>
         </div>
         <div className="px-[18px] py-[14px]">
-          <VocabularyFields terms={terms} />
+          <VocabularyFields terms={terms} onChange={(patch) => setTerms((prev) => ({ ...prev, ...patch }))} />
         </div>
       </div>
 
@@ -1103,11 +1214,14 @@ type TeamPendingInvite = { inviteId: string; email: string; role: "admin" | "wri
 // explicitly rather than assuming that, the same defensive choice the
 // loader itself makes.
 function TeamSection({
-  members, pendingInvites, canManageTeam, actionData,
+  members, pendingInvites, canManageTeam, canChooseRole, connectionId, actionData,
 }: {
   members: TeamMember[];
   pendingInvites: TeamPendingInvite[];
   canManageTeam: boolean;
+  /** The `team_roles` entitlement — decides whether a role can be picked at all. */
+  canChooseRole: boolean;
+  connectionId: string;
   actionData: Route.ComponentProps["actionData"];
 }) {
   const navigation = useNavigation();
@@ -1172,7 +1286,473 @@ function TeamSection({
         </div>
       )}
 
-      {canManageTeam && <InviteMemberCard key={formKey} pending={inviting} error={inviteError} />}
+      {canManageTeam && <InviteMemberCard
+          key={formKey}
+          pending={inviting}
+          error={inviteError}
+          canChooseRole={canChooseRole}
+          connectionId={connectionId}
+        />}
     </>
+  );
+}
+
+/**
+ * The embed snippet.
+ *
+ * Plain HTML the merchant pastes into their own site — no script tag
+ * loaded from us, no build step, nothing to keep in sync. An iframe of
+ * the booking page they already have, which means it cannot drift from
+ * it: whatever their booking page does, the embed does.
+ *
+ * Ungated, deliberately. There is no `embed` entitlement because there
+ * is nothing to enforce — the booking page is public, and anyone who
+ * wanted to could write these eight lines themselves. What a plan
+ * actually buys here is `no_badge`, which the embedded page honours
+ * exactly like the hosted one.
+ */
+function EmbedSnippetCard({ bookingUrl, vocab }: { bookingUrl: string; vocab: ReturnType<typeof useVocabulary> }) {
+  const [copied, setCopied] = useState(false);
+  const src = `${bookingUrl}${bookingUrl.includes("?") ? "&" : "?"}embed=1`;
+
+  // The resize listener checks the message's origin against the iframe's
+  // own, so another frame on the merchant's page can't drive the height.
+  const snippet = `<iframe
+  src="${src}"
+  title="Book online"
+  style="width:100%;border:0;min-height:640px"
+  id="getbooqin-booking"
+></iframe>
+<script>
+  window.addEventListener("message", function (e) {
+    var frame = document.getElementById("getbooqin-booking");
+    if (!frame || e.source !== frame.contentWindow) return;
+    if (e.data && e.data.type === "getbooqin:height") {
+      frame.style.minHeight = e.data.height + "px";
+    }
+  });
+</script>`;
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(snippet);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Denied or unavailable — the snippet is on screen to copy by hand.
+    }
+  }
+
+  return (
+    <div className="card p-[18px]">
+      <div className="mb-1 flex items-start justify-between gap-3">
+        <h2 className="card-title">Put booking on your website</h2>
+        <button type="button" className="btn-sec shrink-0" onClick={copy}>
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <p className="m-0 mb-3 text-meta text-muted">
+        Paste this wherever you want the {vocab.bookingOne.toLowerCase()} form to appear — a page, a sidebar, a
+        pop-up. It resizes itself as customers move through the steps, and it stays in step with your settings
+        automatically.
+      </p>
+      <pre className="m-0 max-h-[240px] overflow-auto rounded-[9px] border border-line bg-canvas-alt p-3 text-[12px] leading-[1.5]">
+        <code>{snippet}</code>
+      </pre>
+      <p className="m-0 mt-2 text-[12px] text-subtle">
+        No website? Your{" "}
+        <a href={bookingUrl} target="_blank" rel="noreferrer" className="text-brand-600 underline">
+          booking link
+        </a>{" "}
+        works on its own.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Booking-page branding — a logo and an accent colour.
+ *
+ * Its own card and its own form, separate from the rest of General,
+ * because the logo has to be read and downscaled in the browser before
+ * it can be submitted at all, and mixing that into the main settings
+ * save would make an ordinary field change depend on image handling.
+ *
+ * The image never reaches the server at full size. A phone photo is
+ * four megabytes; what gets stored is a data URL of a 512px-max render
+ * of it, which is a few tens of kilobytes and small enough to inline
+ * into the booking page. The server re-checks the size and format
+ * regardless — everything that happens in a browser is a suggestion.
+ */
+function BrandingCard({
+  connectionId, canBrand, currentPlan, logo, accent, savedAt,
+}: {
+  connectionId: string;
+  canBrand: boolean;
+  currentPlan: PlanId;
+  logo: string;
+  accent: string;
+  savedAt?: string;
+}) {
+  const [logoValue, setLogoValue] = useState(logo);
+  const [accentValue, setAccentValue] = useState(accent || "#8f3aa9");
+  const [problem, setProblem] = useState("");
+
+  async function onPick(file: File | undefined) {
+    setProblem("");
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      // SVG is refused here and again on the server: it is an image
+      // format that can contain script, and this value gets inlined
+      // into a page on our own origin.
+      setProblem("Use a PNG, JPEG or WebP image.");
+      return;
+    }
+    try {
+      setLogoValue(await downscaleToDataUrl(file, 512));
+    } catch {
+      setProblem("That image couldn't be read. Try another file.");
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="flex flex-col gap-[3px]">
+          <h2 className="card-title">Your booking page</h2>
+          <p className="m-0 text-meta text-muted">Your logo and colour, instead of ours.</p>
+        </div>
+      </div>
+
+      {!canBrand ? (
+        <div className="px-[18px] py-[14px]">
+          <UpgradePrompt connectionId={connectionId} feature="branding" currentPlan={currentPlan} />
+        </div>
+      ) : (
+        <Form method="post" className="contents">
+          {/* Its own section. Posting "general" from a form that holds
+              only two of its twelve fields made the action read the
+              other ten as empty strings and write them — one click on
+              Save here blanked the business name, address and phone and
+              reset the currency to USD and the timezone to UTC, which
+              silently re-bases every availability calculation and every
+              displayed booking time. */}
+          <input type="hidden" name="_section" value="branding" />
+          <input type="hidden" name="brand_logo" value={logoValue} />
+
+          <div className="flex flex-col gap-[14px] px-[18px] py-[14px]">
+            {problem && <AlertError>{problem}</AlertError>}
+
+            <div className="flex items-center gap-4">
+              <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center overflow-hidden rounded-[9px] border border-line bg-canvas-alt">
+                {logoValue ? (
+                  <img src={logoValue} alt="Your logo" className="max-h-full max-w-full object-contain" />
+                ) : (
+                  <LogoMark size={24} />
+                )}
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="btn-sec cursor-pointer">
+                  {logoValue ? "Replace logo" : "Upload a logo"}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="sr-only"
+                    onChange={(e) => onPick(e.currentTarget.files?.[0])}
+                  />
+                </label>
+                {logoValue && (
+                  <button type="button" className="btn-link text-danger" onClick={() => setLogoValue("")}>
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <label className="flex items-center gap-3 text-[12px] text-muted">
+              Accent colour
+              <input
+                type="color"
+                name="brand_accent"
+                value={accentValue}
+                onChange={(e) => setAccentValue(e.currentTarget.value)}
+                className="h-8 w-12 cursor-pointer rounded-[6px] border border-line bg-surface p-[2px]"
+                aria-label="Accent colour"
+              />
+              <span className="num text-subtle">{accentValue}</span>
+            </label>
+          </div>
+
+          <div className="card-footer">
+            {savedAt && <span className="alert-success">Saved {savedAt}.</span>}
+            <button type="submit" className="btn-pri ml-auto">Save</button>
+          </div>
+        </Form>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Reads an image file and returns a data URL no larger than `max` on
+ * its longest side.
+ *
+ * Done here rather than server-side because the alternative is
+ * uploading a four-megabyte phone photo to store a favicon-sized mark.
+ * The canvas render also strips EXIF, which is worth having: a logo
+ * photographed on a phone otherwise carries the GPS coordinates of
+ * wherever it was taken.
+ */
+async function downscaleToDataUrl(file: File, max: number): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("no canvas context");
+  context.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+
+  // PNG keeps transparency, which most logos need. Falls back to JPEG
+  // only if the PNG comes out too big for the stored cap.
+  const png = canvas.toDataURL("image/png");
+  if (png.length <= 48 * 1024) return png;
+  return canvas.toDataURL("image/jpeg", 0.85);
+}
+
+/**
+ * Settings → Payments.
+ *
+ * One field, and a lot of honesty around it.
+ *
+ * GetBooqin is not in this transaction: the merchant's UPI ID or
+ * PayPal.me handle goes into a link the customer pays through directly,
+ * and the money never touches us. That is what makes this possible
+ * without becoming a payment aggregator — and it is also why the page
+ * has to say, plainly, that nothing here confirms a payment. A merchant
+ * who believes this is automatic will stop checking their bank, and
+ * that is the one outcome worse than having no feature at all.
+ */
+function PaymentsPage({
+  connectionId, currency, businessName, upiId, payPalMe, savedAt, error,
+}: {
+  connectionId: string;
+  currency: string;
+  businessName: string;
+  upiId: string;
+  payPalMe: string;
+  savedAt?: string;
+  error?: string;
+}) {
+  const [upi, setUpi] = useState(upiId);
+  const [pp, setPp] = useState(payPalMe);
+  const indian = currency.toUpperCase() === "INR";
+
+  // Exactly what a customer would be sent, built with the same function
+  // the server uses. Seeing the real link before saving is what catches
+  // a typo that is still a valid address.
+  const preview = PaymentLinks.paymentLink(indian ? "upi" : "paypal", {
+    payee: { upiId: upi, payPalMe: pp, payeeName: businessName || "Booking" },
+    amount: 1,
+    currency,
+    reference: "BK-TEST01",
+    note: "Test payment",
+  });
+
+  return (
+    <div className="flex flex-col gap-[14px]">
+      <Form method="post" className="contents">
+        <input type="hidden" name="_section" value="payments" />
+
+        <div className="card">
+          <div className="card-header">
+            <div className="flex flex-col gap-[3px]">
+              <h2 className="card-title">Where your customers pay you</h2>
+              <p className="m-0 text-meta text-muted">
+                Money goes straight to you. GetBooqin never holds it, and never takes a cut.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-[14px] px-[18px] py-[14px]">
+            {error && <AlertError>{error}</AlertError>}
+
+            {/* Said where the field is, not after a failed request.
+                A merchant who fills in a UPI ID on a dollar-priced shop
+                has done nothing wrong and needs to know it won't be
+                used — "(India only)" in a label is not enough. */}
+            {!indian && upi && (
+              <p className="m-0 rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+                <strong>This UPI ID won't be used.</strong> Your prices are in {currency}, and UPI only settles in
+                rupees — a payment link for a {currency} amount would ask for the wrong money. Add a PayPal.me link
+                below instead, or change your currency under Settings → General.
+              </p>
+            )}
+            <label className="flex flex-col gap-1 text-[12px] text-muted">
+              UPI ID{!indian && " (not used — you price in " + currency + ")"}
+              <input
+                className="input w-full min-w-0"
+                name="upi_id"
+                value={upi}
+                onChange={(e) => setUpi(e.currentTarget.value)}
+                placeholder="yourbusiness@okhdfcbank"
+                aria-label="UPI ID"
+                maxLength={120}
+              />
+              {/* A personal UPI ID taking business payments is P2P, which
+                  carries daily limits and can get flagged if used
+                  commercially at volume. Said here rather than after it
+                  happens. */}
+              <span className="text-[11.5px] text-subtle">
+                Use the UPI ID you receive business payments on, not a personal one.
+              </span>
+            </label>
+
+            <label className="flex flex-col gap-1 text-[12px] text-muted">
+              PayPal.me link{indian && " (for customers outside India)"}
+              <input
+                className="input w-full min-w-0"
+                name="paypal_me"
+                value={pp}
+                onChange={(e) => setPp(e.currentTarget.value)}
+                placeholder="paypal.me/yourbusiness"
+                aria-label="PayPal.me link"
+                maxLength={120}
+              />
+            </label>
+          </div>
+
+          <div className="card-footer">
+            {savedAt && <span className="alert-success">Saved {savedAt}.</span>}
+            <button type="submit" className="btn-pri ml-auto">Save</button>
+          </div>
+        </div>
+      </Form>
+
+      {preview && (
+        <div className="card p-[18px]">
+          <h2 className="card-title mb-1">Check it works</h2>
+          <p className="m-0 mb-3 text-meta text-muted">
+            Pay yourself {indian ? "₹1" : "1.00"} with this. Nothing here can tell whether an address is
+            <em> yours</em> — only that it's the right shape — so this is the check that matters.
+          </p>
+          {/* Named apps, not just the generic link. A bare upi:// goes
+              to whichever app holds Android's default — WhatsApp
+              registers as one — so "it opened WhatsApp" is the first
+              thing a merchant hits when testing. */}
+          <div className="flex flex-wrap gap-2">
+            {indian
+              ? PaymentLinks.upiAppLinks({
+                  payee: { upiId: upi, payPalMe: pp, payeeName: businessName || "Booking" },
+                  amount: 1,
+                  currency,
+                  reference: "BKTEST01",
+                  note: "Test payment",
+                }).map((app) => (
+                  <a
+                    key={app.id}
+                    href={app.url}
+                    className="btn-sec no-underline hover:no-underline"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {app.label}
+                  </a>
+                ))
+              : (
+                <a href={preview} className="btn-sec no-underline hover:no-underline" target="_blank" rel="noreferrer">
+                  Send a test payment
+                </a>
+              )}
+          </div>
+          <pre className="mt-3 overflow-x-auto rounded-[9px] border border-line bg-canvas-alt p-3 text-[11.5px]">
+            <code>{preview}</code>
+          </pre>
+        </div>
+      )}
+
+      <div className="card p-[18px]">
+        <h2 className="card-title mb-1">What this does and doesn't do</h2>
+        <ul className="m-0 flex list-none flex-col gap-2 p-0 text-meta text-muted">
+          <li>
+            <strong className="text-ink-2">Customers get a link and a QR</strong> with the amount and your
+            booking reference already filled in — on their phone it opens their payment app directly.
+          </li>
+          <li>
+            {/* The single most important sentence on this page. */}
+            <strong className="text-warn">Nothing tells us when they've paid.</strong> The money arrives in your
+            account, you see it in your own app, and you mark it paid on the Orders page. Keep checking your bank.
+          </li>
+          <li>
+            <strong className="text-ink-2">Amounts can be edited</strong> in some payment apps, so check how much
+            actually arrived — not just that something did.
+          </li>
+        </ul>
+        <p className="m-0 mt-3 text-[12px] text-subtle">
+          Set how much each service asks for under{" "}
+          <a href={`/dashboard/${connectionId}/services`} className="text-brand-600 underline">
+            Services
+          </a>
+          .
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The booking link as something you can put on a wall.
+ *
+ * The cheapest distribution a small business has: print it, tape it to
+ * the window, put it on the back of a receipt or a business card.
+ * Someone scans it with their phone camera — no app, no account,
+ * nothing to install — and lands on the booking page.
+ *
+ * Deliberately shown, not just offered as a download. A merchant will
+ * not print something they have not seen, and scanning the preview off
+ * their own screen is the fastest way to confirm it points where they
+ * expect.
+ */
+function BookingQrCard({
+  connectionId, bookingUrl, vocab, qr,
+}: {
+  connectionId: string;
+  bookingUrl: string;
+  vocab: ReturnType<typeof useVocabulary>;
+  /** Small inline preview. The download route renders a print-resolution one. */
+  qr: string;
+}) {
+  return (
+    <div className="card p-[18px]">
+      <h2 className="card-title mb-1">Your booking QR code</h2>
+      <p className="m-0 mb-3 text-meta text-muted">
+        Print it for your window or counter, or send it in a message. Anyone can scan it with their phone camera
+        to book a {vocab.bookingOne.toLowerCase()} — there's nothing for them to install.
+      </p>
+
+      <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+        <img
+          src={qr}
+          alt={`QR code linking to ${bookingUrl}`}
+          className="h-[140px] w-[140px] shrink-0 rounded-[9px] border border-line bg-white p-2"
+        />
+        <div className="flex min-w-0 flex-col gap-2">
+          <a
+            href={`/dashboard/${connectionId}/booking-qr.png`}
+            className="btn-pri self-start no-underline hover:no-underline"
+          >
+            Download for printing
+          </a>
+          <span className="text-[12px] text-subtle">
+            A high-resolution PNG, about 9cm square at print quality.
+          </span>
+          <span className="min-w-0 break-all text-[12px] text-subtle">Points to {bookingUrl}</span>
+        </div>
+      </div>
+    </div>
   );
 }

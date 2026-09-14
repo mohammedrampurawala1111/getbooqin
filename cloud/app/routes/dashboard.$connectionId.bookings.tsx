@@ -112,7 +112,11 @@ export async function action({ request, params }: Route.ActionArgs) {
         email: String(form.get("email") || ""),
         phone: String(form.get("phone") || ""),
       },
-      settings.require_phone
+      settings.require_phone,
+      // Same omission as the public page: without this a shop with
+      // require_email off still cannot take a booking for a customer
+      // who has no email address.
+      settings.require_email
     );
     if (Object.keys(fieldErrors).length > 0) return { fieldErrors };
     try {
@@ -126,7 +130,12 @@ export async function action({ request, params }: Route.ActionArgs) {
         email: String(form.get("email") || ""),
         phone: String(form.get("phone") || ""),
         notes: String(form.get("notes") || ""),
-        source: "form",
+        // Not "form". enforcement.ts meters `source: "form"` and says
+        // in as many words that a merchant typing in a walk-in is doing
+        // admin, not consuming a quota — but this route sent "form"
+        // anyway, so every walk-in a receptionist entered came off the
+        // monthly allowance the public page is supposed to own.
+        source: "staff",
         // Staff typing in a phone/walk-in booking are entering their own
         // data, not a stranger's request — auto_confirm's approval gate
         // exists to triage public requests, not a merchant's own entry

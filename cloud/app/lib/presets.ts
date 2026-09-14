@@ -26,11 +26,13 @@ import {
   withDefaultTerms,
   starterTemplate,
   termSuggestions,
+  termSuggestionPairs,
+  guessPlural,
   type StarterTemplate,
   type Terms,
 } from "getbooqin-core/booking/presets";
 
-export { STARTER_TEMPLATES, defaultTerms, withDefaultTerms, starterTemplate, termSuggestions };
+export { STARTER_TEMPLATES, defaultTerms, withDefaultTerms, starterTemplate, termSuggestions, termSuggestionPairs, guessPlural };
 export type { StarterTemplate, Terms };
 
 /** Swatch palette a service's colour picker cycles through — shared so

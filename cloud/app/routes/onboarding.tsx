@@ -3,12 +3,16 @@ import { redirect, useFetcher, useNavigate, useSearchParams } from "react-router
 import type { Route } from "./+types/onboarding";
 import { getClerkClient, requireUserSession, ensureUserRow } from "~/session.server";
 import { AlertError, Field, Input, Toggle, TimezoneSelect } from "~/components/ui";
-import { OnboardingShell, PresetTiles, PresetScaffold, IntegrationRow } from "~/components/onboarding";
-import { INTEGRATIONS, starterTemplate, templateCard, vocabFor, SERVICE_SWATCHES } from "~/lib/presets";
+import { OnboardingShell, PresetTiles, PresetScaffold, STEP_NAMES } from "~/components/onboarding";
+import { starterTemplate, templateCard, vocabFor, SERVICE_SWATCHES } from "~/lib/presets";
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 import { CURRENCIES, guessCurrency } from "~/lib/currency";
+// The plan table, not the server-side entitlement machinery — this
+// subpath is import-free by design so the pricing copy can render in
+// the browser. See core/src/billing/plans.ts.
+import { PLANS, PRICES, TRIAL_DAYS, TRIAL_PLAN, billingCurrencyFor, formatPrice, visiblePlans } from "getbooqin-core/billing/plans";
 import { getAppUrl } from "~/lib/env.server";
-import { Data, Settings, Team, createManualConnection, getUserConnection, listUserConnections, isGetBooqinError } from "getbooqin-core";
+import { Data, Settings, Team, Lifecycle, TestBooking, createManualConnection, getUserConnection, listUserConnections, isGetBooqinError } from "getbooqin-core";
 
 // Two ways to leave this wizard with a working account: connect a real
 // Shopify store (answers used to ride through the OAuth
@@ -112,7 +116,11 @@ function slugify(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "service";
 }
 
-type ActionResult = { connectionId?: string; error?: string };
+type ActionResult = {
+  connectionId?: string;
+  error?: string;
+  testBooking?: Awaited<ReturnType<typeof TestBooking.createTestBooking>>;
+};
 
 async function handleStep1(userId: string, form: FormData): Promise<ActionResult> {
   const cid = String(form.get("cid") || "");
@@ -122,6 +130,14 @@ async function handleStep1(userId: string, form: FormData): Promise<ActionResult
     connection = await createManualConnection({ userId });
   }
   const { shop, platform } = connection;
+
+  // Pinned here, at the first save, rather than only at go-live. It is
+  // knowable the moment the Connection exists, and every email sent
+  // before go-live — a test booking, most obviously — otherwise carries
+  // a manage link pointing at `https://manual-<uuid>`, which is
+  // defaultSettings()'s guess for a Shopify domain and nowhere at all
+  // for a manual account.
+  await Settings.setSettings(shop, platform, { booking_page_url: `${getAppUrl()}/book/${connection.id}` });
 
   const businessName = String(form.get("business_name") || "").trim();
   const businessEmail = String(form.get("business_email") || "").trim();
@@ -177,7 +193,10 @@ async function handleStep1(userId: string, form: FormData): Promise<ActionResult
           title: svc.name,
           description: "",
           category: "",
-          price: svc.price,
+          // Unpriced. See StarterTemplate in core's presets.ts — a
+          // template can guess a duration, never a price, and the
+          // wizard never shows these before the page goes live.
+          price: 0,
         });
         await Data.saveServiceConfig(shop, platform, {
           product_id: productId,
@@ -280,7 +299,32 @@ async function handleGoLive(userId: string, form: FormData) {
     booking_page_url: `${getAppUrl()}/book/${connection.id}`,
   });
 
+  // After setSettings, because the welcome email hands over the booking
+  // link and reads it from settings. Not awaited: a merchant clicking
+  // "Go live" should land on their dashboard at SMTP speed or better,
+  // and an email that fails to send is not a reason to fail going live
+  // — sendWelcome() claims-then-releases, so the next attempt still
+  // works.
+  void Lifecycle.sendWelcome(connection.id).catch((err) =>
+    console.error(`[getbooqin] welcome email failed for connection ${connection.id}:`, err)
+  );
+
   throw redirect(`/dashboard/${connection.id}`);
+}
+
+/**
+ * Puts a real booking through the real path, addressed to the merchant
+ * themselves — see core's testBooking.ts. Returns what happened rather
+ * than redirecting: the merchant should stay on this step and watch it
+ * work.
+ */
+async function handleTestBooking(userId: string, form: FormData): Promise<ActionResult> {
+  const cid = String(form.get("cid") || "");
+  const connection = cid ? await getUserConnection(userId, cid) : null;
+  if (!connection) return { error: "Something went wrong — go back to the previous step and try again." };
+
+  const booking = await TestBooking.createTestBooking(connection.id);
+  return { testBooking: booking };
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -298,6 +342,7 @@ export async function action({ request }: Route.ActionArgs) {
     if (intent === "step1") return await handleStep1(session.userId, form);
     if (intent === "step2") return await handleStep2(session.userId, form);
     if (intent === "golive") return await handleGoLive(session.userId, form);
+    if (intent === "test_booking") return await handleTestBooking(session.userId, form);
   } catch (err) {
     if (isGetBooqinError(err)) return { error: err.message };
     throw err;
@@ -321,7 +366,7 @@ type OnboardingState = {
 export default function Onboarding({ loaderData }: Route.ComponentProps) {
   const { seed } = loaderData;
   const [searchParams, setSearchParams] = useSearchParams();
-  const step = Math.min(4, Math.max(1, Number(searchParams.get("step")) || 1));
+  const step = Math.min(STEP_NAMES.length, Math.max(1, Number(searchParams.get("step")) || 1));
   const cid = searchParams.get("cid") || "";
 
   // "UTC"/USD here, not the browser's real timezone/currency: Intl reads the
@@ -453,10 +498,7 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
           onBack={() => goToStep(1)}
         />
       )}
-      {step === 3 && (
-        <StepIntegrations state={state} cid={cid} onNext={() => goToStep(4)} onBack={() => goToStep(2)} />
-      )}
-      {step === 4 && <StepGoLive state={state} cid={cid} update={update} onBack={() => goToStep(3)} />}
+      {step === 3 && <StepGoLive state={state} cid={cid} update={update} onBack={() => goToStep(2)} />}
     </OnboardingShell>
   );
 }
@@ -623,43 +665,6 @@ function StepSetup({
   );
 }
 
-function StepIntegrations({
-  state, cid, onNext, onBack,
-}: { state: OnboardingState; cid: string; onNext: () => void; onBack: () => void }) {
-  return (
-    <>
-      <h1 className="ob-h1">Connect your channels</h1>
-      <p className="m-0 -mt-2 text-body text-muted">
-        Connecting your store below finishes setup in one step. Everything else can wait.
-      </p>
-      <div className="flex flex-col gap-[10px]">
-        {/* Shopify is shipped dark (no plan grants it — see core's
-            plans.ts), so onboarding does not offer it. Every remaining
-            row is a genuine "coming soon", which is the honest thing for
-            a step that used to lead with a connect flow most accounts
-            cannot use. */}
-        {INTEGRATIONS.filter((integ) => integ.id !== "shopify").map((integ) => (
-            <IntegrationRow
-              key={integ.id}
-              id={integ.id}
-              name={integ.name}
-              initial={integ.initial}
-              tint={integ.tint}
-              tag="Coming soon"
-              blurb={integ.blurb}
-              connected={false}
-              disabled
-            />
-        ))}
-      </div>
-      <div className="flex justify-between">
-        <button type="button" className="btn-sec" onClick={onBack}>Back</button>
-        <button type="button" className="btn-pri" onClick={onNext}>Skip for now</button>
-      </div>
-    </>
-  );
-}
-
 function StepGoLive({
   state, cid, update, onBack,
 }: { state: OnboardingState; cid: string; update: (p: Partial<OnboardingState>) => void; onBack: () => void }) {
@@ -675,10 +680,21 @@ function StepGoLive({
             onChange={(checked) => update({ remindersOn: checked })}
             label="Send booking reminders"
           />
-          <div className="flex items-center gap-[10px] rounded-[9px] border border-line bg-canvas-alt px-3 py-[11px]">
-            <span className="text-body font-medium text-muted">Invite your team</span>
-            <span className="rounded-full bg-neutral-bg px-[7px] py-[2px] text-[11px] font-medium text-neutral">Coming soon</span>
-          </div>
+          {/* Team invites ship — roles, invite emails, the accept flow,
+              a Settings page. Calling it "coming soon" here meant a
+              merchant with staff finished setup believing multi-user
+              did not exist, and never opened Settings → Team. The
+              landing page sells it on the same day. */}
+          <a
+            href={`/dashboard/${cid}/settings?page=team`}
+            className="flex items-center justify-between gap-[10px] rounded-[9px] border border-line bg-canvas-alt px-3 py-[11px] no-underline hover:border-brand-500 hover:no-underline"
+          >
+            <span className="flex flex-col">
+              <span className="text-body font-medium text-ink">Invite your team</span>
+              <span className="text-[12px] text-muted">Add staff with their own login and permissions.</span>
+            </span>
+            <span className="text-brand-600">&rarr;</span>
+          </a>
         </div>
       </div>
       {/* Going live is now the single action. This step used to lead
@@ -696,9 +712,111 @@ function StepGoLive({
         </p>
         <GoLiveWithoutShopifyForm state={state} cid={cid} submitLabel="Go live" />
       </div>
+      <TestBookingCard cid={cid} vocab={v} />
+      <PlanStrip currency={state.currency} timezone={state.timezone} />
       <div className="flex justify-start">
         <button type="button" className="btn-sec" onClick={onBack}>Back</button>
       </div>
     </>
+  );
+}
+
+/**
+ * The 30-second proof that the thing works.
+ *
+ * Its own fetcher, not the step's form: this must not submit the
+ * go-live form, and the merchant should be able to press it, read the
+ * result, and then go live — in that order, on one screen.
+ */
+/**
+ * What happens after the trial, said before they go live rather than in
+ * an email three weeks later.
+ *
+ * No buttons. Asking someone to choose a plan in the middle of setup,
+ * before they have seen the product take a single booking, converts
+ * badly and reads as a bait-and-switch; the job here is only to make
+ * sure nobody is surprised. The actual choice lives on Settings →
+ * Billing, and the trial nudges point at it.
+ *
+ * Prices are shown in the currency this account will actually be billed
+ * in — derived the same way the mandate will derive it, from the
+ * currency and timezone picked on step 1, rather than assuming dollars.
+ */
+function PlanStrip({ currency, timezone }: { currency: string; timezone: string }) {
+  const billingCurrency = billingCurrencyFor({ currency, timezone });
+  const paid = visiblePlans().filter((plan) => plan.id !== "free");
+
+  return (
+    <div className="card p-[18px]">
+      <h2 className="card-title mb-1">
+        You're on {PLANS[TRIAL_PLAN].name}, free for {TRIAL_DAYS} days
+      </h2>
+      <p className="m-0 mb-3 text-meta text-muted">
+        No card needed now. When the trial ends you can pick a plan or stay on Free — nothing is deleted either
+        way, and your booking page keeps working.
+      </p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {paid.map((plan) => {
+          const price = PRICES[plan.id as keyof typeof PRICES]?.[billingCurrency]?.monthly;
+          const trial = plan.id === TRIAL_PLAN;
+          return (
+            <div
+              key={plan.id}
+              className={`rounded-[9px] border px-3 py-[11px] ${trial ? "border-brand-600 bg-brand-50" : "border-line bg-canvas-alt"}`}
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-body font-medium">{plan.name}</span>
+                {trial && <span className="text-[11px] font-medium text-brand-600">Your trial</span>}
+              </div>
+              <span className="num text-[13px] text-muted">
+                {price ? `${formatPrice(price.amount, billingCurrency)}/mo` : "—"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TestBookingCard({ cid, vocab }: { cid: string; vocab: ReturnType<typeof vocabFor> }) {
+  const fetcher = useFetcher<ActionResult>();
+  const sending = fetcher.state !== "idle";
+  const result = fetcher.data?.testBooking;
+  const error = fetcher.data?.error;
+
+  return (
+    <div className="card p-[18px]">
+      <h2 className="card-title mb-1">See it work first</h2>
+      <p className="mb-3 text-meta text-muted">
+        Books you in as if you were a customer — a real {vocab.bookingOne.toLowerCase()}, the real confirmation
+        email, in your real calendar. Cancel it afterwards in one click.
+      </p>
+
+      {error && <AlertError>{error}</AlertError>}
+
+      {result ? (
+        <div className="rounded-[9px] border border-ok bg-ok-bg px-3 py-[11px] text-body">
+          <p className="m-0 font-medium">
+            {result.status === "pending" ? "Request sent" : "Booked"} — {result.serviceName}
+            {result.resourceName ? ` with ${result.resourceName}` : ""}, {result.when}.
+          </p>
+          <p className="m-0 mt-1 text-meta text-muted">
+            {/* Named, because "check your email" is useless if it went
+                somewhere they aren't looking. */}
+            The confirmation is on its way to {result.email}. It has the appointment attached, so it drops
+            straight into a calendar. Your copy of it is in the dashboard once you go live.
+          </p>
+        </div>
+      ) : (
+        <fetcher.Form method="post">
+          <input type="hidden" name="_intent" value="test_booking" />
+          <input type="hidden" name="cid" value={cid} />
+          <button type="submit" className="btn-sec" disabled={sending || !cid}>
+            {sending ? "Booking…" : `Send yourself a test ${vocab.bookingOne.toLowerCase()}`}
+          </button>
+        </fetcher.Form>
+      )}
+    </div>
   );
 }

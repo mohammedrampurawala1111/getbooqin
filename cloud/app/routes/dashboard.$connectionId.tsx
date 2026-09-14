@@ -155,6 +155,12 @@ function NavIcon({ path }: { path: ReactNode }) {
 }
 
 const NAV_ICONS = {
+  orders: (
+    <NavIcon path={<>
+      <path d="M2 4h12l-1 9H3L2 4Z" />
+      <path d="M5.5 6.5V3.5a2.5 2.5 0 0 1 5 0v3" strokeLinecap="round" />
+    </>} />
+  ),
   overview: (
     <NavIcon path={<>
       <rect x="2" y="2" width="5" height="5" rx="1" />
@@ -237,6 +243,10 @@ function navItems(vocab: Vocabulary, pendingCount: number, canViewSettings: bool
     { to: "/timeoff", label: "Time off", icon: NAV_ICONS.timeoff },
     { to: "/services", label: v.services, icon: NAV_ICONS.services },
     { to: "/customers", label: v.customers, icon: NAV_ICONS.customers },
+    // After Customers, because it is a reconciliation screen rather than
+    // a daily one — a merchant opens it when chasing money, not when
+    // running the day.
+    { to: "/orders", label: "Orders", icon: NAV_ICONS.orders },
     ...(canViewSettings ? [{ to: "/settings", label: "Settings", icon: NAV_ICONS.settings }] : []),
   ].map((item) => ({
     ...item,

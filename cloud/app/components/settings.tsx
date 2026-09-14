@@ -32,6 +32,7 @@ export const SETTINGS_NAV = [
     { key: "general", label: "General", path: "/settings?page=general", title: "General", subtitle: "Business identity, the words you use, and how time is displayed." },
     { key: "rules", label: "Booking rules", path: "/settings?page=rules", title: "Booking rules", subtitle: "When customers can book, and what happens automatically." },
     { key: "notifications", label: "Notifications", path: "/settings?page=notifications", title: "Notifications", subtitle: "Emails sent to customers and staff." },
+    { key: "payments", label: "Payments", path: "/settings?page=payments", title: "Payments", subtitle: "How customers pay you for a booking. The money goes straight to you — GetBooqin never holds it." },
     { key: "integrations", label: "Integrations", path: "/settings?page=integrations", title: "Integrations", subtitle: "Optional integrations. GetBooqin works fully without any of them." },
     { key: "team", label: "Team", path: "/settings?page=team", title: "Team", subtitle: "Who can access this dashboard, and what they can do." },
     { key: "billing", label: "Billing", path: "/settings?page=billing", title: "Billing", subtitle: "Your plan, what it includes, and what you're using." },
@@ -557,7 +558,15 @@ export function PendingInviteRow({
    useNavigation()/actionData, the same way TemplateTab already derives
    `pending={navigation.state !== "idle"}` for its own <Form> submit — this
    component doesn't own its own fetcher. */
-export function InviteMemberCard({ pending, error }: { pending: boolean; error?: string }) {
+export function InviteMemberCard({
+  pending, error, canChooseRole, connectionId,
+}: {
+  pending: boolean;
+  error?: string;
+  /** The `team_roles` entitlement. Without it only "write" can be invited. */
+  canChooseRole: boolean;
+  connectionId: string;
+}) {
   return (
     <Form method="post" className="card">
       <div className="card-header">
@@ -574,13 +583,34 @@ export function InviteMemberCard({ pending, error }: { pending: boolean; error?:
             {error}
           </span>
         ) : null}
-        <Row label="Role" hint="Admin can manage settings and the team. Write can create and edit bookings, services, and customers. Read can only view.">
-          <RowSelect name="role" defaultValue="write" cap={200}>
-            <option value="admin">Admin</option>
+        <Row
+          label="Role"
+          hint={
+            canChooseRole
+              ? "Admin can manage settings and the team. Write can create and edit bookings, services, and customers. Read can only view."
+              : "Everyone you invite can create and edit bookings, services and customers."
+          }
+        >
+          {/* Locked rather than silently ignored. The server used to
+              accept a choice of Read and grant Write anyway, reporting
+              success — so a receptionist meant to be view-only could
+              edit and delete customer records, and nothing said why.
+              The server now refuses; this makes the refusal visible
+              before anyone submits. */}
+          <RowSelect name="role" defaultValue="write" cap={200} disabled={!canChooseRole}>
+            {canChooseRole && <option value="admin">Admin</option>}
             <option value="write">Write</option>
-            <option value="read">Read</option>
+            {canChooseRole && <option value="read">Read</option>}
           </RowSelect>
         </Row>
+        {!canChooseRole && (
+          <p className="m-0 px-[18px] text-[12px] text-subtle">
+            Admin and read-only roles are on Growth.{" "}
+            <a href={`/dashboard/${connectionId}/settings?page=billing`} className="text-brand-600 underline">
+              See plans
+            </a>
+          </p>
+        )}
       </div>
       <div className="card-footer">
         <span />

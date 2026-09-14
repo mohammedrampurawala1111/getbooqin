@@ -38,8 +38,20 @@ export interface BillingView {
   usage: Record<string, number>;
   /** "{plan}:{cycle}" -> can it actually be charged in this currency right now. */
   sellable: Record<string, boolean>;
-  tax: { country: string; taxId: string; note: string };
+  tax: { country: string; taxId: string; note: string; billingName: string; billingAddress: string };
+  /** A mandate exists at the provider but nothing is being paid on it yet. */
+  awaitingActivation: boolean;
   overrides: { key: string; value: string; reason: string; expiresAt: string | null }[];
+  /**
+   * Who takes the payment — "Razorpay" in India, "PayPal" everywhere
+   * else. Named on screen because being sent to a vendor you weren't
+   * expecting is the moment people abandon a checkout.
+   */
+  providerName: string;
+  /** The merchant has just been returned here by the provider. */
+  returnedFromCheckout: boolean;
+  /** Issued invoices, newest first. Empty until the first payment clears. */
+  invoices: { id: string; number: string; issuedAt: string; amount: string; planName: string }[];
 }
 
 function formatDate(iso: string | null): string {
@@ -47,9 +59,104 @@ function formatDate(iso: string | null): string {
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(iso));
 }
 
+/**
+ * Every invoice ever issued on this account.
+ *
+ * Neither provider gives customers a portal, so this is the only place
+ * a merchant can get last March's invoice back — and "can you re-send
+ * my invoice" is a support email nobody should have to write. Rendered
+ * on demand from the stored row, so the document is identical every
+ * time it is fetched.
+ */
+function InvoiceHistory({ connectionId, invoices }: { connectionId: string; invoices: BillingView["invoices"] }) {
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="flex flex-col gap-[3px]">
+          <h2 className="card-title">Invoices</h2>
+          <p className="m-0 text-meta text-muted">
+            Emailed as a PDF when each payment clears, and kept here for whenever you need one again.
+          </p>
+        </div>
+      </div>
+      <div className="card-body">
+        {invoices.length === 0 ? (
+          <p className="m-0 text-body text-muted">
+            No invoices yet — the first one is issued when your first payment clears.
+          </p>
+        ) : (
+          <div className="flex flex-col">
+            {invoices.map((inv) => (
+              <div
+                key={inv.id}
+                className="flex items-center justify-between gap-3 border-b border-row py-[9px] text-[13px] last:border-0"
+              >
+                <span className="num shrink-0 text-subtle">{inv.issuedAt}</span>
+                <span className="min-w-0 flex-1 truncate font-medium">{inv.number}</span>
+                <span className="hidden shrink-0 text-muted sm:inline">{inv.planName}</span>
+                <span className="num shrink-0">{inv.amount}</span>
+                <a
+                  href={`/dashboard/${connectionId}/invoices/${inv.id}.pdf`}
+                  className="btn-link shrink-0 text-brand-600"
+                >
+                  PDF
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What just happened, for a merchant returning from the provider.
+ *
+ * PayPal sends them back here; Razorpay has no per-request return URL
+ * and cannot, so this only ever renders for the PayPal rail. The loader
+ * has already asked the provider for the real state before this
+ * renders, so by now the plan either flipped or genuinely has not been
+ * paid for — and both need saying. A page identical to the one they
+ * left is how a successful payment reads as a failed one, and how
+ * somebody ends up starting a second subscription.
+ */
+function CheckoutReturnBanner({ billing }: { billing: BillingView }) {
+  if (!billing.returnedFromCheckout) return null;
+
+  if (billing.status === "active") {
+    return (
+      <div className="rounded-[8px] bg-ok-bg px-3 py-2 text-[12.5px] font-medium text-ok">
+        Payment received — you're on <strong>{PLANS[billing.plan].name}</strong>. Your invoice is on its way by email.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+      <strong>We're still waiting on your payment to clear.</strong> Approving and the first charge settling are two
+      separate steps, and the second can take a few minutes. Reload in a moment — your plan changes by itself the
+      instant it lands. Don't start another subscription.
+    </div>
+  );
+}
+
 /** The one line at the top that answers "what am I on, and until when?" */
 function StatusBanner({ billing }: { billing: BillingView }) {
   const plan = PLANS[billing.plan];
+
+  if (billing.awaitingActivation) {
+    // A mandate was started and never completed — abandoned on the
+    // hosted page, or authorised and not yet charged. Said plainly,
+    // because the plan cards below still offer an upgrade and the
+    // merchant should know one is already half-done.
+    return (
+      <div className="rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+        You started a subscription that hasn't been paid for yet. Nothing has been charged, and your current plan
+        is unaffected — picking a plan below starts again and closes the unfinished one first.
+      </div>
+    );
+  }
 
   if (billing.status === "trialing") {
     const days = billing.trialDaysLeft ?? 0;
@@ -132,13 +239,29 @@ function UsageMeters({ billing }: { billing: BillingView }) {
   );
 }
 
-export function BillingPage({ billing, error }: { billing: BillingView; error?: string }) {
+export function BillingPage({
+  billing, connectionId, error, saved,
+}: {
+  billing: BillingView;
+  connectionId: string;
+  error?: string;
+  /** True right after a successful save on this page. */
+  saved?: boolean;
+}) {
   const current = PLANS[billing.plan];
   // Yearly first, deliberately. It is two months free and it is the
   // option a merchant is least likely to go looking for.
   const [cycle, setCycle] = useState<BillingCycle>(billing.billingCycle === "monthly" ? "monthly" : "yearly");
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
+  // The plan handoff leaves the SPA entirely (a native POST -> 303 ->
+  // the provider), so useNavigation never sees it. Tracked here instead, so
+  // the button that was pressed says "Starting…" and every other one
+  // locks — a merchant who thinks nothing happened and presses a second
+  // card is how two mandates get authorised.
+  const [starting, setStarting] = useState<string | null>(null);
+  const [billingName, setBillingName] = useState(billing.tax.billingName);
+  const [billingAddress, setBillingAddress] = useState(billing.tax.billingAddress);
   const [country, setCountry] = useState(billing.tax.country);
   const [taxId, setTaxId] = useState(billing.tax.taxId);
   // GetBooqin sells from an Indian entity: India is a domestic GST
@@ -159,6 +282,7 @@ export function BillingPage({ billing, error }: { billing: BillingView; error?: 
         </div>
         <div className="card-body flex flex-col gap-3">
           {error && <p className="m-0 rounded-[8px] bg-danger-bg px-3 py-2 text-[12.5px] font-medium text-danger">{error}</p>}
+          <CheckoutReturnBanner billing={billing} />
           <StatusBanner billing={billing} />
 
           {/* A downgrade is never destructive — nothing is deleted, and
@@ -295,7 +419,16 @@ export function BillingPage({ billing, error }: { billing: BillingView; error?: 
                   </ul>
                 )}
                 {purchasable && (
-                  <Form method="post" className="mt-auto pt-2">
+                  // A plain <form>, not React Router's <Form>. This
+                  // action answers with a 303 to the provider's hosted page
+                  // — a cross-origin redirect, which the router has to
+                  // recognise and turn into a document navigation
+                  // itself. A native POST has the browser follow the
+                  // redirect the way redirects are meant to work, with
+                  // nothing in between, which is what a handoff to
+                  // somebody else's payment page should be. It also
+                  // gives back-navigation the right behaviour for free.
+                  <form method="post" className="mt-auto pt-2" onSubmit={() => setStarting(id)}>
                     <input type="hidden" name="_section" value="billing_upgrade" />
                     <input type="hidden" name="plan" value={id} />
                     <input type="hidden" name="cycle" value={cycle} />
@@ -303,10 +436,16 @@ export function BillingPage({ billing, error }: { billing: BillingView; error?: 
                         merchant fills them in once rather than per card. */}
                     <input type="hidden" name="country" value={country} />
                     <input type="hidden" name="tax_id" value={taxId} />
-                    <button type="submit" disabled={busy} className={`w-full ${isUpgrade ? "btn-pri" : "btn-sec"}`}>
-                      {busy ? "Starting…" : isUpgrade ? `Upgrade to ${plan.name}` : `Switch to ${plan.name}`}
+                    <input type="hidden" name="billing_name" value={billingName} />
+                    <input type="hidden" name="billing_address" value={billingAddress} />
+                    <button
+                      type="submit"
+                      disabled={!!starting}
+                      className={`w-full ${isUpgrade ? "btn-pri" : "btn-sec"}`}
+                    >
+                      {starting === id ? "Starting…" : isUpgrade ? `Upgrade to ${plan.name}` : `Switch to ${plan.name}`}
                     </button>
-                  </Form>
+                  </form>
                 )}
               </div>
             );
@@ -315,7 +454,37 @@ export function BillingPage({ billing, error }: { billing: BillingView; error?: 
         {/* Asked once, above the plan cards, rather than per card. */}
         <div className="flex flex-col gap-2 border-t border-row px-[18px] py-[14px]">
           <span className="text-body font-medium">Billing details</span>
+          {/* Name and address are here because they go on the invoice,
+              not because anyone enjoys typing them. A tax invoice has
+              to name the entity being billed and carry its address, and
+              the shop's trading name is not that — so these are asked
+              once, and nothing is issued until they exist. */}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <label className="flex flex-col gap-1 text-[12px] text-muted sm:col-span-2">
+              Registered business name
+              <input
+                className="input w-full min-w-0"
+                name="billing_name"
+                value={billingName}
+                onChange={(e) => setBillingName(e.target.value)}
+                placeholder="Acme Dental Ltd"
+                aria-label="Registered business name"
+                maxLength={120}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[12px] text-muted sm:col-span-2">
+              Billing address
+              <textarea
+                className="input w-full min-w-0"
+                name="billing_address"
+                value={billingAddress}
+                onChange={(e) => setBillingAddress(e.target.value)}
+                placeholder={"12 High Street\nBristol BS1 4ST"}
+                aria-label="Billing address"
+                rows={3}
+                maxLength={400}
+              />
+            </label>
             <label className="flex flex-col gap-1 text-[12px] text-muted">
               Country your business is registered in
               <input
@@ -343,11 +512,30 @@ export function BillingPage({ billing, error }: { billing: BillingView; error?: 
               ? "We sell to registered businesses outside India. Your tax number makes this a zero-rated export — if you're in the EU, VAT is accounted for by you under the reverse charge."
               : "Indian GST applies. A GSTIN is optional and only needed if you want to claim input credit."}
           </p>
+
+          {/* A Save of their own.
+              These four fields previously existed only as hidden inputs
+              on each plan card, so the copy above ("asked once, and
+              nothing is issued until they exist") was true of a form
+              that could not be submitted: a merchant who filled them in
+              and navigated away lost all of it, and cancelling carried
+              none of them either. */}
+          <Form method="post" className="flex items-center gap-3">
+            <input type="hidden" name="_section" value="billing_details" />
+            <input type="hidden" name="country" value={country} />
+            <input type="hidden" name="tax_id" value={taxId} />
+            <input type="hidden" name="billing_name" value={billingName} />
+            <input type="hidden" name="billing_address" value={billingAddress} />
+            <button type="submit" disabled={busy} className="btn-sec">
+              {busy ? "Saving…" : "Save billing details"}
+            </button>
+            {saved && <span className="alert-success">Saved.</span>}
+          </Form>
         </div>
 
         <div className="card-footer flex-col items-start gap-2">
           <span className="text-meta text-muted">
-            You'll be taken to Razorpay to authorise the payment. Your plan changes once the first payment clears,
+            You'll be taken to {billing.providerName} to authorise the payment. Your plan changes once the first payment clears,
             not before.
           </span>
           {/* Cancelling is "don't renew", never "cut me off now" — the
@@ -362,6 +550,8 @@ export function BillingPage({ billing, error }: { billing: BillingView; error?: 
           )}
         </div>
       </div>
+
+      <InvoiceHistory connectionId={connectionId} invoices={billing.invoices} />
     </div>
   );
 }

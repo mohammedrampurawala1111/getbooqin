@@ -107,6 +107,59 @@ test.describe("the pricing page tells the truth", () => {
   });
 });
 
+test.describe("the landing page sells only what ships", () => {
+  /**
+   * Copy drifts away from the product silently, and the marketing page
+   * is where that costs a signup rather than a bug report. Two
+   * directions matter, and this covers both.
+   *
+   * The page had shipped claiming customer payments and deposits — cut
+   * in the trim plan and gone from the codebase — and inviting visitors
+   * to "start with Shopify", which no plan grants. A visitor acting on
+   * either would sign up and find nothing.
+   */
+  test("does not advertise taking customer payments or deposits", async ({ page }) => {
+    await page.goto("/");
+    const body = (await page.locator("body").innerText()).toLowerCase();
+
+    expect(body, "the product cannot take customer payments — see the trim plan's W4b").not.toContain("deposit");
+    // "payments" as a thing *we* do for the merchant. Our own billing
+    // copy ("your plan changes once the first payment clears") lives on
+    // the dashboard, not here.
+    expect(body).not.toContain("take payments");
+  });
+
+  test("does not send visitors to Shopify, which no plan offers", async ({ page }) => {
+    await page.goto("/");
+    const body = (await page.locator("body").innerText()).toLowerCase();
+
+    expect(body).not.toContain("start with shopify");
+    expect(body).not.toContain("shopify product sync");
+  });
+
+  test("advertises the capabilities that actually exist", async ({ page }) => {
+    // Group bookings, rooms, buffers, waitlist, roles and time off all
+    // work and were advertised nowhere (trim plan §4.4). Competitors
+    // charge multiples for the first two.
+    await page.goto("/");
+    const body = (await page.locator("body").innerText()).toLowerCase();
+
+    for (const claim of ["group", "room", "buffer", "waitlist", "time off"]) {
+      expect(body, `the landing page should mention ${claim}`).toContain(claim);
+    }
+  });
+
+  test("its title and description describe the product as it is", async ({ page }) => {
+    // The meta description is what a search result shows, and it was
+    // still selling deposits.
+    await page.goto("/");
+
+    const description = await page.locator('meta[name="description"]').getAttribute("content");
+    expect(description?.toLowerCase()).not.toContain("deposit");
+    expect((await page.title()).toLowerCase()).not.toContain("payments");
+  });
+});
+
 test.describe("public booking page", () => {
   const slug = process.env.E2E_BOOKING_SLUG;
 

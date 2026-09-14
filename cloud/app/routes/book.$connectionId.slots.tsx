@@ -42,3 +42,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     throw err;
   }
 }
+
+/**
+ * A resource route with no boundary sends a fetcher's error to the root
+ * one, which throws away the whole booking page. There is nothing to
+ * render here — the page handles a failed fetch in place — but the
+ * boundary has to exist to stop the escalation.
+ */
+export function ErrorBoundary() {
+  return null;
+}

@@ -15,6 +15,15 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./tests/e2e",
+  // Never the authenticated suite, and never the smoke gate.
+  //
+  // tests/e2e/auth creates and deletes real Clerk users and real
+  // businesses, and this config is the one pointed at production via
+  // E2E_BASE_URL. The smoke suite is excluded for a different reason:
+  // it is a release gate with its own config and its own retry policy,
+  // and running it here would mean its result gets read as "a test
+  // failed" rather than "roll back".
+  testIgnore: ["auth/**", "smoke.spec.ts"],
   timeout: 30_000,
   fullyParallel: true,
   reporter: [["list"]],

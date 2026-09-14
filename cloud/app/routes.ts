@@ -29,9 +29,16 @@ export default [
     route("services", "routes/dashboard.$connectionId.services.tsx"),
     route("services/new", "routes/dashboard.$connectionId.services.new.tsx"),
     route("services/:serviceId", "routes/dashboard.$connectionId.services.$serviceId.tsx"),
+    route("orders", "routes/dashboard.$connectionId.orders.tsx"),
     route("customers", "routes/dashboard.$connectionId.customers.tsx"),
     route("customers/:customerId", "routes/dashboard.$connectionId.customers.$customerId.tsx"),
     route("settings", "routes/dashboard.$connectionId.settings.tsx"),
+    // Rendered from the stored Invoice row on each request — see the
+    // route for why it isn't a stored file.
+    route("invoices/:invoiceId.pdf", "routes/dashboard.$connectionId.invoices.$invoiceId[.pdf].tsx"),
+    // The booking link as a printable QR — see the route for why it is
+    // generated rather than stored.
+    route("booking-qr.png", "routes/dashboard.$connectionId.booking-qr[.png].tsx"),
     route("account", "routes/dashboard.$connectionId.account.tsx"),
     route("support", "routes/dashboard.$connectionId.support.tsx"),
     // Catch-all so a bad nested URL is a *matched* child whose loader
@@ -66,6 +73,7 @@ export default [
   // Razorpay subscription events — see the route's own header comment,
   // and keep in sync with server/combined.js's CLOUD_PREFIXES.
   route("webhooks/razorpay", "routes/webhooks.razorpay.tsx"),
+  route("webhooks/paypal", "routes/webhooks.paypal.tsx"),
   // Not /privacy or /terms — shopify-openslot already owns those paths (its
   // Shopify App Store submission) on the combined server. See
   // server/combined.js's CLOUD_PREFIXES, kept in sync with this file.

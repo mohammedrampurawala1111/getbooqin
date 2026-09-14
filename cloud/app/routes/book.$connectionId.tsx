@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { data, useFetcher } from "react-router";
+import { data, isRouteErrorResponse, useFetcher, useRouteError, useSearchParams } from "react-router";
 import type { Route } from "./+types/book.$connectionId";
 import {
   Data,
@@ -11,6 +11,11 @@ import {
   isGetBooqinError,
 } from "getbooqin-core";
 import { formatInZone, wallClockToUtc, zoneAbbr } from "getbooqin-core/booking/tz";
+// The same generator the confirmation email attaches, rather than a
+// second one here: the two drifted, and this copy escaped nothing and
+// folded nothing, so a service called "Cut, colour & finish" produced a
+// file some calendars refused.
+import { icsDataUrl, icsFilename } from "getbooqin-core/booking/calendar";
 import { vocabFor } from "~/lib/presets";
 import { AlertError, Badge, ConfirmDialog, Field, FormErrorSummary, Input } from "~/components/ui";
 import { LogoMark } from "~/components/onboarding";
@@ -104,6 +109,13 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // The `no_badge` entitlement, resolved once for every branch below.
   const entitlements = await Entitlements.entitlementsFor(connection.id);
   const showBadge = !entitlements.features.has("no_badge");
+  // Branding is a paid entitlement, and it is checked here rather than
+  // trusted from settings: a merchant who upgraded, set a logo, then
+  // downgraded still has the value stored. The page they get is the one
+  // their plan pays for, not the one their settings row remembers.
+  const brand = entitlements.features.has("branding")
+    ? { logo: settings.brand_logo, accent: settings.brand_accent }
+    : { logo: "", accent: "" };
 
   // Bookings.manageUrl() builds exactly this query param — this is the link
   // a (now-fixed) confirmation/cancel email points customers back to.
@@ -118,6 +130,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     return {
       mode: "manage" as const,
       showBadge,
+      brand,
       businessName: settings.business_name,
       businessPhone: settings.business_phone,
       vocab,
@@ -151,6 +164,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   return {
     mode: "book" as const,
     showBadge,
+    brand,
     connectionId: connection.id,
     businessName: settings.business_name,
     businessHours: formatBusinessHours(hours),
@@ -207,7 +221,13 @@ async function handleBook(connectionId: string, request: Request, form: FormData
         email: String(form.get("email") || ""),
         phone: String(form.get("phone") || ""),
       },
-      settings.require_phone
+      settings.require_phone,
+      // require_email, not just require_phone. contactFieldErrors
+      // defaults requireEmail to true, so omitting it meant a shop that
+      // had turned the email requirement *off* still rejected a booking
+      // with no email — on a field the page itself rendered as optional.
+      // A walk-in customer without an address had no way through.
+      settings.require_email
     );
     for (const field of settings.intake_fields) {
       if (field.required && !intakeValues[field.key]?.trim()) {
@@ -371,20 +391,153 @@ export async function action({ request, params }: Route.ActionArgs) {
  * connection mid-setup, a failed lookup) should look like the free
  * product, not silently hand out a paid one.
  */
+/**
+ * `?embed=1` — the same page, framed inside someone else's website.
+ *
+ * Read from the URL here rather than threaded through as a prop,
+ * because every caller of Shell would have to pass it and none of them
+ * has an opinion about it: whether this page is inside an iframe is a
+ * fact about the request, not about the booking flow.
+ *
+ * Two differences, both about not competing with the host page. The
+ * business's own name and logo come off — the site it is embedded in
+ * has said who it is already, at the top of the page, usually larger.
+ * And the full-viewport height and page background come off, because
+ * inside an iframe "the viewport" is the iframe, and a fixed 100dvh
+ * would guarantee the scrollbar-inside-a-scrollbar that makes embedded
+ * widgets feel cheap.
+ *
+ * The GetBooqin badge stays exactly as it is — it is the `no_badge`
+ * entitlement that decides that, and an iframe is not a way around a
+ * paid plan.
+ */
 function Shell({
-  businessName, showBadge = true, children,
-}: { businessName: string; showBadge?: boolean; children: React.ReactNode }) {
+  businessName, showBadge = true, brand, children,
+}: {
+  businessName: string;
+  showBadge?: boolean;
+  /** Paid branding, already resolved against the account's entitlements by the loader. */
+  brand?: { logo: string; accent: string };
+  children: React.ReactNode;
+}) {
+  const [searchParams] = useSearchParams();
+  const embedded = searchParams.get("embed") === "1";
+
+  useEmbedHeight(embedded);
+
+  // The accent drives the existing brand custom properties rather than
+  // any new styling, so one value re-skins every button, focus ring and
+  // selected state on the page without a second design to maintain.
+  const accent = brand?.accent;
+  const style = accent
+    ? ({ "--color-brand-500": accent, "--color-brand-600": accent } as React.CSSProperties)
+    : undefined;
+
   return (
-    <div className="flex min-h-dvh flex-col items-center bg-canvas px-4 py-8 sm:px-8">
+    <div
+      style={style}
+      className={
+        embedded
+          ? "flex flex-col items-center px-3 py-4"
+          : "flex min-h-dvh flex-col items-center bg-canvas px-4 py-8 sm:px-8"
+      }
+    >
       <div className="flex w-full max-w-[480px] flex-col gap-5">
-        <div className="flex items-center gap-[10px]">
-          <LogoMark size={26} />
-          <span className="min-w-0 truncate text-[15px] font-semibold">{businessName}</span>
-        </div>
+        {!embedded && (
+          <div className="flex items-center gap-[10px]">
+            {/* The merchant's mark replaces ours entirely when they have
+                one — a paid booking page should not carry two logos, and
+                the one it carries should be theirs. */}
+            {brand?.logo ? (
+              <img
+                src={brand.logo}
+                alt=""
+                className="h-[26px] w-auto max-w-[140px] object-contain"
+              />
+            ) : (
+              <LogoMark size={26} />
+            )}
+            <span className="min-w-0 truncate text-[15px] font-semibold">{businessName}</span>
+          </div>
+        )}
         {children}
         {showBadge && (
           <p className="mt-2 text-center text-[11.5px] text-subtle">Booking powered by GetBooqin</p>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Tells the host page how tall this content is, so the iframe can grow
+ * with it instead of scrolling inside itself.
+ *
+ * The alternative is a fixed iframe height, which is wrong at every
+ * step of the flow: a date picker and a confirmation screen are
+ * nowhere near the same size, and picking one number means clipping one
+ * of them or leaving a hole under the other.
+ *
+ * `targetOrigin` is "*" deliberately — the whole point is that this is
+ * embedded on a site whose domain we do not know, and the message
+ * carries nothing but a number. Nothing is ever read back *from* the
+ * host: a listener here would be an opening onto a page we do not
+ * control, for no gain.
+ */
+function useEmbedHeight(embedded: boolean) {
+  useEffect(() => {
+    if (!embedded || typeof window === "undefined") return;
+
+    let last = 0;
+    const report = () => {
+      const height = Math.ceil(document.documentElement.scrollHeight);
+      if (height === last) return;
+      last = height;
+      window.parent.postMessage({ type: "getbooqin:height", height }, "*");
+    };
+
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(document.documentElement);
+    return () => observer.disconnect();
+  }, [embedded]);
+}
+
+/**
+ * Keeps a failure inside the booking page.
+ *
+ * Without this, any throw from the loader — or from the sibling slots
+ * resource route a fetcher calls — propagated to the root boundary and
+ * replaced the whole document with "Something went wrong · Back to
+ * home", mid-flow, with the customer's service, date and time
+ * selections gone. The likeliest trigger is mundane: the slots
+ * endpoint is throttled per IP, and a waiting room, a clinic's wifi or
+ * any carrier NAT shares one. Several customers comparing dates at once
+ * would eject all of them to the marketing site.
+ */
+export function ErrorBoundary() {
+  const error = useRouteError();
+  const status = isRouteErrorResponse(error) ? error.status : 500;
+
+  const message =
+    status === 404
+      ? "We couldn't find that booking page."
+      : status === 429
+        ? "That was a lot of requests at once. Give it a moment and try again."
+        : "Something went wrong loading this page.";
+
+  return (
+    <div className="flex min-h-dvh flex-col items-center bg-canvas px-4 py-8 sm:px-8">
+      <div className="flex w-full max-w-[480px] flex-col gap-5">
+        <div className="card flex flex-col items-center gap-3 p-[18px] text-center">
+          <h1 className="ob-h1 m-0">{message}</h1>
+          <p className="m-0 text-body text-muted">
+            Your details haven't been sent anywhere. Reloading usually fixes it.
+          </p>
+          <button type="button" className="btn-pri" onClick={() => window.location.reload()}>
+            Try again
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -398,6 +551,7 @@ export default function BookingPage({ loaderData, params }: Route.ComponentProps
         businessName={loaderData.businessName}
         businessPhone={loaderData.businessPhone}
         showBadge={loaderData.showBadge}
+        brand={loaderData.brand}
         vocab={loaderData.vocab}
         initial={loaderData.booking}
         canCancelInitial={loaderData.canCancel}
@@ -411,11 +565,13 @@ export default function BookingPage({ loaderData, params }: Route.ComponentProps
 /* ---------------------------------------------------------- Manage view */
 
 function ManageBooking({
-  connectionId, businessName, businessPhone, showBadge, vocab, initial, canCancelInitial, cancelUnavailableReason,
+  connectionId, businessName, businessPhone, showBadge, brand, vocab, initial, canCancelInitial, cancelUnavailableReason,
 }: {
   connectionId: string;
   businessName: string;
   showBadge: boolean;
+  /** Paid branding, already checked against entitlements in the loader. */
+  brand: { logo: string; accent: string };
   businessPhone: string;
   vocab: ReturnType<typeof vocabFor>;
   initial: { uid: string; status: string; serviceName: string; resourceName: string; when: string; priceLabel: string };
@@ -427,7 +583,7 @@ function ManageBooking({
   const canCancel = canCancelInitial && !cancelled;
 
   return (
-    <Shell businessName={businessName} showBadge={showBadge}>
+    <Shell businessName={businessName} showBadge={showBadge} brand={brand}>
       <div className="card p-[18px]">
         <h1 className="ob-h1 mb-1">Your {vocab.bookingOne}</h1>
         {fetcher.data?.error && <AlertError className="mb-3">{fetcher.data.error}</AlertError>}
@@ -656,7 +812,7 @@ function WaitlistJoinPrompt({
 }
 
 function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
-  const { connectionId, businessName, businessHours, showBadge, vocab, settings, services, resources } = loaderData;
+  const { connectionId, businessName, businessHours, showBadge, brand, vocab, settings, services, resources } = loaderData;
   const [step, setStep] = useState<Step>("service");
   const [serviceId, setServiceId] = useState<number | null>(null);
   const [resourceId, setResourceId] = useState<number>(0);
@@ -758,6 +914,7 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
         businessName={businessName}
         businessAddress={settings.businessAddress}
         showBadge={showBadge}
+        brand={brand}
         vocab={vocab}
         booking={bookFetcher.data.booking}
       />
@@ -765,7 +922,7 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
   }
 
   return (
-    <Shell businessName={businessName} showBadge={showBadge}>
+    <Shell businessName={businessName} showBadge={showBadge} brand={brand}>
       {step === "service" && (
         <div className="card p-[18px]">
           {/* Business header — name, one-line description, address, phone,
@@ -1104,37 +1261,14 @@ function DetailsForm({
   );
 }
 
-// yyyymmddThhmmssZ — the one datetime format the .ics spec allows for a
-// UTC-anchored DTSTART/DTEND/DTSTAMP.
-function icsStamp(iso: string): string {
-  return iso.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-}
-
-function icsDataUrl(booking: { uid: string; serviceName: string; resourceName: string; startIso: string; endIso: string }, businessName: string): string {
-  const lines = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//GetBooqin//Booking//EN",
-    "BEGIN:VEVENT",
-    `UID:${booking.uid}@getbooqin`,
-    `DTSTAMP:${icsStamp(new Date().toISOString())}`,
-    `DTSTART:${icsStamp(booking.startIso)}`,
-    `DTEND:${icsStamp(booking.endIso)}`,
-    `SUMMARY:${booking.serviceName}${booking.resourceName ? ` with ${booking.resourceName}` : ""}`,
-    `DESCRIPTION:Booked with ${businessName}`,
-    "END:VEVENT",
-    "END:VCALENDAR",
-  ];
-  return `data:text/calendar;charset=utf-8,${encodeURIComponent(lines.join("\r\n"))}`;
-}
-
 function Confirmation({
-  connectionId, businessName, businessAddress, showBadge, vocab, booking,
+  connectionId, businessName, businessAddress, showBadge, brand, vocab, booking,
 }: {
   connectionId: string;
   businessName: string;
   businessAddress: string;
   showBadge: boolean;
+  brand: { logo: string; accent: string };
   vocab: ReturnType<typeof vocabFor>;
   booking: {
     uid: string;
@@ -1153,7 +1287,7 @@ function Confirmation({
   const bookingRef = booking.uid.slice(-6).toUpperCase();
   const manageUrl = `/book/${connectionId}?getbooqin_booking=${booking.uid}`;
   return (
-    <Shell businessName={businessName} showBadge={showBadge}>
+    <Shell businessName={businessName} showBadge={showBadge} brand={brand}>
       <div className="card p-[18px] text-center">
         <span className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-ok-bg text-[20px] text-ok">✓</span>
         <h1 className="ob-h1 mb-1">
@@ -1217,13 +1351,25 @@ function Confirmation({
               )}
             </p>
           )}
-          <a
-            href={icsDataUrl(booking, businessName)}
-            download={`${booking.serviceName || vocab.bookingOne}.ics`}
-            className="btn-link text-brand-600"
-          >
-            + Add to calendar
-          </a>
+          {/* Only once there is something to put in a diary — a pending
+              request is not an appointment yet. */}
+          {booking.status !== "pending" && (
+            <a
+              href={icsDataUrl({
+                uid: booking.uid,
+                start: new Date(booking.startIso),
+                end: new Date(booking.endIso),
+                title: `${booking.serviceName}${booking.resourceName ? ` with ${booking.resourceName}` : ""}`,
+                description: `Booked with ${businessName}`,
+                location: businessAddress || undefined,
+                url: `${typeof window === "undefined" ? "" : window.location.origin}${manageUrl}`,
+              })}
+              download={icsFilename(booking.serviceName || vocab.bookingOne)}
+              className="btn-link text-brand-600"
+            >
+              + Add to calendar
+            </a>
+          )}
         </div>
       </div>
     </Shell>

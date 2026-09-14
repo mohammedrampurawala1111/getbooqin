@@ -28,7 +28,12 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     // "you need someone who can take a booking," not "you need a room"
     // (GetBooqin clinic audit's RS-01 finding).
     Data.resources(shop, platform, false, "practitioner"),
-    Bookings.count(shop, platform, {}),
+    // Ignoring the merchant's own setup test. This number is the only
+    // gate on the whole setup checklist, so counting the test booking
+    // meant that following onboarding's own recommended step made
+    // "Add your staff", "Turn on reminders" and the rest disappear
+    // permanently, before the merchant had done any of them.
+    Bookings.count(shop, platform, { excludeSources: ["test"] }),
     Settings.getSettings(shop, platform),
     // "Needs attention" — a booking that violates its own business's rules
     // used to have no signal anywhere in the app (Defect Dossier's BQ-07

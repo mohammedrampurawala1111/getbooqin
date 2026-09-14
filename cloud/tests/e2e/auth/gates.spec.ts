@@ -90,7 +90,11 @@ test.describe("the Powered by badge — what Starter is actually sold on", () =>
     // badge is decided by the shop's plan, not the viewer.
     const anon = await context.browser()!.newPage();
     await anon.goto(`/dashboard/${tenant.connectionId}`).catch(() => {});
-    await anon.goto(`http://localhost:3101/book/${tenant.connectionId}`);
+    // Relative, so it follows the config's baseURL. This used to name
+    // localhost:3101 outright, which is not the server the suite starts
+    // — the assertions were being made against whatever happened to be
+    // listening on that port.
+    await anon.goto(`/book/${tenant.connectionId}`);
     await expect(anon.getByText("Booking powered by GetBooqin")).toBeVisible();
     await anon.close();
   });
@@ -98,7 +102,7 @@ test.describe("the Powered by badge — what Starter is actually sold on", () =>
   test("Starter removes it", async ({ context }) => {
     await setPlan(tenant, "starter");
     const anon = await context.browser()!.newPage();
-    await anon.goto(`http://localhost:3101/book/${tenant.connectionId}`);
+    await anon.goto(`/book/${tenant.connectionId}`);
     await expect(anon.getByText("Booking powered by GetBooqin")).toHaveCount(0);
     await anon.close();
   });
@@ -164,5 +168,36 @@ test.describe("Shopify is shipped dark", () => {
     await signInAs(page, tenant);
     await page.goto(`/dashboard/${tenant.connectionId}/settings?page=integrations`);
     await expect(page.getByText("Shopify", { exact: true }).first()).toBeVisible();
+  });
+});
+
+test.describe("team roles are locked, not silently swapped", () => {
+  /**
+   * The server used to accept an invite as `read` on a plan without
+   * `team_roles`, grant `write` instead, and report success. A merchant
+   * inviting a receptionist as view-only got an account that could
+   * create, edit and delete bookings, services and customers — with
+   * nothing on the form, in the toast, or on the pending-invite row
+   * saying why.
+   */
+  test("Starter can only invite at write, and is told why", async ({ page }) => {
+    await setPlan(tenant, "starter");
+    await signInAs(page, tenant);
+    await page.goto(`/dashboard/${tenant.connectionId}/settings?page=team`);
+
+    const role = page.locator('select[name="role"]');
+    await expect(role).toBeDisabled();
+    await expect(role.locator("option")).toHaveCount(1);
+    await expect(page.getByText(/Admin and read-only roles are on Growth/)).toBeVisible();
+  });
+
+  test("Growth can choose any role", async ({ page }) => {
+    await setPlan(tenant, "growth");
+    await signInAs(page, tenant);
+    await page.goto(`/dashboard/${tenant.connectionId}/settings?page=team`);
+
+    const role = page.locator('select[name="role"]');
+    await expect(role).toBeEnabled();
+    await expect(role.locator("option")).toHaveCount(3);
   });
 });

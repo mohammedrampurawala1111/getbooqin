@@ -67,7 +67,13 @@ export function PresetTiles({
    2. Onboarding shell — progress bar + step rail + body
    Step lives in the URL (?step=2) so Back/Forward and no-JS both work.
    ================================================================== */
-const STEP_NAMES = ["Business", "Your setup", "Integrations", "Go live"] as const;
+// Three, not four. The Integrations step offered nothing an account
+// could actually do — Shopify is shipped dark and everything else on it
+// was a "coming soon" row — so it was a whole screen of the setup
+// wizard whose only real control was "Skip for now". The rows still
+// exist on Settings > Integrations, where someone looking for them will
+// look.
+export const STEP_NAMES = ["Business", "Your setup", "Go live"] as const;
 
 export function OnboardingShell({
   step,
@@ -92,7 +98,7 @@ export function OnboardingShell({
         <div className="mx-auto flex max-w-[940px] items-center gap-[14px] px-7 py-[14px]">
           <LogoMark size={28} />
           <span className="text-[14px] font-semibold">Set up GetBooqin</span>
-          <span className="num ml-auto text-[12px] text-subtle">Step {step} of 4</span>
+          <span className="num ml-auto text-[12px] text-subtle">Step {step} of {STEP_NAMES.length}</span>
           {onFinishLater ? (
             <button
               type="button"
@@ -106,7 +112,7 @@ export function OnboardingShell({
           )}
           <LogoutButton className="btn-ghost px-[10px] py-[6px] text-meta" />
         </div>
-        <div className="ob-progress"><span style={{ width: `${(step / 4) * 100}%` }} /></div>
+        <div className="ob-progress"><span style={{ width: `${(step / STEP_NAMES.length) * 100}%` }} /></div>
       </header>
 
       <div className="ob-grid">

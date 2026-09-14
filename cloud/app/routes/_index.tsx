@@ -9,11 +9,11 @@ import {
 import { Badge, LegalFooter, LogoutButton, ThemeToggle } from "~/components/ui";
 
 export const meta: Route.MetaFunction = () => [
-  { title: "GetBooqin — Bookings, staff and payments for every store" },
+  { title: "GetBooqin — Booking software for appointments, classes and staff" },
   {
     name: "description",
     content:
-      "GetBooqin turns your product catalogue into bookable appointments, jobs or reservations, with staff schedules, deposits and reminders — start free, with or without Shopify.",
+      "Online booking for salons, clinics, studios and trades. Staff schedules, rooms, group classes, an automatic waitlist and reminders that cut no-shows. Free to start, live in five minutes.",
   },
 ];
 
@@ -54,11 +54,50 @@ const MARKETING_COPY: Record<string, { blurb: string; extra: string[]; cta: stri
   },
   growth: {
     blurb: "A team with roles, and your own email wording.",
-    extra: ["Everything in Starter", "Rooms as bookable resources", "Group & class bookings", "Shopify product sync"],
+    // Not "Shopify product sync": Shopify is shipped dark and no plan
+    // grants it, so listing it here sells something a buyer cannot
+    // switch on. The three below are on every plan and are what Growth
+    // actually adds on top of Starter.
+    extra: ["Everything in Starter", "Up to 6 team members with roles", "Editable email wording", "Booking export"],
     cta: "Start free trial",
     href: "/signup",
   },
 };
+
+/**
+ * What the product already does and never said out loud.
+ *
+ * Each of these is built, tested and shipping — see the trim plan's
+ * §4.4, which found them absent from every marketing surface. Group
+ * bookings and rooms in particular are things competitors charge three
+ * times as much for, and a visitor had no way to discover either.
+ */
+const CAPABILITIES: { title: string; body: string }[] = [
+  {
+    title: "Group and class bookings",
+    body: "A yoga class, a workshop, a cohort — set how many seats a session has and the slot stays open until it's full.",
+  },
+  {
+    title: "Rooms as well as people",
+    body: "A treatment needs a free therapist and a free room. Both are checked before a slot is offered, so you can't double-book either.",
+  },
+  {
+    title: "Buffers before and after",
+    body: "Cleaning down, writing notes, travel between jobs. Set it per service and it's held automatically — never booked over.",
+  },
+  {
+    title: "A waitlist that fills itself",
+    body: "When someone cancels, the slot is offered to the waitlist in order, with a time limit. You don't phone anyone.",
+  },
+  {
+    title: "Your team, with real roles",
+    body: "Invite staff as owner, admin, editor or read-only. A receptionist can take bookings without seeing your billing.",
+  },
+  {
+    title: "Time off that's respected",
+    body: "Holidays, half-days and one-off absences per person. The booking page simply stops offering those hours.",
+  },
+];
 
 /** Currencies a visitor can be quoted, matching what checkout can charge. */
 const MARKETING_CURRENCIES = ["INR", "USD", "EUR"] as const;
@@ -156,11 +195,18 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             <span className="mkt-eyebrow">Booking software for any industry</span>
             {/* Fixed 50px set across ten lines at 389px, making the hero
                 905px tall on a 628px screen (UX audit's M3 finding). */}
-            <h1 className="mkt-h1 text-[32px] leading-[1.12] md:text-[50px] md:leading-[1.06]">Bookings, staff and payments — one dashboard, every store.</h1>
+            {/* Two things this used to claim and no longer can. Taking
+                customer payments and deposits was cut (trim plan W4b) —
+                exactly the drift this file's header warns about, still
+                sitting in the headline. And "start with Shopify" is a
+                dead end now that Shopify is shipped dark: no plan grants
+                it, so a visitor who came for that would sign up and find
+                nothing to click. */}
+            <h1 className="mkt-h1 text-[32px] leading-[1.12] md:text-[50px] md:leading-[1.06]">Bookings, staff and schedules — one dashboard, every location.</h1>
             <p className="mkt-lede">
-              GetBooqin turns your product catalogue into bookable appointments, jobs or reservations —
-              with staff schedules, deposits, and reminders that cut no-shows. Start with Shopify, or go
-              live without it and connect a store later.
+              GetBooqin gives you a booking page customers can actually use — with staff schedules, rooms,
+              group classes, a waitlist that fills cancellations by itself, and reminders that cut no-shows.
+              Live in five minutes, no website needed.
             </p>
             <div className="flex flex-wrap items-center gap-3">
               <a href="/signup" className="mkt-cta no-underline hover:no-underline">Start free</a>
@@ -203,13 +249,43 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         </div>
       </section>
 
+      {/* ---------------------------------------------------------- What it does */}
+      {/* Six things that already work and were advertised nowhere — the
+          trim plan's §4.4. Every one of them is genuinely rare at this
+          price, and a visitor comparing us to a £30/mo competitor had no
+          way to find out we do them. Written as what a merchant gets,
+          not as a feature name. */}
+      <section id="features" className="mkt-section">
+        <div className="mkt-wrap py-14 md:py-20">
+          <div className="flex flex-col gap-2 text-center">
+            <h2 className="mkt-h2">More than a calendar with a link</h2>
+            <p className="mkt-lede mx-auto max-w-[620px]">
+              The scheduling problems that make most booking tools useless past week one — all handled,
+              on every plan.
+            </p>
+          </div>
+
+          <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {CAPABILITIES.map((c) => (
+              <div key={c.title} className="card flex flex-col gap-2 p-[18px]">
+                <h3 className="m-0 text-body font-semibold">{c.title}</h3>
+                <p className="m-0 text-meta text-muted">{c.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ---------------------------------------------------------- Integrations */}
       <section id="integrations" className="mkt-section mkt-alt">
         <div className="mkt-wrap flex flex-col gap-8 py-16">
           <div className="flex max-w-[560px] flex-col gap-2">
             <h2 className="mkt-h2">Connects to what you already use</h2>
+            {/* Shopify is installable from its App Store but is not
+                offered on any plan (shipped dark), so this no longer
+                invites people to start there. */}
             <p className="m-0 text-body text-ink-3">
-              Start with Shopify, add channels as you grow.
+              Your booking link works on its own. Put it on your website, or anywhere you already post.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
@@ -314,7 +390,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           <div className="flex flex-col gap-2">
             <h2 className="m-0 text-[24px] font-semibold tracking-[-0.02em]">Ready to take your first booking?</h2>
             <p className="m-0 max-w-[420px] text-[14px] text-[#c9c2d4]">
-              Be live in minutes — with your Shopify store, or without one.
+              No website needed, no card to start.
             </p>
           </div>
           <a href="/signup" className="mkt-cta no-underline hover:no-underline">Start free</a>
