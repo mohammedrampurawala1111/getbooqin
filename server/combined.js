@@ -37,7 +37,7 @@ import compression from "compression";
 import express from "express";
 import morgan from "morgan";
 import { createRequestHandler } from "@react-router/express";
-import { Jobs } from "getbooqin-core";
+import { Jobs, Env } from "getbooqin-core";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
@@ -69,6 +69,10 @@ const CLOUD_PREFIXES = [
   // shopify-openslot owns the rest of that namespace for Shopify's own
   // mandatory webhooks.
   "/webhooks/razorpay",
+  // PayPal subscription events (cloud/app/routes/webhooks.paypal.tsx).
+  // Same reason as above for being listed individually rather than as a
+  // "/webhooks" prefix.
+  "/webhooks/paypal",
   // Cloud's own account-surface legal pages — deliberately not "/privacy"
   // or "/terms", which shopify-openslot already owns (its Shopify App
   // Store submission). Keep in sync with cloud/app/routes.ts.
@@ -157,12 +161,35 @@ function startReminderScheduler() {
         }
       })
       .catch((err) => console.error("[getbooqin-server] reminder sweep failed:", err));
+
+    // Trial nudges, on the same timer but as a separate recorded job.
+    // Chained onto the same tick rather than given its own interval:
+    // one timer is one thing to reason about, and both sweeps are
+    // "check whether anything is due", which is cheap when nothing is.
+    // Failures stay independent — a bounced trial email must not make
+    // the reminder sweep read as broken on /healthz.
+    Jobs.runLifecycle()
+      .then((outcome) => {
+        if (!outcome.ran) return;
+        const { ending_sent: ending, ended_sent: ended } = outcome.result;
+        if (ending > 0 || ended > 0) {
+          console.log(`[getbooqin-server] trial nudges: ${ending} ending, ${ended} ended`);
+        }
+      })
+      .catch((err) => console.error("[getbooqin-server] trial nudge sweep failed:", err));
   };
   tick();
   return setInterval(tick, REMINDER_INTERVAL_MS);
 }
 
 async function main() {
+  // Before anything is loaded or listened on. A required secret that is
+  // missing should be a refused boot with the full list, not a 500 on
+  // whichever request happens to reach that code path first — and a
+  // capability that is switched off should say so once, at startup,
+  // rather than being discovered when a customer doesn't get an email.
+  Env.assertEnvironment();
+
   const [shopifyBuild, cloudBuild] = await Promise.all([
     loadBuild("shopify-openslot"),
     loadBuild("cloud"),

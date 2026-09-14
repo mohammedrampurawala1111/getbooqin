@@ -54,8 +54,14 @@ export function throttle(key: string, max: number, windowMs = 600_000): void {
 
 export function clientIp(request: Request): string {
   return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    // Edge-set headers first, exactly as cloud's copy does. X-Forwarded-For's
+    // first hop is whatever the client sent, so reading it first let a
+    // caller defeat throttle() completely by sending a fresh fake value
+    // per request — and on these App Proxy routes the throttle is the
+    // only anti-abuse layer in front of Bookings.create.
+    request.headers.get("fly-client-ip") ||
     request.headers.get("cf-connecting-ip") ||
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     "unknown"
   );
 }

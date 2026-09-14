@@ -43,18 +43,14 @@ export default function AppLayout() {
   return (
     <AppProvider apiKey={apiKey}>
       <PolarisAppProvider i18n={polarisTranslations} linkComponent={PolarisLink}>
+        {/* One item, because there is one screen. The nine that used to
+            be here pointed at an embedded copy of the cloud dashboard;
+            those screens are gone and everything now deep-links out from
+            app._index.tsx. */}
         <NavMenu>
           <Link to="/app" rel="home">
-            Dashboard
+            GetBooqin
           </Link>
-          <Link to="/app/bookings">Bookings</Link>
-          <Link to="/app/waitlist">Waitlist</Link>
-          <Link to="/app/calendar">Calendar</Link>
-          <Link to="/app/services">Services</Link>
-          <Link to="/app/resources">Staff</Link>
-          <Link to="/app/timeoff">Time Off</Link>
-          <Link to="/app/customers">Customers</Link>
-          <Link to="/app/settings">Settings</Link>
         </NavMenu>
         <Frame>
           <Outlet />

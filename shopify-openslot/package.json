@@ -18,7 +18,8 @@
     "prisma": "prisma",
     "vite": "vite",
     "typecheck": "tsc --noEmit",
-    "backfill:service-config": "tsx scripts/backfill-service-config.ts"
+    "backfill:service-config": "tsx scripts/backfill-service-config.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",
@@ -55,7 +56,8 @@
     "tsx": "^4.19.2",
     "typescript": "^5.2.2",
     "vite": "^6.0.0",
-    "vite-tsconfig-paths": "^5.0.1"
+    "vite-tsconfig-paths": "^5.0.1",
+    "vitest": "^3.2.7"
   },
   "engines": {
     "node": "^18.20 || ^20.10 || >=21.0.0"

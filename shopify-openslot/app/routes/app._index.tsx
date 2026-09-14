@@ -1,183 +1,157 @@
 import type { LoaderFunctionArgs } from "react-router";
-import { Link, redirect, useLoaderData } from "react-router";
-import { Page, Layout, Card, BlockStack, InlineGrid, InlineStack, Text, Badge, Button, Banner, EmptyState } from "@shopify/polaris";
+import { useLoaderData } from "react-router";
+import { Page, Layout, Card, BlockStack, InlineStack, Text, Badge, Button, Banner, List } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
-import { Bookings } from "getbooqin-core";
-import { Data } from "getbooqin-core";
 import { Settings } from "getbooqin-core";
-import { term, money } from "getbooqin-core/booking/settingsShared";
 import { resolveEmbedDetected } from "~/lib/embedStatus.server";
 
+/**
+ * The whole embedded admin, now that there is only one admin.
+ *
+ * This app used to carry fifteen `app.*` screens — bookings, calendar,
+ * services, staff, customers, time off, waitlist, settings — every one
+ * of them a second implementation of a screen the cloud dashboard
+ * already had. Two UIs over one database means every feature gets built
+ * twice, every fix has to be remembered twice, and the two drift in
+ * between; they had already drifted.
+ *
+ * So this screen does only the things that genuinely cannot be done
+ * from the cloud dashboard, because they are facts Shopify owns:
+ *
+ *   - whether this store is connected to a GetBooqin account at all;
+ *   - whether the theme app embed is switched on, and a link straight
+ *     to the theme editor to change it;
+ *   - a way through to the real dashboard.
+ *
+ * Everything else is a deep link. That is deliberately a thin embedded
+ * app rather than no embedded app: an App Store listing needs somewhere
+ * for "Open app" to land, and a screen that tells the merchant where
+ * their bookings actually live is a better answer than a half-built
+ * copy of them.
+ */
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
+
   const settings = await Settings.getSettings(shop, "shopify");
-  const url = new URL(request.url);
-
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const weekEnd = new Date(now.getTime() + 7 * 86_400_000);
-
-  const [upcoming, pending, servicesCount, resourcesCount, monthBookings, recent] = await Promise.all([
-    Bookings.count(shop, "shopify", { from: now, to: weekEnd }),
-    Bookings.count(shop, "shopify", { status: "pending" }),
-    prisma.serviceConfig.count({ where: { shop, status: true } }),
-    prisma.resource.count({ where: { shop, status: true } }),
-    prisma.booking.findMany({ where: { shop, startUtc: { gte: monthStart }, paymentStatus: "paid" } }),
-    Bookings.query(shop, "shopify", { limit: 5 }),
-  ]);
-
-  if (!settings.onboarding_completed && resourcesCount === 0 && servicesCount === 0) {
-    throw redirect(`/app/setup?${url.searchParams.toString()}`);
-  }
-
-  const revenue = monthBookings.reduce((sum, b) => sum + b.amountDue, 0);
-  const recentWithNames = await Data.attachServiceNames(shop, recent);
-
   const embedDetected = await resolveEmbedDetected(admin, settings);
+
+  // Installing from the App Store creates a Shopify session but no
+  // GetBooqin account — the Connection is made by the cloud app's
+  // /connect/shopify flow, which needs somebody signed in. So "installed
+  // but not linked yet" is a normal state for a brand-new install, and
+  // it is the one thing this screen has to handle well.
+  const connection = await prisma.connection.findUnique({
+    where: { platform_shop: { platform: "shopify", shop } },
+    select: { id: true, status: true },
+  });
+
+  const appUrl = (process.env.APP_URL || process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
 
   return {
     shop,
-    settings,
     embedDetected,
-    upcoming,
-    pending,
-    servicesCount,
-    resourcesCount,
-    revenue,
-    recent: recentWithNames.map((b) => ({
-      id: b.id,
-      uid: b.uid,
-      status: b.status,
-      service: b.serviceName,
-      resource: b.resource?.name ?? "",
-      customer: b.customer ? `${b.customer.firstName} ${b.customer.lastName}`.trim() : "",
-      date: Bookings.localDate(b, settings.timezone),
-      time: Bookings.localTime(b, settings.timezone),
-    })),
+    businessName: settings.business_name,
+    connectionId: connection?.status === "active" ? connection.id : null,
+    appUrl,
+    themeEditorUrl: `https://${shop}/admin/themes/current/editor?context=apps`,
   };
 }
 
-const STATUS_TONE: Record<string, "success" | "attention" | "critical" | "info" | "new"> = {
-  confirmed: "success",
-  pending: "attention",
-  cancelled: "critical",
-  completed: "info",
-  no_show: "critical",
-};
+export default function EmbeddedHome() {
+  const { shop, embedDetected, businessName, connectionId, appUrl, themeEditorUrl } = useLoaderData<typeof loader>();
 
-export default function Dashboard() {
-  const { shop, settings, embedDetected, upcoming, pending, servicesCount, resourcesCount, revenue, recent } =
-    useLoaderData<typeof loader>();
-  const themeEmbedUrl = `https://${shop}/admin/themes/current/editor?context=apps`;
+  // Every link out of here opens a new tab. The app runs inside
+  // Shopify's admin iframe, and replacing that frame with our own
+  // dashboard would strand the merchant in a page with Shopify's chrome
+  // around it and no way back.
+  const dashboard = (path = "") => `${appUrl}/dashboard/${connectionId}${path}`;
 
   return (
-    <Page title={`Welcome to GetBooqin`} subtitle={`Preset: ${settings.preset}`}>
+    <Page title="GetBooqin">
       <Layout>
-        {!embedDetected && (
+        {!connectionId && (
           <Layout.Section>
-            <Banner title="Enable the storefront button" tone="warning">
-              <BlockStack gap="200">
-                <Text as="p">
-                  Turn this on once and every product linked to a{" "}
-                  {term(settings, "service_single").toLowerCase()} automatically gets a
-                  floating "Book now" button — no block to add, no per-product setup.
-                </Text>
-                <Text as="p">
-                  Step 1: Press the button below to open the theme editor.
-                  <br />
-                  Step 2: Turn on "GetBooqin", then press Save.
-                </Text>
-                <InlineStack>
-                  <Button url={themeEmbedUrl} target="_blank" variant="primary">
-                    Enable in theme editor
+            <Banner
+              title="Finish connecting this store"
+              tone="warning"
+              action={{ content: "Open GetBooqin", url: `${appUrl}/connect/shopify`, target: "_blank" }}
+            >
+              <p>
+                {shop} is installed but isn't linked to a GetBooqin account yet. Connecting it takes a minute and
+                is what gives you a booking page, a calendar and your settings.
+              </p>
+            </Banner>
+          </Layout.Section>
+        )}
+
+        {connectionId && (
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="400">
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingMd">
+                    {businessName || shop}
+                  </Text>
+                  <Text as="p" tone="subdued">
+                    Your bookings, calendar, staff and settings all live in the GetBooqin dashboard — one place,
+                    whether a booking came from your storefront or your booking link.
+                  </Text>
+                </BlockStack>
+                <InlineStack gap="300">
+                  <Button url={dashboard()} target="_blank" variant="primary">
+                    Manage in GetBooqin
+                  </Button>
+                  <Button url={dashboard("/bookings")} target="_blank">
+                    Bookings
+                  </Button>
+                  <Button url={dashboard("/bookings/calendar")} target="_blank">
+                    Calendar
+                  </Button>
+                  <Button url={dashboard("/services")} target="_blank">
+                    Services
+                  </Button>
+                  <Button url={dashboard("/settings")} target="_blank">
+                    Settings
                   </Button>
                 </InlineStack>
               </BlockStack>
-            </Banner>
+            </Card>
           </Layout.Section>
         )}
 
         <Layout.Section>
           <Card>
-            <InlineStack align="space-between" blockAlign="center">
-              <BlockStack gap="100">
-                <Text as="h2" variant="headingMd">Storefront button</Text>
-                <InlineStack gap="200" blockAlign="center">
-                  <Text as="span" tone="subdued">Theme app embed:</Text>
-                  <Badge tone={embedDetected ? "success" : "new"}>
-                    {embedDetected ? "On" : "Off"}
-                  </Badge>
-                </InlineStack>
-              </BlockStack>
-              <Button url={themeEmbedUrl} target="_blank">
-                App embed settings
-              </Button>
-            </InlineStack>
-          </Card>
-        </Layout.Section>
-
-        <Layout.Section>
-          <InlineGrid columns={{ xs: 2, md: 4 }} gap="400">
-            <Card>
-              <BlockStack gap="100">
-                <Text as="p" tone="subdued">Next 7 days</Text>
-                <Text as="p" variant="heading2xl">{upcoming}</Text>
-              </BlockStack>
-            </Card>
-            <Card>
-              <BlockStack gap="100">
-                <Text as="p" tone="subdued">Pending approval</Text>
-                <Text as="p" variant="heading2xl">{pending}</Text>
-              </BlockStack>
-            </Card>
-            <Card>
-              <BlockStack gap="100">
-                <Text as="p" tone="subdued">{term(settings, "service_plural")}</Text>
-                <Text as="p" variant="heading2xl">{servicesCount}</Text>
-              </BlockStack>
-            </Card>
-            <Card>
-              <BlockStack gap="100">
-                <Text as="p" tone="subdued">Revenue this month</Text>
-                <Text as="p" variant="heading2xl">{money(settings, revenue)}</Text>
-              </BlockStack>
-            </Card>
-          </InlineGrid>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">
-                Recent {term(settings, "booking_plural").toLowerCase()}
-              </Text>
-              {recent.length === 0 ? (
-                <EmptyState
-                  heading={`No ${term(settings, "booking_plural").toLowerCase()} yet`}
-                  action={{ content: "Add a service", url: "/app/services" }}
-                  image="https://cdn.shopify.com/s/files/1/0757/9955/files/empty-state.svg"
-                >
-                  <p>
-                    Add the GetBooqin booking block to your theme, then bookings will show up here.
-                  </p>
-                </EmptyState>
-              ) : (
-                <BlockStack gap="200">
-                  {recent.map((b) => (
-                    <Link key={b.id} to={`/app/bookings/${b.id}`} style={{ textDecoration: "none" }}>
-                      <Card padding="300">
-                        <InlineGrid columns={{ xs: 1, sm: 4 }} gap="200">
-                          <Text as="span" fontWeight="semibold">{b.customer || "—"}</Text>
-                          <Text as="span">{b.service} · {b.resource}</Text>
-                          <Text as="span" tone="subdued">{b.date} at {b.time}</Text>
-                          <Badge tone={STATUS_TONE[b.status] ?? "info"}>{b.status}</Badge>
-                        </InlineGrid>
-                      </Card>
-                    </Link>
-                  ))}
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center" gap="300">
+                <BlockStack gap="100">
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="h2" variant="headingMd">
+                      Storefront booking button
+                    </Text>
+                    <Badge tone={embedDetected ? "success" : "attention"}>{embedDetected ? "On" : "Off"}</Badge>
+                  </InlineStack>
+                  <Text as="p" tone="subdued">
+                    {embedDetected
+                      ? "Customers can book from your storefront."
+                      : "The app embed is switched off, so the booking button isn't showing on your storefront."}
+                  </Text>
                 </BlockStack>
+                <Button url={themeEditorUrl} target="_blank" variant={embedDetected ? "secondary" : "primary"}>
+                  {embedDetected ? "Theme settings" : "Turn it on"}
+                </Button>
+              </InlineStack>
+
+              {/* Said plainly, because the badge above is a heuristic on
+                  some stores — see embedStatus.server.ts — and a merchant
+                  reading "Off" while it is visibly working deserves to
+                  know why rather than to start debugging. */}
+              {!embedDetected && (
+                <Text as="p" tone="subdued" variant="bodySm">
+                  If you've just turned it on, this can take a little while to notice. Your booking link works
+                  either way.
+                </Text>
               )}
             </BlockStack>
           </Card>
@@ -185,32 +159,17 @@ export default function Dashboard() {
 
         <Layout.Section>
           <Card>
-            <BlockStack gap="200">
-              <Text as="h2" variant="headingMd">Get set up</Text>
-              <Text as="p">
-                1. Add {term(settings, "resource_plural").toLowerCase()} and their weekly hours under{" "}
-                <Link to="/app/resources">{term(settings, "resource_plural")}</Link>.
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">
+                What this app does in your store
               </Text>
-              <Text as="p">
-                2. Add {term(settings, "service_plural").toLowerCase()} under{" "}
-                <Link to="/app/services">{term(settings, "service_plural")}</Link>.
-              </Text>
-              <Text as="p">
-                3. Want a "Book now" button on a product's page? Open that{" "}
-                {term(settings, "service_single").toLowerCase()} under{" "}
-                <Link to="/app/services">{term(settings, "service_plural")}</Link> and link it to a
-                product, then turn on the "Storefront button" above once — every linked product
-                gets the button automatically, with nothing to add per product. Prefer an exact
-                spot on the page instead (e.g. right below Buy it now)? Add the "GetBooqin Button"
-                block there in the theme editor — that's optional, not required. Want a general
-                booking page instead? Add the "GetBooqin Booking" block to any page in the theme
-                editor.
-              </Text>
-              <Text as="p">
-                4. Turn on payments and video calls under <Link to="/app/settings">Settings</Link>.
-              </Text>
-              <Text as="p" tone="subdued">
-                {resourcesCount} {term(settings, "resource_plural").toLowerCase()} configured today.
+              <List>
+                <List.Item>Adds the booking button and booking form to your storefront.</List.Item>
+                <List.Item>Turns products typed as a service into bookable services automatically.</List.Item>
+                <List.Item>Sends confirmations, reminders and waitlist offers to your customers.</List.Item>
+              </List>
+              <Text as="p" tone="subdued" variant="bodySm">
+                Uninstalling stops all of that. Your bookings and customers stay in GetBooqin.
               </Text>
             </BlockStack>
           </Card>
