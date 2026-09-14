@@ -16,6 +16,12 @@ import { formatInZone, wallClockToUtc, zoneAbbr } from "getbooqin-core/booking/t
 // folded nothing, so a service called "Cut, colour & finish" produced a
 // file some calendars refused.
 import { icsDataUrl, icsFilename } from "getbooqin-core/booking/calendar";
+// The message type and the param that triggers it are defined once, in
+// core, because the other end of this protocol is a string we hand a
+// merchant to paste into a website we will never see. The two halves
+// cannot be changed together, so they have to share a definition —
+// see booking/embed.ts.
+import { EMBED_MESSAGE_TYPE, EMBED_QUERY_PARAM } from "getbooqin-core/booking/embed";
 import { vocabFor } from "~/lib/presets";
 import { AlertError, Badge, ConfirmDialog, Field, FormErrorSummary, Input } from "~/components/ui";
 import { LogoMark } from "~/components/onboarding";
@@ -421,7 +427,7 @@ function Shell({
   children: React.ReactNode;
 }) {
   const [searchParams] = useSearchParams();
-  const embedded = searchParams.get("embed") === "1";
+  const embedded = searchParams.get(EMBED_QUERY_PARAM) === "1";
 
   useEmbedHeight(embedded);
 
@@ -493,7 +499,12 @@ function useEmbedHeight(embedded: boolean) {
       const height = Math.ceil(document.documentElement.scrollHeight);
       if (height === last) return;
       last = height;
-      window.parent.postMessage({ type: "getbooqin:height", height }, "*");
+      // targetOrigin "*" is the correct call rather than a lapse: we do
+      // not know which site has embedded us, and the payload is a number
+      // describing our own layout. The receiving end is the half that
+      // verifies — the snippet checks origin *and* frame identity before
+      // believing anything.
+      window.parent.postMessage({ type: EMBED_MESSAGE_TYPE, height }, "*");
     };
 
     report();

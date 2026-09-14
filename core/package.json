@@ -27,6 +27,10 @@
       "types": "./dist/booking/presets.d.ts",
       "default": "./dist/booking/presets.js"
     },
+    "./booking/embed": {
+      "types": "./dist/booking/embed.d.ts",
+      "default": "./dist/booking/embed.js"
+    },
     "./billing/plans": {
       "types": "./dist/billing/plans.d.ts",
       "default": "./dist/billing/plans.js"

@@ -109,8 +109,15 @@ describe("every plan feature is enforced somewhere", () => {
     // sets a logo or accent colour calls assertFeature, and the booking
     // page re-checks the entitlement rather than trusting the stored
     // value, so a lapsed account's page reverts on its own.
+    // "embed" is back, with the snippet it was missing
+    // (booking/embed.ts). It is enforced the way the plan always
+    // intended feature keys on a *screen* to be — in the loader, which
+    // does not build a snippet for an account without the entitlement,
+    // so there is nothing in the delivered HTML to read out. It gates a
+    // card among several rather than an action, which is why it renders
+    // locked instead of 402ing the page.
     const enforced: FeatureKey[] = [
-      "no_badge", "branding", "waitlist", "team_roles", "email_templates", "shopify", "export",
+      "no_badge", "branding", "embed", "waitlist", "team_roles", "email_templates", "shopify", "export",
     ];
     const markers: FeatureKey[] = ["priority_support", "early_access"];
     for (const plan of Object.values(PLANS)) {

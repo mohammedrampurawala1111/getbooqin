@@ -41,6 +41,10 @@ export * as TZ from "./booking/tz.js";
 export * as Metrics from "./booking/metrics.js";
 export * as ServiceMetafields from "./booking/serviceMetafields.js";
 export * as Presets from "./booking/presets.js";
+
+// The paste-into-your-website snippet, and the counterpart the public
+// booking page runs so the frame can size itself. See booking/embed.ts.
+export * as Embed from "./booking/embed.js";
 export { GetBooqinError, isGetBooqinError } from "./booking/errors.js";
 export { boot } from "./booking/boot.js";
 // Scheduled-job bookkeeping — see src/jobs.ts on why a cron that never
