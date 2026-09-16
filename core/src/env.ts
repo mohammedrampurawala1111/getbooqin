@@ -120,6 +120,30 @@ export const ENV_VARS: EnvVar[] = [
     capability: "invoicing — payments are taken and no invoice is issued",
   },
   {
+    name: "META_APP_ID",
+    requirement: "capability",
+    purpose: "Meta app credentials, for WhatsApp Embedded Signup",
+    capability: "WhatsApp — merchants cannot connect a WhatsApp Business account",
+  },
+  {
+    name: "META_APP_SECRET",
+    requirement: "capability",
+    purpose: "Meta app credentials, and verifies every WhatsApp webhook",
+    capability: "WhatsApp — merchants cannot connect a WhatsApp Business account",
+  },
+  {
+    name: "META_WHATSAPP_CONFIG_ID",
+    requirement: "capability",
+    purpose: "The Embedded Signup configuration the merchant's popup opens",
+    capability: "WhatsApp — merchants cannot connect a WhatsApp Business account",
+  },
+  {
+    name: "META_WEBHOOK_VERIFY_TOKEN",
+    requirement: "capability",
+    purpose: "Answers Meta's one-time webhook verification handshake",
+    capability: "WhatsApp deliveries — message status, replies and template approvals never arrive",
+  },
+  {
     name: "PLATFORM_ADMIN_EMAILS",
     requirement: "capability",
     purpose: "Allowlist for the platform admin console",

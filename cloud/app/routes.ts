@@ -23,6 +23,9 @@ export default [
     route("bookings/:bookingId", "routes/dashboard.$connectionId.bookings.$bookingId.tsx"),
     route("bookings/export.csv", "routes/dashboard.$connectionId.bookings.export.tsx"),
     route("waitlist", "routes/dashboard.$connectionId.waitlist.tsx"),
+    // Resource route: Embedded Signup happens in Meta's own popup, so
+    // the browser posts what it caught back here.
+    route("whatsapp", "routes/dashboard.$connectionId.whatsapp.tsx"),
     route("resources", "routes/dashboard.$connectionId.resources.tsx"),
     route("resources/:resourceId", "routes/dashboard.$connectionId.resources.$resourceId.tsx"),
     route("timeoff", "routes/dashboard.$connectionId.timeoff.tsx"),
@@ -74,6 +77,8 @@ export default [
   // and keep in sync with server/combined.js's CLOUD_PREFIXES.
   route("webhooks/razorpay", "routes/webhooks.razorpay.tsx"),
   route("webhooks/paypal", "routes/webhooks.paypal.tsx"),
+  // Meta/WhatsApp: delivery statuses, customer replies, template verdicts.
+  route("webhooks/meta", "routes/webhooks.meta.tsx"),
   // Not /privacy or /terms — shopify-openslot already owns those paths (its
   // Shopify App Store submission) on the combined server. See
   // server/combined.js's CLOUD_PREFIXES, kept in sync with this file.

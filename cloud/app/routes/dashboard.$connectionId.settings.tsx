@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Form, redirect, useFetcher, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.settings";
-import { Settings, Data, Mailer, Team, Entitlements, Billing, Checkout, BillingReconcile, Invoices, Plans, Qr, Subscriptions, Tax, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
+import { Settings, Data, Mailer, Team, Entitlements, Billing, Checkout, BillingReconcile, Invoices, Plans, Qr, Subscriptions, Tax, WhatsAppAccounts, WhatsAppTemplates, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
 // Client-safe subpath for the two rule-checks the component below calls at
 // render time — importing these off the main `Settings` namespace instead
 // would pull core's *entire* barrel (nodemailer, the Razorpay/Shopify HMAC
@@ -19,6 +19,7 @@ import { UpgradePrompt } from "~/components/upgrade";
 import type { PlanId } from "getbooqin-core/billing/plans";
 import * as PaymentLinks from "getbooqin-core/booking/paymentLinks";
 import { embedSnippet } from "getbooqin-core/booking/embed";
+import { WhatsAppCard } from "~/components/whatsapp";
 import { DashboardLayoutCard, VocabularyFields, overviewCards, type OverviewCardKey } from "~/components/account";
 import {
   SettingsShell, Row, RowInput, RowSelect, RowTextarea, ToggleRow, Segmented, ValueRow, SettingsCard, isSettingsPage,
@@ -175,8 +176,41 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // a placeholder the merchant has to download to check.
   const bookingQr = await Qr.qrDataUrl(settings.booking_page_url, { width: 240 });
 
+  // The account and Meta's verdict on our templates, read from our own
+  // cache rather than from Meta — the webhook keeps it fresh, and a
+  // settings page load is the wrong place to spend a Graph call. The
+  // "Refresh status" button is there for when the webhook was missed.
+  const whatsappAccount = await WhatsAppAccounts.forConnection(connection.id);
+  const whatsapp = {
+    entitled: entitlements.features.has("whatsapp"),
+    // The publishable half of Meta's config, same class of value as a
+    // Clerk publishable key: designed to ship in a client bundle. The
+    // app *secret* never leaves the server.
+    appId: process.env.META_APP_ID ?? "",
+    configId: process.env.META_WHATSAPP_CONFIG_ID ?? "",
+    account: whatsappAccount
+      ? {
+          id: whatsappAccount.id,
+          displayPhoneNumber: whatsappAccount.displayPhoneNumber,
+          verifiedName: whatsappAccount.verifiedName,
+          status: whatsappAccount.status,
+          qualityRating: whatsappAccount.qualityRating,
+          lastError: whatsappAccount.lastError,
+        }
+      : null,
+    templates: whatsappAccount
+      ? (await WhatsAppTemplates.statesFor(whatsappAccount.id)).map((t) => ({
+          key: t.key,
+          name: t.name,
+          status: t.status,
+          rejectedReason: t.rejectedReason,
+        }))
+      : [],
+  };
+
   return {
     bookingQr,
+    whatsapp,
     settings,
     billing: {
       plan: entitlements.plan,
@@ -523,7 +557,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 export default function SettingsPage({ loaderData, actionData }: Route.ComponentProps) {
   const {
-    settings, billing, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites, bookingQr,
+    settings, billing, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites, bookingQr, whatsapp,
   } = loaderData;
   const v = useVocabulary();
   // defaultSettings() seeds business_name to the connection's own opaque
@@ -767,10 +801,24 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
 
       {page === "integrations" && (
         <>
+          <WhatsAppCard
+            connectionId={currentConnectionId}
+            plan={billing.plan}
+            entitled={whatsapp.entitled}
+            account={whatsapp.account}
+            templates={whatsapp.templates}
+            appId={whatsapp.appId}
+            configId={whatsapp.configId}
+          />
           <BookingQrCard connectionId={currentConnectionId} bookingUrl={settings.booking_page_url} vocab={v} qr={bookingQr} />
           <EmbedSnippetCard bookingUrl={settings.booking_page_url} vocab={v} />
           <div className="card">
-            {INTEGRATIONS.filter((integ) => integ.id !== "shopify" || canUseShopify).map((integ) => {
+            {INTEGRATIONS.filter(
+              // Shopify is dark unless granted; WhatsApp has its own
+              // card above and would otherwise appear twice, once as a
+              // working integration and once as "coming soon".
+              (integ) => (integ.id !== "shopify" || canUseShopify) && integ.id !== "whatsapp"
+            ).map((integ) => {
               if (integ.id === "shopify") {
                 return (
                   <IntegrationRow

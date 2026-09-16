@@ -73,6 +73,16 @@ export interface CreateBookingArgs {
   custom_fields?: Record<string, unknown>;
   addon_ids?: number[];
   /**
+   * WhatsApp consent, from a form that actually showed the checkbox.
+   *
+   * `undefined` means the surface did not ask — a staff-entered walk-in,
+   * or anything predating the checkbox — and leaves an existing answer
+   * untouched. See data.ts's CustomerInput for why this is three-state
+   * rather than a boolean.
+   */
+  whatsapp_opt_in?: boolean;
+  whatsapp_opt_in_source?: string;
+  /**
    * Where the booking came from. `form` is the public booking page and
    * the storefront widget — the only source the monthly quota meters.
    * `staff` is a merchant typing in a walk-in, which is admin rather
@@ -262,6 +272,12 @@ export async function create(shop: string, platform: string, shopTimezone: strin
     email: args.email,
     phone: args.phone ? normalizePhone(args.phone, settings.default_country_code) : args.phone,
     timezone: shopTimezone,
+    // Recorded here rather than after the booking, because create()
+    // emits booking_created before it returns and the confirmation goes
+    // out on that event. Setting consent afterwards would reliably miss
+    // the one message a customer most wants on WhatsApp.
+    whatsapp_opt_in: args.whatsapp_opt_in,
+    whatsapp_opt_in_source: args.whatsapp_opt_in_source,
   });
 
   const status: BookingStatus = args.force_status ?? (settings.auto_confirm ? "confirmed" : "pending");

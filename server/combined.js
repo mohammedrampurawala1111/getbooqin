@@ -73,6 +73,10 @@ const CLOUD_PREFIXES = [
   // Same reason as above for being listed individually rather than as a
   // "/webhooks" prefix.
   "/webhooks/paypal",
+  // Meta/WhatsApp deliveries — statuses, customer replies and template
+  // verdicts (cloud/app/routes/webhooks.meta.tsx). Same reason as above
+  // for being listed individually.
+  "/webhooks/meta",
   // Cloud's own account-surface legal pages — deliberately not "/privacy"
   // or "/terms", which shopify-openslot already owns (its Shopify App
   // Store submission). Keep in sync with cloud/app/routes.ts.

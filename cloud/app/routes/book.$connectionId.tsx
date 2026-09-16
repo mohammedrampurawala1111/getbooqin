@@ -5,6 +5,7 @@ import {
   Data,
   Bookings,
   Entitlements,
+  WhatsAppAccounts,
   Settings as CoreSettings,
   Waitlist,
   getPublicConnection,
@@ -36,7 +37,7 @@ export const meta: Route.MetaFunction = ({ data: loaderData }) =>
 // the business configuration are internal-only; React Router serializes
 // whatever a loader returns straight to the browser, so leaking that
 // object here would be a real disclosure, not just over-fetch.
-function publicSettings(settings: CoreSettings.Settings) {
+function publicSettings(settings: CoreSettings.Settings, whatsappLive = false) {
   return {
     businessName: settings.business_name,
     // Business header (Defect Dossier's BQ-33 finding) — the page
@@ -60,6 +61,11 @@ function publicSettings(settings: CoreSettings.Settings) {
     intakeFields: settings.intake_fields,
     allowCancel: settings.allow_cancel,
     consentText: settings.consent_text,
+    // Drives the WhatsApp opt-in checkbox. Asked of the connected
+    // account rather than of the plan alone: a merchant who is entitled
+    // but has not connected, or whose templates are still in review,
+    // must not be collecting a consent nothing can act on.
+    whatsappAvailable: whatsappLive,
     privacyNoticeUrl: settings.privacy_notice_url || "/legal/privacy",
     // Backs the "Join the waitlist" prompt on an empty-availability day —
     // the waitlist could be enabled, wired to freed slots, and have a real
@@ -115,6 +121,14 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // The `no_badge` entitlement, resolved once for every branch below.
   const entitlements = await Entitlements.entitlementsFor(connection.id);
   const showBadge = !entitlements.features.has("no_badge");
+  // Whether the opt-in checkbox is worth showing at all: entitled,
+  // connected, and with at least the confirmation template approved by
+  // Meta. Anything less and the box collects a consent that can never
+  // be acted on, which teaches a customer to expect messages that never
+  // arrive.
+  const whatsappLive = entitlements.features.has("whatsapp")
+    ? await WhatsAppAccounts.canSend(connection.id)
+    : false;
   // Branding is a paid entitlement, and it is checked here rather than
   // trusted from settings: a merchant who upgraded, set a logo, then
   // downgraded still has the value stored. The page they get is the one
@@ -175,7 +189,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     businessName: settings.business_name,
     businessHours: formatBusinessHours(hours),
     vocab,
-    settings: publicSettings(settings),
+    settings: publicSettings(settings, whatsappLive),
     services: services.map((s) => ({ id: s.id, name: s.name, durationMin: s.durationMin, price: s.price, description: s.description })),
     // title/description/avatarUrl back the "Choose who you'd like to see"
     // step (Defect Dossier's BQ-33 finding) — previously dropped down to
@@ -259,6 +273,16 @@ async function handleBook(connectionId: string, request: Request, form: FormData
       phone: String(form.get("phone") || ""),
       notes: String(form.get("notes") || ""),
       custom_fields: sanitizeCustomFields(intakeValues),
+      // Re-asked here rather than trusted from the submitted form: the
+      // same defence-in-depth the consent checkbox above gets. A ticked
+      // box on a page whose merchant cannot send is not consent to
+      // anything, and `undefined` — not `false` — is what "this surface
+      // never asked" has to mean, so a decline nobody made is never
+      // recorded over an earlier yes.
+      whatsapp_opt_in: (await WhatsAppAccounts.canSend(connection.id))
+        ? form.get("whatsapp_opt_in") === "on"
+        : undefined,
+      whatsapp_opt_in_source: "booking_form",
       source: "form",
     });
 
@@ -1260,6 +1284,26 @@ function DetailsForm({
           </span>
         </label>
         {errors.consent && <p className="m-0 text-[12px] text-danger">{errors.consent}</p>}
+
+        {/* Only when the business actually has WhatsApp connected and
+            approved — offering it otherwise collects a consent nothing
+            can act on, and teaches a customer to expect messages that
+            never arrive.
+
+            Separate from the privacy consent above, and unticked by
+            default. Meta requires *demonstrable* opt-in, and a
+            pre-ticked box is not consent under that rule or under the
+            GDPR one this form already answers to. Unticked also means
+            the customer's answer is an answer rather than an
+            oversight. */}
+        {settings.whatsappAvailable && (
+          <label className="flex items-start gap-[10px] text-[12.5px] text-muted">
+            <input type="checkbox" name="whatsapp_opt_in" className="mt-[2px]" />
+            <span>
+              Also send me {vocab.bookingOne} updates on WhatsApp, at the number above.
+            </span>
+          </label>
+        )}
 
         <div className="mt-1 flex justify-between">
           <button type="button" className="btn-ghost" onClick={onBack} disabled={submitting}>&larr; Back</button>

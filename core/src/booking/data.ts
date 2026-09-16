@@ -878,6 +878,21 @@ export interface CustomerInput {
   email?: string;
   phone?: string;
   timezone?: string;
+  /**
+   * WhatsApp consent, captured at the point of collection.
+   *
+   * Three-state on purpose. `undefined` means "this form did not ask" —
+   * a staff member adding a walk-in from the dashboard, or a booking
+   * made before the checkbox existed — and must leave an existing
+   * answer alone. `false` means they were asked and declined, which is
+   * a different fact and has to be able to overwrite a previous yes.
+   *
+   * Only ever set from a surface that actually showed the checkbox. An
+   * opt-in inferred from anything else is the thing Meta's
+   * demonstrable-consent rule exists to forbid.
+   */
+  whatsapp_opt_in?: boolean;
+  whatsapp_opt_in_source?: string;
 }
 
 export async function findOrCreateCustomer(shop: string, platform: string, data: CustomerInput) {
@@ -901,6 +916,15 @@ export async function findOrCreateCustomer(shop: string, platform: string, data:
     timezone: data.timezone ?? "",
   };
 
+  const consent =
+    data.whatsapp_opt_in === undefined
+      ? {}
+      : {
+          whatsappOptIn: data.whatsapp_opt_in,
+          whatsappOptInAt: new Date(),
+          whatsappOptInSource: (data.whatsapp_opt_in_source ?? "booking_form").slice(0, 40),
+        };
+
   if (existing) {
     // Do not blank out existing values with empty submissions.
     const merged = {
@@ -908,12 +932,13 @@ export async function findOrCreateCustomer(shop: string, platform: string, data:
       lastName: row.lastName || existing.lastName,
       phone: row.phone || existing.phone,
       timezone: row.timezone || existing.timezone,
+      ...consent,
     };
     const updated = await prisma.customer.update({ where: { id: existing.id }, data: merged });
     return updated.id;
   }
 
-  const created = await prisma.customer.create({ data: { shop, platform, ...row } });
+  const created = await prisma.customer.create({ data: { shop, platform, ...row, ...consent } });
   return created.id;
 }
 

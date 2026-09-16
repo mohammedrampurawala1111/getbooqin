@@ -45,6 +45,17 @@ export * as Presets from "./booking/presets.js";
 // The paste-into-your-website snippet, and the counterpart the public
 // booking page runs so the frame can size itself. See booking/embed.ts.
 export * as Embed from "./booking/embed.js";
+
+// WhatsApp Business, connected per merchant through Meta's Embedded
+// Signup. The merchant owns the WABA and pays Meta directly, so this
+// costs us nothing per message — see whatsapp/templates.ts for why
+// every message is a pre-approved template rather than free text.
+export * as WhatsApp from "./whatsapp/notify.js";
+export * as WhatsAppAccounts from "./whatsapp/accounts.js";
+export * as WhatsAppTemplates from "./whatsapp/templateSync.js";
+export * as WhatsAppWebhook from "./whatsapp/webhook.js";
+export * as WhatsAppApply from "./whatsapp/apply.js";
+export * as WhatsAppSignup from "./whatsapp/embeddedSignup.js";
 export { GetBooqinError, isGetBooqinError } from "./booking/errors.js";
 export { boot } from "./booking/boot.js";
 // Scheduled-job bookkeeping — see src/jobs.ts on why a cron that never

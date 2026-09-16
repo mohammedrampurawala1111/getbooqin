@@ -92,6 +92,7 @@ export type ProviderId = "razorpay" | "paypal" | "manual";
 export type FeatureKey =
   | "no_badge"
   | "branding"
+  | "whatsapp"
   | "waitlist"
   | "team_roles"
   | "email_templates"
@@ -101,7 +102,7 @@ export type FeatureKey =
   | "early_access";
 
 export const FEATURE_KEYS: readonly FeatureKey[] = [
-  "no_badge", "branding", "waitlist", "team_roles",
+  "no_badge", "branding", "whatsapp", "waitlist", "team_roles",
   "email_templates", "shopify", "export", "priority_support", "early_access",
 ];
 
@@ -113,6 +114,14 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   // money for something a merchant actually wants, and it is what makes
   // the cheapest paid tier feel like a purchase rather than a toll.
   branding: "Your logo and colour on the booking page",
+  // The merchant connects their own WhatsApp Business Account and
+  // attaches their own payment method, so Meta bills them for the
+  // messages and we carry no per-message cost. That is the only reason
+  // this can sit in a plan at all rather than being a metered add-on —
+  // the MVP plan ruled WhatsApp out precisely because per-message cost
+  // destroys the unit economics of a sub-$15 tier, and it does, when
+  // the cost is ours.
+  whatsapp: "Confirmations and reminders on WhatsApp",
   waitlist: "Waitlist with automatic offer cascade",
   team_roles: "Team roles (admin / write / read)",
   email_templates: "Editable email templates",
@@ -186,7 +195,7 @@ export const PLANS: Record<PlanId, Plan> = {
     blurb: "A team with roles, and your own email wording.",
     visible: true,
     limits: { resources: 10, services: Infinity, teamMembers: 6, bookingsPerMonth: Infinity, businesses: 1 },
-    features: ["no_badge", "branding", "waitlist", "team_roles", "email_templates", "export"],
+    features: ["no_badge", "branding", "whatsapp", "waitlist", "team_roles", "email_templates", "export"],
   },
   business: {
     id: "business",
@@ -198,7 +207,7 @@ export const PLANS: Record<PlanId, Plan> = {
       bookingsPerMonth: Infinity, businesses: 5,
     },
     features: [
-      "no_badge", "branding", "waitlist", "team_roles", "email_templates",
+      "no_badge", "branding", "whatsapp", "waitlist", "team_roles", "email_templates",
       "export", "priority_support", "early_access",
     ],
   },

@@ -61,6 +61,7 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
 
     templates: {},
     template_enabled: {},
+    whatsapp_templates: {},
     widget_text: {},
 
     embed_last_seen_at: null,

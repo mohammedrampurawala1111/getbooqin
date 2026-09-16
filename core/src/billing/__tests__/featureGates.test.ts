@@ -19,6 +19,8 @@ import * as Team from "../../team.js";
 import { setSettings } from "../../booking/settings.js";
 import { entitlementsFor } from "../entitlements.js";
 import { PLANS, type FeatureKey } from "../plans.js";
+import * as WhatsAppNotify from "../../whatsapp/notify.js";
+import { getSettings } from "../../booking/settings.js";
 
 const RUN = Date.now();
 const ownerId = `fg-owner-${RUN}`;
@@ -109,8 +111,13 @@ describe("every plan feature is enforced somewhere", () => {
     // sets a logo or accent colour calls assertFeature, and the booking
     // page re-checks the entitlement rather than trusting the stored
     // value, so a lapsed account's page reverts on its own.
+    // "whatsapp" is enforced in whatsapp/notify.ts's accountFor(): a
+    // plan without it resolves no account, so no template is ever sent.
+    // The gate is there rather than at the Settings screen because the
+    // sends happen from the mailer's event handlers and the reminder
+    // sweep, where no screen is involved at all.
     const enforced: FeatureKey[] = [
-      "no_badge", "branding", "waitlist", "team_roles", "email_templates", "shopify", "export",
+      "no_badge", "branding", "whatsapp", "waitlist", "team_roles", "email_templates", "shopify", "export",
     ];
     const markers: FeatureKey[] = ["priority_support", "early_access"];
     for (const plan of Object.values(PLANS)) {
@@ -228,5 +235,81 @@ describe("email templates", () => {
     await setPlan("growth");
     const saved = await setSettings(shop, platform, { templates: { customer_created_subject: "Hi!" } });
     expect(saved.templates.customer_created_subject).toBe("Hi!");
+  });
+});
+
+describe("whatsapp", () => {
+  /**
+   * The gate has to bite in `notifyBooking`, not on a settings screen:
+   * these sends are triggered by the mailer's event handlers and by the
+   * reminder sweep, where there is no request and no UI to lock.
+   *
+   * A connected-but-unentitled account is the case worth testing,
+   * because a merchant who connects WhatsApp on a trial and then lapses
+   * to Free still has a perfectly valid token sitting in the database.
+   */
+  async function connectWhatsApp() {
+    return prisma.whatsAppAccount.upsert({
+      where: { connectionId },
+      create: {
+        connectionId,
+        wabaId: `waba-${RUN}`,
+        phoneNumberId: `pn-${RUN}`,
+        accessToken: "not-a-real-token",
+        status: "active",
+      },
+      update: { status: "active" },
+    });
+  }
+
+  afterAll(async () => {
+    await prisma.whatsAppAccount.deleteMany({ where: { connectionId } });
+  });
+
+  it("is not granted on Free", async () => {
+    await setPlan("free");
+    const ent = await entitlementsFor(connectionId);
+
+    expect(ent.features.has("whatsapp")).toBe(false);
+  });
+
+  it("is granted from Growth up, where a busier business asks for it", async () => {
+    await setPlan("growth");
+    const ent = await entitlementsFor(connectionId);
+
+    expect(ent.features.has("whatsapp")).toBe(true);
+  });
+
+  it("sends nothing for a connected account whose plan lapsed to Free", async () => {
+    await connectWhatsApp();
+    await setPlan("free");
+
+    const settings = await getSettings(shop, platform);
+    const booking = await prisma.booking.findFirst({ where: { shop } });
+    // No booking is needed to prove the gate — accountFor returns null
+    // before anything is read off one.
+    const outcome = await WhatsAppNotify.notifyBooking(
+      shop,
+      platform,
+      (booking ?? { id: 0, uid: "none", customerId: 0, serviceId: 0, resourceId: 0 }) as never,
+      settings,
+      "booking_confirmed"
+    );
+
+    expect(outcome.sent).toBe(false);
+    expect(outcome).toMatchObject({ reason: "not_connected" });
+  });
+
+  it("stops before a token is ever decrypted, so a lapsed plan cannot call Meta", async () => {
+    // The stored token here is deliberately not decryptable. If the
+    // gate ever moved to after the decrypt, this throws instead of
+    // returning cleanly — which is exactly the regression to catch.
+    await connectWhatsApp();
+    await setPlan("free");
+
+    const settings = await getSettings(shop, platform);
+    await expect(
+      WhatsAppNotify.notifyBooking(shop, platform, { id: 0, uid: "x", customerId: 0 } as never, settings, "booking_reminder")
+    ).resolves.toMatchObject({ sent: false });
   });
 });

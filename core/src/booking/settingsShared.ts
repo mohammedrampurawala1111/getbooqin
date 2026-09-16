@@ -98,6 +98,13 @@ export interface Settings {
   // the waitlist emails) while keeping the rest on.
   template_enabled: Record<string, boolean>;
 
+  // Per-WhatsApp-template on/off, keyed by whatsapp/templates.ts's
+  // catalogue key. Absent or true means on, exactly like
+  // template_enabled above. Independent of it: a merchant may well want
+  // the reminder on WhatsApp and the confirmation by email, since the
+  // confirmation carries a calendar attachment that WhatsApp cannot.
+  whatsapp_templates: Record<string, boolean>;
+
   // Overrides for the storefront booking widget's copy. Empty/missing key =
   // use the widget's own default text.
   widget_text: Record<string, string>;

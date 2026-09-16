@@ -14,6 +14,11 @@ import * as Data from "./data.js";
 import * as Bookings from "./bookings.js";
 import { manageUrl as waitlistManageUrl } from "./waitlist.js";
 import { getSettings, template as settingTemplate, type Settings } from "./settings.js";
+// The second channel, called alongside every send below rather than
+// from inside them. Its failures are returned, never thrown: a WhatsApp
+// message that cannot go must never take down the email that was going
+// anyway. See whatsapp/notify.ts.
+import * as WhatsApp from "../whatsapp/notify.js";
 import { term } from "./settingsShared.js";
 import events from "./events.js";
 import { GetBooqinError } from "./errors.js";
@@ -394,6 +399,14 @@ async function onCreated(booking: Booking) {
   } else {
     console.log(`[getbooqin mailer] booking_created customer email skipped for ${fresh.uid} — notify_customer is off`);
   }
+  // Only for a booking that is actually confirmed. A pending request is
+  // not an appointment yet, and there is no approved template that says
+  // "we'll get back to you" — sending the confirmed one would tell a
+  // customer they have a slot they may not get.
+  if (settings.notify_customer && fresh.status === "confirmed") {
+    await WhatsApp.notifyBooking(shop, fresh.platform, fresh, settings, "booking_confirmed");
+  }
+
   if (settings.notify_admin && templateEnabled(settings, "admin_created")) {
     await sendToAdmin(
       shop,
@@ -428,6 +441,11 @@ async function onStatusChanged(booking: Booking, oldStatus: string, newStatus: s
       ),
       { calendar: true }
     );
+    // The same template as a straight-to-confirmed booking, because to
+    // the customer it is the same news — they asked, and now they have
+    // it. onCreated deliberately stayed quiet for this booking when it
+    // was still pending.
+    await WhatsApp.notifyBooking(booking.shop, booking.platform, booking, settings, "booking_confirmed");
   }
 
   if (newStatus === "declined" && templateEnabled(settings, "customer_declined")) {
@@ -460,6 +478,10 @@ async function onCancelled(booking: Booking, _reason: string) {
       )
     );
   }
+  if (settings.notify_customer) {
+    await WhatsApp.notifyBooking(booking.shop, booking.platform, booking, settings, "booking_cancelled");
+  }
+
   if (settings.notify_admin && templateEnabled(settings, "admin_cancelled")) {
     await sendToAdmin(
       booking.shop,
@@ -488,6 +510,7 @@ async function onRescheduled(booking: Booking) {
     // rather than leaving the customer with two.
     { calendar: true }
   );
+  await WhatsApp.notifyBooking(booking.shop, booking.platform, booking, settings, "booking_rescheduled");
 }
 
 /** Sends reminders for every shop with bookings inside the window. */
@@ -540,6 +563,12 @@ export async function sendReminders(): Promise<{ sent: number }> {
           "Hi {{customer_name}},\n\nThis is a reminder for your {{booking_term}}:\n\n{{service}} with {{resource}}\n{{date}} at {{time}} {{timezone}}\n\n{{manage_url}}\n\nSee you soon,\n{{business_name}}"
         )
       );
+
+      // After the email and inside the same try, but it cannot throw —
+      // notifyBooking returns its failures. reminderSent must flip on
+      // the strength of the email alone: a WhatsApp outage that held
+      // the flag back would re-send the email on every sweep.
+      await WhatsApp.notifyBooking(booking.shop, booking.platform, booking, settings, "booking_reminder");
 
       await prisma.booking.update({ where: { id: booking.id }, data: { reminderSent: true } });
       sent += 1;
@@ -723,7 +752,20 @@ async function onWaitlistJoined(entry: Waitlist) {
 
 async function onWaitlistOffered(entry: Waitlist) {
   const settings = await getSettings(entry.shop, entry.platform);
-  if (!settings.notify_customer || !templateEnabled(settings, "waitlist_offered")) return;
+  if (!settings.notify_customer) return;
+
+  // Before the email rather than after it, and the only place in this
+  // file where that ordering is deliberate. A waitlist offer is first
+  // come, first served with a hard expiry — WhatsApp is read in
+  // minutes and email in hours, so the slower channel going first
+  // costs the customer part of the window they are competing for.
+  const t = await waitlistTokens(entry.shop, entry, settings);
+  await WhatsApp.notifyWaitlistOffer(entry.shop, entry.platform, entry, settings, {
+    claimUrl: t["{{claim_url}}"] ?? "",
+    expiresAt: t["{{expires_at}}"] ?? "",
+  });
+
+  if (!templateEnabled(settings, "waitlist_offered")) return;
   await sendToWaitlistCustomer(
     entry.shop,
     entry,

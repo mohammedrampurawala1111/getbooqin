@@ -106,6 +106,7 @@ model Connection {
   @@index([userId])
   lifecycleEmails LifecycleEmail[]
   invoices        Invoice[]
+  whatsapp        WhatsAppAccount?
 }
 
 // One row per user granted access to a Connection — the multi-user team
@@ -435,6 +436,17 @@ model Customer {
   // customer records change.
   dateOfBirth     String?
   medicalAlert    String     @default("")
+  /// WhatsApp opt-in. Meta requires demonstrable consent before a
+  /// business sends a customer a template message, and "demonstrable"
+  /// means being able to say when and where it was given — so this is
+  /// three columns rather than a boolean. Default false: an existing
+  /// customer who gave an email address years ago did not consent to
+  /// this, and backfilling them to true would be the exact thing the
+  /// rule exists to prevent.
+  whatsappOptIn   Boolean    @default(false)
+  whatsappOptInAt DateTime?
+  /// Where consent came from — "booking_form", "dashboard", "import".
+  whatsappOptInSource String @default("")
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
   bookings        Booking[]
@@ -1024,4 +1036,117 @@ model InvoiceCounter {
   next   Int    @default(1)
 
   updatedAt DateTime @updatedAt
+}
+
+/// A merchant's own WhatsApp Business Account, connected through Meta's
+/// Embedded Signup.
+///
+/// The merchant owns the WABA and attaches their own payment method to
+/// it, so Meta bills them directly and GetBooqin carries no per-message
+/// cost. That is the whole reason this can be an ordinary plan feature
+/// at ₹399/mo — a shared credit line would make every reminder our
+/// cost, and the MVP plan ruled WhatsApp out on exactly that
+/// arithmetic.
+///
+/// One per Connection: a WABA is tied to a phone number, and a phone
+/// number is how a customer recognises the business.
+model WhatsAppAccount {
+  id                 String   @id @default(cuid())
+  connectionId       String   @unique
+  /// Meta's id for the WhatsApp Business Account.
+  wabaId             String
+  /// Meta's id for the registered phone number — what messages are sent from.
+  phoneNumberId      String   @unique
+  /// "+91 98765 43210", as Meta formats it. Display only.
+  displayPhoneNumber String   @default("")
+  /// The business name Meta verified, which is what customers see.
+  verifiedName       String   @default("")
+  /// Encrypted at rest with CONNECTION_ENCRYPTION_KEY, exactly like
+  /// Connection.credentials. A business integration system user token:
+  /// long-lived, and scoped to this WABA alone.
+  accessToken        String
+  /// pending|active|revoked|error — `pending` is signup begun and phone
+  /// not yet registered, which is a real state a merchant can sit in.
+  status             String   @default("pending")
+  /// Meta's own verdict on the number: GREEN|YELLOW|RED. A number that
+  /// goes RED stops being able to send, so this is worth surfacing
+  /// before it does rather than after.
+  qualityRating      String?
+  /// Unique customers reachable per 24h — TIER_250 upward.
+  messagingLimit     String?
+  /// The last send or API failure, for the Settings screen. Never a token.
+  lastError          String?
+  connectedAt        DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  connection Connection        @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  templates  WhatsAppTemplate[]
+  messages   WhatsAppMessage[]
+
+  @@index([wabaId])
+}
+
+/// A message template as Meta currently sees it.
+///
+/// Every proactive message WhatsApp allows is a template that Meta has
+/// approved, and approval is per-WABA — the merchant's, not ours. So
+/// this is a cache of *their* approval state, refreshed from the
+/// template webhook, and it is what the send path checks before trying:
+/// sending against a template Meta has since rejected or paused is a
+/// failed send and a quality-rating hit, and we already know it will be.
+model WhatsAppTemplate {
+  id         String   @id @default(cuid())
+  accountId  String
+  /// Our catalogue key — "booking_confirmed". See whatsapp/templates.ts.
+  key        String
+  /// The name registered at Meta, which is the key prefixed and lowercased.
+  name       String
+  language   String   @default("en")
+  /// APPROVED|PENDING|REJECTED|PAUSED|DISABLED — Meta's vocabulary, kept
+  /// verbatim rather than mapped, so a new status can't silently read as
+  /// sendable.
+  status     String   @default("PENDING")
+  category   String   @default("UTILITY")
+  /// Why Meta rejected it, shown to the merchant so it can be fixed.
+  rejectedReason String?
+  updatedAt  DateTime @updatedAt
+
+  account WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, name, language])
+  @@index([accountId, key])
+}
+
+/// One outbound message, and what became of it.
+///
+/// Written before the send, not after, so a crash between the Graph
+/// call and the row leaves evidence rather than silence. The delivery
+/// status arrives later on the webhook and updates this row — which is
+/// the only way to answer "did the customer actually get their
+/// reminder", a question email cannot answer at all.
+model WhatsAppMessage {
+  id                String   @id @default(cuid())
+  accountId         String
+  /// Our template catalogue key.
+  template          String
+  /// E.164, as sent. Kept because a customer's number can change after.
+  toPhone           String
+  /// Meta's message id, once it has one. Null for a send that never left.
+  providerMessageId String?  @unique
+  /// queued|sent|delivered|read|failed
+  status            String   @default("queued")
+  errorCode         String?
+  errorTitle        String?
+  /// What this was about, for the booking's own timeline. Not a foreign
+  /// key: a booking can be deleted and the record of having messaged
+  /// someone should outlive it.
+  bookingId         Int?
+  waitlistId        Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  account WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+  @@index([bookingId])
 }

@@ -31,6 +31,10 @@
       "types": "./dist/booking/embed.d.ts",
       "default": "./dist/booking/embed.js"
     },
+    "./whatsapp/templates": {
+      "types": "./dist/whatsapp/templates.d.ts",
+      "default": "./dist/whatsapp/templates.js"
+    },
     "./billing/plans": {
       "types": "./dist/billing/plans.d.ts",
       "default": "./dist/billing/plans.js"
