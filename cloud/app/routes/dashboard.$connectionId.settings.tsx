@@ -18,6 +18,7 @@ import { IntegrationRow, LogoMark } from "~/components/onboarding";
 import { UpgradePrompt } from "~/components/upgrade";
 import type { PlanId } from "getbooqin-core/billing/plans";
 import * as PaymentLinks from "getbooqin-core/booking/paymentLinks";
+import { embedSnippet } from "getbooqin-core/booking/embed";
 import { DashboardLayoutCard, VocabularyFields, overviewCards, type OverviewCardKey } from "~/components/account";
 import {
   SettingsShell, Row, RowInput, RowSelect, RowTextarea, ToggleRow, Segmented, ValueRow, SettingsCard, isSettingsPage,
@@ -1054,46 +1055,6 @@ function MessageRow({ message, vocab }: { message: NotificationMessage; vocab: R
 // relying on them for real bookings — its own fetcher (not the page's
 // actionData) so sending a test doesn't get tangled up with whichever other
 // section's form last submitted on this page.
-function WhatsAppTestCard() {
-  const fetcher = useFetcher<{ saved?: boolean; whatsappTestSent?: boolean; whatsappTestError?: string }>();
-  const sending = fetcher.state !== "idle";
-  return (
-    <fetcher.Form method="post" className="card">
-      <div className="card-header flex flex-col gap-[2px]">
-        <h2 className="card-title">Send a test message</h2>
-        <p className="m-0 text-meta text-muted">Confirm your credentials and template work before relying on real bookings.</p>
-      </div>
-      <input type="hidden" name="_section" value="whatsapp_test" />
-      <Row label="Send to">
-        <RowInput type="tel" name="whatsapp_test_phone" placeholder="+1 555 000 1234" pattern={PHONE_PATTERN} required cap={280} />
-      </Row>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-canvas-alt px-[18px] py-3">
-        {fetcher.data?.whatsappTestError ? (
-          <span className="flex items-center gap-[7px] text-meta font-medium text-danger">
-            <span className="inline-flex h-[15px] w-[15px] items-center justify-center rounded-full bg-danger text-[9px] text-white">!</span>
-            {fetcher.data.whatsappTestError}
-          </span>
-        ) : fetcher.data?.whatsappTestSent ? (
-          <span className="alert-success">
-            <span className="inline-flex h-[15px] w-[15px] items-center justify-center rounded-full bg-ok text-[9px] text-white">✓</span>
-            Sent — check that phone.
-          </span>
-        ) : <span />}
-        <button className="btn-pri" disabled={sending}>{sending ? "Sending…" : "Send test message"}</button>
-      </div>
-    </fetcher.Form>
-  );
-}
-
-/**
- * One dropdown driving both stored values (currency code + symbol) —
- * previously two independent free-text fields that could disagree (nothing
- * stopped "INR" sitting beside "$"), which would render every price
- * wrongly on the public booking page with no warning (GetBooqin clinic
- * audit's CR-03 finding). The symbol travels as a hidden input alongside
- * the real `currency` select so the form still posts both fields the
- * action already expects, with only one value for a merchant to pick.
- */
 function CurrencyRowSelect({ defaultCode, defaultSymbol }: { defaultCode: string; defaultSymbol: string }) {
   const [code, setCode] = useState(defaultCode);
   const known = CURRENCIES.some((c) => c.code === code);
@@ -1313,25 +1274,20 @@ function TeamSection({
  */
 function EmbedSnippetCard({ bookingUrl, vocab }: { bookingUrl: string; vocab: ReturnType<typeof useVocabulary> }) {
   const [copied, setCopied] = useState(false);
-  const src = `${bookingUrl}${bookingUrl.includes("?") ? "&" : "?"}embed=1`;
 
-  // The resize listener checks the message's origin against the iframe's
-  // own, so another frame on the merchant's page can't drive the height.
-  const snippet = `<iframe
-  src="${src}"
-  title="Book online"
-  style="width:100%;border:0;min-height:640px"
-  id="getbooqin-booking"
-></iframe>
-<script>
-  window.addEventListener("message", function (e) {
-    var frame = document.getElementById("getbooqin-booking");
-    if (!frame || e.source !== frame.contentWindow) return;
-    if (e.data && e.data.type === "getbooqin:height") {
-      frame.style.minHeight = e.data.height + "px";
-    }
-  });
-</script>`;
+  // Built by core rather than assembled here. This is a wire format —
+  // text handed to a merchant to paste into a site we will never see —
+  // and its other end is the `?embed=1` listener on the booking page.
+  // Two hand-written copies of one protocol is how they drift; one
+  // generator that also owns the message type is how they cannot.
+  //
+  // It is stricter than the inline version it replaces in three ways
+  // that matter on somebody else's page: it checks the message's origin
+  // (the old comment claimed this and the code never did it), it bounds
+  // the height it will honour, and it derives the frame id from the URL
+  // instead of hardcoding one — so a merchant with a page per location
+  // can paste two of these without one driving the other's height.
+  const snippet = embedSnippet({ bookingUrl, title: `Book online` });
 
   async function copy() {
     try {

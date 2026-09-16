@@ -1,12 +1,10 @@
 import { useEffect, useState } from "react";
 import type { Route } from "./+types/dashboard.$connectionId._index";
-import { Metrics, Bookings, Data, Entitlements, Settings, ensureSlug } from "getbooqin-core";
-import { embedSnippet } from "getbooqin-core/booking/embed";
+import { Metrics, Bookings, Data, Settings, ensureSlug } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { PageHeader, StatCard, BarChart, MeterRow, EmptyState } from "~/components/ui";
 import { SetupChecklist, EmptyStat } from "~/components/onboarding";
 import { setupSummary, useVocabulary } from "~/lib/presets";
-import { UpgradePrompt } from "~/components/upgrade";
 import { getAppUrl } from "~/lib/env.server";
 
 export const meta: Route.MetaFunction = () => [{ title: "Overview · GetBooqin" }];
@@ -81,25 +79,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const bookingSlug = hasRealName ? await ensureSlug(params.connectionId!, settings.business_name) : params.connectionId;
   const bookingUrl = `${getAppUrl()}/book/${bookingSlug}`;
 
-  // The snippet is built server-side and handed down whole, rather than
-  // assembled in the component from a URL and a name. It is a wire
-  // format a merchant pastes into a site we never see, and the one
-  // thing it must not do is differ between two renders of this page —
-  // building it in one place is what guarantees that.
-  const entitlements = await Entitlements.entitlementsFor(params.connectionId!);
-  const embed = entitlements.features.has("embed")
-    ? {
-        snippet: embedSnippet({
-          bookingUrl,
-          title: `Book with ${settings.business_name || "us"}`,
-        }),
-      }
-    : null;
-
   return {
-    embed,
-    plan: entitlements.plan,
-    connectionId: params.connectionId!,
     overview,
     pendingCount,
     activeServiceCount,
@@ -175,7 +155,7 @@ function BookingWindowClosedBanner({
 }
 
 export default function Overview({ loaderData, params }: Route.ComponentProps) {
-  const { overview, pendingCount, activeServiceCount, range, timezone, allTimeBookingCount, setupFacts, hiddenCards, bookingUrl, embed, plan, connectionId, conflictCount, unbookableCount, bookingWindowClosed, minNoticeHours, maxAdvanceDays } = loaderData;
+  const { overview, pendingCount, activeServiceCount, range, timezone, allTimeBookingCount, setupFacts, hiddenCards, bookingUrl, conflictCount, unbookableCount, bookingWindowClosed, minNoticeHours, maxAdvanceDays } = loaderData;
   const totalBookings = overview.bookingsSeries.reduce((sum, d) => sum + d.count, 0);
   const v = useVocabulary();
 
@@ -185,8 +165,6 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
         connectionId={params.connectionId}
         setupFacts={setupFacts}
         bookingUrl={bookingUrl}
-        embed={embed}
-        plan={plan}
         bookingWindowClosed={bookingWindowClosed}
         minNoticeHours={minNoticeHours}
         maxAdvanceDays={maxAdvanceDays}
@@ -217,7 +195,6 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
       />
 
       <ShareLinkCard bookingUrl={bookingUrl} vocab={v} />
-      <EmbedCard embed={embed} plan={plan} connectionId={connectionId} />
 
       {bookingWindowClosed && (
         <BookingWindowClosedBanner connectionId={params.connectionId} minNoticeHours={minNoticeHours} maxAdvanceDays={maxAdvanceDays} />
@@ -378,8 +355,6 @@ function EmptyOverview({
   connectionId,
   setupFacts,
   bookingUrl,
-  embed,
-  plan,
   bookingWindowClosed,
   minNoticeHours,
   maxAdvanceDays,
@@ -387,8 +362,6 @@ function EmptyOverview({
   connectionId: string;
   setupFacts: Route.ComponentProps["loaderData"]["setupFacts"];
   bookingUrl: string;
-  embed: Route.ComponentProps["loaderData"]["embed"];
-  plan: Route.ComponentProps["loaderData"]["plan"];
   bookingWindowClosed: boolean;
   minNoticeHours: number;
   maxAdvanceDays: number;
@@ -439,7 +412,6 @@ function EmptyOverview({
       />
 
       <ShareLinkCard bookingUrl={bookingUrl} vocab={v} />
-      <EmbedCard embed={embed} plan={plan} connectionId={connectionId} />
 
       <div className="card">
         <EmptyState
@@ -528,70 +500,6 @@ function DismissibleSetupChecklist({
           : undefined
       }
     />
-  );
-}
-
-/**
- * The other way a booking page reaches customers.
- *
- * A link works everywhere and asks a customer to leave the merchant's
- * site to use it. This is the version that doesn't — and with the
- * Shopify theme block dark, it is the only distribution channel a
- * merchant has beyond sending the link itself, which is why it sits
- * next to it rather than in Settings.
- *
- * Locked on Free. The gate is the same one the server enforces; the
- * snippet simply isn't built by the loader unless the account has the
- * entitlement, so there is nothing here to read out of the HTML.
- */
-function EmbedCard({
-  embed, plan, connectionId,
-}: {
-  embed: Route.ComponentProps["loaderData"]["embed"];
-  plan: Route.ComponentProps["loaderData"]["plan"];
-  connectionId: string;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  if (!embed) {
-    return (
-      <div className="card p-[18px]">
-        <h2 className="card-title mb-1">Put it on your website</h2>
-        <p className="m-0 mb-3 text-meta text-muted">
-          Paste one snippet into your own site and customers book without leaving it.
-        </p>
-        <UpgradePrompt feature="embed" currentPlan={plan} connectionId={connectionId} compact />
-      </div>
-    );
-  }
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(embed!.snippet);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Denied or unavailable — the snippet is on screen and selectable,
-      // which is the same fallback the link card takes.
-    }
-  }
-
-  return (
-    <div className="card p-[18px]">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <h2 className="card-title m-0">Put it on your website</h2>
-        <button type="button" className="btn-sec shrink-0" onClick={copy}>
-          {copied ? "Copied" : "Copy snippet"}
-        </button>
-      </div>
-      <p className="m-0 mb-3 text-meta text-muted">
-        Paste this into any page of your own site — Wix, Squarespace, WordPress or plain HTML. It sizes itself to
-        fit, and customers book without leaving your site.
-      </p>
-      <pre className="m-0 max-h-[180px] overflow-auto rounded-[8px] bg-canvas-alt p-3 text-[11.5px] leading-[1.5]">
-        <code>{embed.snippet}</code>
-      </pre>
-    </div>
   );
 }
 

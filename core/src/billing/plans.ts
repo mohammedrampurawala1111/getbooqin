@@ -73,10 +73,16 @@ export type ProviderId = "razorpay" | "paypal" | "manual";
  * changes nothing — so a plan appears to differ from another when it
  * does not.
  *
- * `embed` was removed once for exactly that reason — there was no embed
- * snippet in the product, so a plan claiming to include it was selling
- * something that did not exist. It is back because the snippet is
- * (booking/embed.ts), and it gates a real card on the Overview.
+ * `embed` was removed for exactly that reason and **stays** removed,
+ * though not for the original reason any more. The snippet exists now
+ * (booking/embed.ts, on Settings -> Integrations) — it is simply not
+ * sold, because embedding is free here by decision. The paid lever on
+ * the booking page is `no_badge`: a merchant may frame the page
+ * anywhere they like, and on Free our name rides along inside the
+ * iframe exactly as it does outside it. Gating the snippet instead
+ * would sell a restriction that a determined merchant routes around
+ * with one line of their own HTML, while `no_badge` is enforced by the
+ * page itself and cannot be.
  *
  * `early_access` is the exception, and deliberately so: it gates nothing
  * by design. It is a *marker* an admin sets on an account to say "this
@@ -86,7 +92,6 @@ export type ProviderId = "razorpay" | "paypal" | "manual";
 export type FeatureKey =
   | "no_badge"
   | "branding"
-  | "embed"
   | "waitlist"
   | "team_roles"
   | "email_templates"
@@ -96,7 +101,7 @@ export type FeatureKey =
   | "early_access";
 
 export const FEATURE_KEYS: readonly FeatureKey[] = [
-  "no_badge", "branding", "embed", "waitlist", "team_roles",
+  "no_badge", "branding", "waitlist", "team_roles",
   "email_templates", "shopify", "export", "priority_support", "early_access",
 ];
 
@@ -108,11 +113,6 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   // money for something a merchant actually wants, and it is what makes
   // the cheapest paid tier feel like a purchase rather than a toll.
   branding: "Your logo and colour on the booking page",
-  // Sold alongside branding and no_badge, and the third part of the
-  // same promise: the page is yours, it has your name on it, and it
-  // lives on your own site. With Shopify dark, this is the only
-  // distribution channel a merchant has beyond sending a link.
-  embed: "Embed the booking page on your own website",
   waitlist: "Waitlist with automatic offer cascade",
   team_roles: "Team roles (admin / write / read)",
   email_templates: "Editable email templates",
@@ -178,7 +178,7 @@ export const PLANS: Record<PlanId, Plan> = {
     blurb: "Make the booking page yours, and add a waitlist.",
     visible: true,
     limits: { resources: 3, services: Infinity, teamMembers: 2, bookingsPerMonth: Infinity, businesses: 1 },
-    features: ["no_badge", "branding", "embed", "waitlist"],
+    features: ["no_badge", "branding", "waitlist"],
   },
   growth: {
     id: "growth",
@@ -186,7 +186,7 @@ export const PLANS: Record<PlanId, Plan> = {
     blurb: "A team with roles, and your own email wording.",
     visible: true,
     limits: { resources: 10, services: Infinity, teamMembers: 6, bookingsPerMonth: Infinity, businesses: 1 },
-    features: ["no_badge", "branding", "embed", "waitlist", "team_roles", "email_templates", "export"],
+    features: ["no_badge", "branding", "waitlist", "team_roles", "email_templates", "export"],
   },
   business: {
     id: "business",
@@ -198,7 +198,7 @@ export const PLANS: Record<PlanId, Plan> = {
       bookingsPerMonth: Infinity, businesses: 5,
     },
     features: [
-      "no_badge", "branding", "embed", "waitlist", "team_roles", "email_templates",
+      "no_badge", "branding", "waitlist", "team_roles", "email_templates",
       "export", "priority_support", "early_access",
     ],
   },
