@@ -58,6 +58,10 @@ F. Legal identity   (must be answered before the first charge)
 G. Monitoring, H. Backups, I. CI secrets
                               ↓
 J. The verification pass — the actual gate
+
+K. WhatsApp — start this on day one and let it run alongside everything
+   above. Meta Business Verification plus App Review is the longest lead
+   time here by a wide margin, and none of it can be hurried.
 ```
 
 ---
@@ -487,6 +491,113 @@ Not a checklist of intentions. Each line is something you *observe*.
 - [ ] Deliberately break something trivial and confirm Sentry pages you
 - [ ] Stop the reminder sweep and confirm `/healthz?strict=1` goes red
       within 30 minutes
+
+---
+
+## K. WhatsApp — Meta Business Verification and Tech Provider access
+
+**Start this early.** It is the longest lead time in this document by a
+wide margin: Business Verification alone is typically days, App Review
+can be a week or more, and neither can be hurried. The code is written
+and inert until all of it is done.
+
+**The arrangement to keep in mind throughout:** the merchant connects
+*their own* WhatsApp Business Account and attaches *their own* payment
+method inside Meta's popup. Meta bills them. You carry no per-message
+cost — which is the only reason this is a plan feature rather than a
+metered add-on, and it is worth saying to Meta in your use-case
+description too, because it is exactly what a Tech Provider is.
+
+### K1. Meta app and Business Verification
+
+1. **developers.facebook.com** → create an app of type **Business**, and
+   add the **WhatsApp** product to it.
+2. Attach it to your Meta Business account, then complete **Business
+   Verification** (Business Settings → Security Centre). You will need
+   the registered entity's documents — the same entity as block F's
+   invoice identity, and the mismatch is worth avoiding.
+3. Request **Advanced Access** for `whatsapp_business_management` and
+   `whatsapp_business_messaging`. Both are App Review, and the review
+   asks for a screencast of the flow.
+
+### K2. Embedded Signup configuration
+
+Under the WhatsApp product → **Embedded Signup** → create a
+configuration. It gives you a **config id**, which is not a secret and
+is compiled into the page the merchant clicks.
+
+Your app must be registered as a **Tech Provider** for Embedded Signup
+to be offered at all. Without it, `FB.login` opens and the merchant
+simply cannot get through.
+
+### K3. Secrets
+
+```bash
+fly secrets set \
+  META_APP_ID=... \
+  META_APP_SECRET=... \
+  META_WHATSAPP_CONFIG_ID=... \
+  META_WEBHOOK_VERIFY_TOKEN=$(openssl rand -hex 24)
+```
+
+`META_APP_ID` and `META_WHATSAPP_CONFIG_ID` are publishable — they ship
+in the client bundle by design, like the Clerk publishable key.
+`META_APP_SECRET` never leaves the server: it signs nothing outbound,
+but it is what verifies **every** inbound webhook.
+
+`META_WEBHOOK_VERIFY_TOKEN` is a value you invent. It is only used once,
+to answer Meta's verification GET.
+
+### K4. Webhook
+
+Meta app dashboard → WhatsApp → **Configuration** → Webhook:
+
+- Callback URL: `https://app.getbooqin.com/webhooks/meta`
+- Verify token: the `META_WEBHOOK_VERIFY_TOKEN` you just set
+- Subscribe to fields: **`messages`** and
+  **`message_template_status_update`**
+
+Saving it triggers the verification GET, which the route answers with
+the challenge as plain text. If it fails, the token does not match —
+that is the only thing that check can be wrong about.
+
+Both fields matter. `messages` carries delivery receipts and customer
+replies; `message_template_status_update` is how a merchant's template
+approval ever reaches the Settings screen. Subscribing to only the first
+leaves every merchant stuck on "In review" forever.
+
+### K5. What to test, in this order
+
+- [ ] A test merchant completes Embedded Signup and lands `active`
+- [ ] Five templates appear as **In review**, then **Ready** — this is
+      where you find out whether Meta likes the copy
+- [ ] A booking with the opt-in box ticked produces a WhatsApp message
+- [ ] The same booking with the box **unticked** produces none
+- [ ] `WhatsAppMessage.status` reaches `delivered`, then `read`
+- [ ] A number with no WhatsApp fails as `not_on_whatsapp` and the
+      email still arrives
+- [ ] Remove the app from the merchant's Meta account → the next send
+      marks the account `revoked` and Settings offers Reconnect
+- [ ] A merchant on Free cannot connect, and a connected merchant who
+      **lapses** to Free stops sending
+
+### K6. Things that will bite
+
+- **Rejected templates.** Meta rejects UTILITY templates that read as
+  marketing. The copy in `whatsapp/templates.ts` is written to avoid
+  that — no offers, no encouragement, nothing the customer did not ask
+  for. Changing it is changing a submission.
+- **A number already signed in to the WhatsApp Business app** cannot be
+  registered for the Cloud API until it is signed out there. This is the
+  single most common merchant-side failure, and Meta's error message for
+  it is surfaced verbatim rather than paraphrased.
+- **Quality rating.** Failed sends and customer blocks push a number
+  toward RED, and a RED number stops sending. That is why
+  `toWhatsAppNumber()` refuses a malformed number locally instead of
+  letting Meta count it as a failure.
+- **Meta deprecates Graph API versions on a schedule.** `GRAPH_VERSION`
+  in `whatsapp/graph.ts` is one constant, overridable with
+  `META_GRAPH_VERSION`, and it will need bumping roughly annually.
 
 ---
 
