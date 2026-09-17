@@ -530,6 +530,24 @@ Your app must be registered as a **Tech Provider** for Embedded Signup
 to be offered at all. Without it, `FB.login` opens and the merchant
 simply cannot get through.
 
+**Then two settings that have nothing to do with WhatsApp and block it
+completely.** Under **Facebook Login for Business → Settings**:
+
+1. **Login with the JavaScript SDK → Yes.** Off by default. With it off
+   the popup opens and immediately says "JSSDK Option is Not Toggled".
+2. **Allowed Domains for the JavaScript SDK** → add the origin the
+   dashboard is served from, exactly, including scheme:
+
+   ```
+   https://getbooqin.fly.dev
+   https://app.getbooqin.com     ← add when block C lands; keep both
+   http://localhost:3100         ← only if you run the flow locally
+   ```
+
+   This is the one people miss. Flipping the toggle alone gets you past
+   the first dialog and into a second, quieter failure, because the SDK
+   then checks the calling origin against a list that is still empty.
+
 ### K3. Secrets
 
 ```bash
