@@ -2,6 +2,36 @@
  * Meta's Embedded Signup — the merchant-facing "connect WhatsApp"
  * flow.
  *
+ * ## Two paths, and Meta picks which one
+ *
+ * **Classic** takes a phone number onto the Cloud API. The number is
+ * migrated, and the merchant is **signed out of the WhatsApp Business
+ * app** for it. One number, one home.
+ *
+ * **Coexistence** connects a number that is already on the WhatsApp
+ * Business app and leaves it there. The merchant keeps chatting
+ * one-to-one from the app, we send the automated notifications, and
+ * Meta syncs the history between them.
+ *
+ * For a booking product this distinction is close to everything. A
+ * salon or a clinic *lives* in the WhatsApp Business app — it is how
+ * they talk to customers all day — and "connect GetBooqin and lose the
+ * app" is a trade nobody takes, least of all after the popup has
+ * already closed.
+ *
+ * Which path a merchant took is **not something we request**. Meta
+ * decides inside its own flow, based on what the number already is, and
+ * tells us afterwards through the session event: `FINISH` for classic,
+ * `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` for coexistence. So the
+ * browser reports which happened and the server reacts, rather than us
+ * asking beforehand and being wrong when the merchant chooses
+ * differently in Meta's UI than they told us.
+ *
+ * The consequence that matters: a coexistence number is **already
+ * registered**, and calling `/register` on it is the exact action that
+ * would take the app away. `registerPhone` is therefore conditional —
+ * see accounts.ts's finishSetup.
+ *
  * ## What actually happens
  *
  * The browser opens Meta's own popup (see the cloud route; it is
@@ -97,6 +127,22 @@ export async function exchangeCode(code: string, fetchImpl: typeof fetch = fetch
   return result.access_token;
 }
 
+/**
+ * Which Embedded Signup path produced this account.
+ *
+ * `classic` is a number now living on the Cloud API alone.
+ * `coexistence` is a number still on the merchant's WhatsApp Business
+ * app, reachable by both.
+ */
+export type OnboardingMode = "classic" | "coexistence";
+
+/** Meta's session event → the path it describes, or null for one we don't act on. */
+export function modeFromSignupEvent(event: string): OnboardingMode | null {
+  if (event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING") return "coexistence";
+  if (event === "FINISH" || event === "FINISH_ONLY_WABA") return "classic";
+  return null;
+}
+
 export interface PhoneNumberInfo {
   id: string;
   displayPhoneNumber: string;
@@ -135,6 +181,46 @@ export async function fetchPhoneNumber(
 }
 
 /**
+ * The numbers on a WABA.
+ *
+ * Needed because the coexistence session event carries **only**
+ * `waba_id` — no `phone_number_id`, unlike the classic `FINISH` event.
+ * The number is already there; nobody just picked it in a wizard, so
+ * there was nothing for Meta to hand back. We ask.
+ *
+ * Returns them in Meta's own order, which puts the WABA's primary
+ * number first.
+ */
+export async function listPhoneNumbers(
+  wabaId: string,
+  accessToken: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<PhoneNumberInfo[]> {
+  const result = await graph<{
+    data?: {
+      id: string;
+      display_phone_number?: string;
+      verified_name?: string;
+      quality_rating?: string;
+      status?: string;
+    }[];
+  }>({
+    path: `${wabaId}/phone_numbers`,
+    accessToken,
+    query: { fields: "id,display_phone_number,verified_name,quality_rating,status" },
+    fetchImpl,
+  });
+
+  return (result.data ?? []).map((row) => ({
+    id: row.id,
+    displayPhoneNumber: row.display_phone_number ?? "",
+    verifiedName: row.verified_name ?? "",
+    qualityRating: row.quality_rating ?? null,
+    status: row.status ?? null,
+  }));
+}
+
+/**
  * Point this WABA's webhooks at our app.
  *
  * Easy to skip and impossible to notice: everything sends fine without
@@ -154,10 +240,14 @@ export async function subscribeApp(
 /**
  * Activate the number for Cloud API sending.
  *
- * A number that exists on a WABA is not automatically sendable-from —
- * this is the step that moves it onto the Cloud API rather than
- * whatever it was on before (often the merchant's own WhatsApp Business
- * *app* on a phone, which it is then signed out of).
+ * **Only ever for a classic onboarding.** This is the step that moves a
+ * number onto the Cloud API and off whatever it was on before — and for
+ * a merchant who came through coexistence, what it was on before is
+ * their own WhatsApp Business app. Calling this on a coexistence number
+ * is precisely how you take the app away from someone who chose the
+ * path that keeps it.
+ *
+ * accounts.ts's finishSetup is the only caller, and it checks the mode.
  */
 export async function registerPhone(
   phoneNumberId: string,

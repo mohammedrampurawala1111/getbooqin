@@ -1055,8 +1055,17 @@ model WhatsAppAccount {
   connectionId       String   @unique
   /// Meta's id for the WhatsApp Business Account.
   wabaId             String
-  /// Meta's id for the registered phone number — what messages are sent from.
+  /// Meta's id for the phone number messages are sent from.
   phoneNumberId      String   @unique
+  /// classic | coexistence — which Embedded Signup path the merchant
+  /// actually took, which Meta decides inside its own popup rather than
+  /// us deciding beforehand.
+  ///
+  /// It has to be stored because it changes what setup does: a
+  /// coexistence number is *already* registered to the WhatsApp
+  /// Business app, and calling /register on it is what would take the
+  /// app away from the merchant. See whatsapp/accounts.ts.
+  onboardingMode     String   @default("classic")
   /// "+91 98765 43210", as Meta formats it. Display only.
   displayPhoneNumber String   @default("")
   /// The business name Meta verified, which is what customers see.

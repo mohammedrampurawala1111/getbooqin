@@ -194,6 +194,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
           displayPhoneNumber: whatsappAccount.displayPhoneNumber,
           verifiedName: whatsappAccount.verifiedName,
           status: whatsappAccount.status,
+          onboardingMode: whatsappAccount.onboardingMode,
           qualityRating: whatsappAccount.qualityRating,
           lastError: whatsappAccount.lastError,
         }

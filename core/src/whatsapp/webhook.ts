@@ -114,6 +114,9 @@ interface Envelope {
 
 const STATUSES = new Set(["sent", "delivered", "read", "failed"]);
 
+/** Subscribed to for coexistence, acted on by nothing yet. See parseEvent. */
+export const COEXISTENCE_FIELDS = new Set(["history", "smb_app_state_sync", "smb_message_echoes"]);
+
 /**
  * One delivery into zero or more events.
  *
@@ -162,6 +165,24 @@ export function parseEvent(rawBody: string): WhatsAppEvent[] {
         });
         continue;
       }
+
+      // Coexistence fields. Meta requires an app running coexistence to
+      // subscribe to all three, and they arrive on every merchant on
+      // that path — so they are named and ignored rather than left to
+      // fall through. Silently dropping a field we are subscribed to is
+      // how "why is nothing syncing" becomes unanswerable later.
+      //
+      //   history              the app's back catalogue, synced once
+      //                        within 24h of onboarding
+      //   smb_app_state_sync   contacts and app-side state
+      //   smb_message_echoes   the merchant's own replies, sent from
+      //                        the app rather than through us
+      //
+      // None of them has anywhere to go until there is an inbox in the
+      // product. `smb_message_echoes` is the one worth building on
+      // first: it is what would let a booking's timeline show that the
+      // merchant answered.
+      if (COEXISTENCE_FIELDS.has(change.field ?? "")) continue;
 
       if (change.field !== "messages") continue;
 

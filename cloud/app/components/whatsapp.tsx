@@ -40,6 +40,8 @@ export interface WhatsAppAccountView {
   displayPhoneNumber: string;
   verifiedName: string;
   status: "pending" | "active" | "revoked" | "error";
+  /** Which Embedded Signup path Meta put this number through. */
+  onboardingMode: "classic" | "coexistence";
   qualityRating: string | null;
   lastError: string | null;
 }
@@ -62,6 +64,40 @@ declare global {
 }
 
 const SDK_ID = "facebook-jssdk";
+
+/** Where Meta's Embedded Signup actually posts from. */
+const META_ORIGINS = new Set([
+  "https://www.facebook.com",
+  "https://facebook.com",
+  "https://web.facebook.com",
+  "https://business.facebook.com",
+]);
+
+interface SignupSession {
+  /** FINISH | FINISH_ONLY_WABA | FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING | CANCEL | ERROR */
+  event?: string;
+  wabaId?: string;
+  phoneNumberId?: string;
+  /** From CANCEL — which screen they backed out of. */
+  abandonedAt?: string;
+  errorMessage?: string;
+  errorCode?: string;
+}
+
+/**
+ * Meta's session event → the path the merchant actually took.
+ *
+ * Deliberately read from the event rather than requested up front.
+ * Meta decides inside its own popup, based on what the number already
+ * is, and a merchant can change their mind in there — so asking
+ * beforehand would leave us confidently wrong about whether to register
+ * the number, which is the one call that takes their app away.
+ */
+function modeFor(event: string | undefined): "classic" | "coexistence" | null {
+  if (event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING") return "coexistence";
+  if (event === "FINISH" || event === "FINISH_ONLY_WABA") return "classic";
+  return null;
+}
 
 function loadSdk(appId: string): Promise<void> {
   if (window.FB) return Promise.resolve();
@@ -106,18 +142,29 @@ export function WhatsAppCard({
   // Written by the postMessage listener, read by the SDK callback. A
   // ref rather than state on purpose: the callback closes over its
   // render, and a state update would not be visible to it in time.
-  const signupIds = useRef<{ wabaId?: string; phoneNumberId?: string }>({});
+  const signup = useRef<SignupSession>({});
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
-      // Meta posts from facebook.com. Anything else on the page is not
-      // this conversation.
-      if (!/^https:\/\/(www\.)?facebook\.com$/.test(event.origin)) return;
+      // Meta's docs suggest `origin.endsWith("facebook.com")`, which is
+      // a substring check that `evilfacebook.com` passes. An explicit
+      // list of the hosts Meta actually posts from is the same
+      // permissiveness without the hole.
+      if (!META_ORIGINS.has(event.origin)) return;
       try {
         const payload = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
         if (payload?.type !== "WA_EMBEDDED_SIGNUP") return;
-        if (payload?.data?.waba_id) signupIds.current.wabaId = payload.data.waba_id;
-        if (payload?.data?.phone_number_id) signupIds.current.phoneNumberId = payload.data.phone_number_id;
+
+        signup.current.event = payload.event;
+        const data = payload.data ?? {};
+        if (data.waba_id) signup.current.wabaId = data.waba_id;
+        // Absent for coexistence — that event carries only waba_id,
+        // because the number was already on the merchant's app and
+        // nobody picked it in a wizard. The server looks it up.
+        if (data.phone_number_id) signup.current.phoneNumberId = data.phone_number_id;
+        if (data.current_step) signup.current.abandonedAt = data.current_step;
+        if (data.error_message) signup.current.errorMessage = data.error_message;
+        if (data.error_code) signup.current.errorCode = String(data.error_code);
       } catch {
         // Facebook posts non-JSON strings on this channel too.
       }
@@ -136,21 +183,40 @@ export function WhatsAppCard({
         (response) => {
           setBusy(false);
           const code = response?.authResponse?.code;
-          const { wabaId, phoneNumberId } = signupIds.current;
+          const session = signup.current;
+          const mode = modeFor(session.event);
 
-          if (!code) {
-            // The overwhelmingly common case is that they closed the
-            // popup, which is not an error worth shouting about.
+          if (session.event === "ERROR") {
+            // The code is what Meta tells the merchant to quote to
+            // support, so it goes in front of them rather than in a log.
+            setLocalError(
+              session.errorMessage
+                ? `${session.errorMessage}${session.errorCode ? ` (code ${session.errorCode})` : ""}`
+                : "Meta reported a problem with the connection."
+            );
+            return;
+          }
+          if (!code || session.event === "CANCEL") {
+            // Closing the popup is by far the most common outcome and
+            // is not an error worth shouting about.
             setLocalError("WhatsApp wasn't connected. You can try again any time.");
             return;
           }
-          if (!wabaId || !phoneNumberId) {
-            setLocalError("Meta didn't tell us which number you picked. Please try again.");
+          if (!mode || !session.wabaId) {
+            setLocalError("Meta didn't tell us which account you picked. Please try again.");
             return;
           }
 
           fetcher.submit(
-            { _intent: "connect", code, waba_id: wabaId, phone_number_id: phoneNumberId },
+            {
+              _intent: "connect",
+              code,
+              mode,
+              waba_id: session.wabaId,
+              // Empty for coexistence, and the server resolves it from
+              // the WABA rather than refusing.
+              phone_number_id: session.phoneNumberId ?? "",
+            },
             { method: "post", action: `/dashboard/${connectionId}/whatsapp` }
           );
         },
@@ -196,8 +262,31 @@ export function WhatsAppCard({
         <>
           <p className="m-0 mb-3 text-meta text-muted">
             Connect your own WhatsApp Business account. Meta bills you directly for messages — usually a few paise
-            each — and you keep the number whatever happens here.
+            each — and the number stays yours whatever happens here.
           </p>
+          {/* The single most important thing on this card, and it has to
+              be read *before* the popup rather than discovered after it.
+              Meta decides which path applies from what the number
+              already is, so this explains both outcomes rather than
+              offering a choice we do not actually control. A merchant
+              who loses the WhatsApp Business app without being told is a
+              merchant who has lost the thing they run their day on. */}
+          <div className="mb-3 rounded-[9px] border border-line bg-canvas-alt p-3 text-[12.5px]">
+            <p className="m-0 mb-2 font-medium text-ink">Already use the WhatsApp Business app?</p>
+            <p className="m-0 mb-2 text-muted">
+              Keep it. Meta will connect that same number so you carry on chatting from the app while we send the
+              automatic {"\u2014"} confirmations, reminders and the rest. Your chat history stays and syncs across both.
+            </p>
+            <p className="m-0 mb-1 text-muted">Two things change on that number once connected:</p>
+            <ul className="m-0 mb-2 list-disc pl-[18px] text-muted">
+              <li>Disappearing messages, view-once, live location and broadcast lists switch off in one-to-one chats.</li>
+              <li>Linked devices (WhatsApp Web, desktop, tablets) unlink and need linking again.</li>
+            </ul>
+            <p className="m-0 text-muted">
+              If the number isn{"\u2019"}t on the app, Meta moves it onto its API instead {"\u2014"} in that case it can
+              only be used through GetBooqin, not the app.
+            </p>
+          </div>
           {!configured ? (
             <p className="m-0 rounded-[8px] bg-canvas-alt px-3 py-2 text-[12.5px] text-muted">
               WhatsApp isn't switched on for this deployment yet.
@@ -217,6 +306,12 @@ export function WhatsAppCard({
             <dd className="m-0">{account.displayPhoneNumber || "—"}</dd>
             <dt className="text-muted">Business name</dt>
             <dd className="m-0">{account.verifiedName || "—"}</dd>
+            <dt className="text-muted">WhatsApp app</dt>
+            <dd className="m-0">
+              {account.onboardingMode === "coexistence"
+                ? "Still yours — keep chatting from the app"
+                : "This number is on the API only"}
+            </dd>
             {account.qualityRating && (
               <>
                 <dt className="text-muted">Quality</dt>

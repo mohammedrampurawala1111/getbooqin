@@ -554,20 +554,62 @@ Meta app dashboard → WhatsApp → **Configuration** → Webhook:
 
 - Callback URL: `https://app.getbooqin.com/webhooks/meta`
 - Verify token: the `META_WEBHOOK_VERIFY_TOKEN` you just set
-- Subscribe to fields: **`messages`** and
-  **`message_template_status_update`**
+- Subscribe to fields: **`messages`**, **`message_template_status_update`**,
+  and — required for coexistence — **`history`**,
+  **`smb_app_state_sync`** and **`smb_message_echoes`**
 
 Saving it triggers the verification GET, which the route answers with
 the challenge as plain text. If it fails, the token does not match —
 that is the only thing that check can be wrong about.
 
-Both fields matter. `messages` carries delivery receipts and customer
-replies; `message_template_status_update` is how a merchant's template
-approval ever reaches the Settings screen. Subscribing to only the first
-leaves every merchant stuck on "In review" forever.
+All five matter, for different reasons. `messages` carries delivery
+receipts and customer replies. `message_template_status_update` is how a
+merchant's template approval ever reaches the Settings screen —
+subscribe to only the first and every merchant sits on "In review"
+forever. The three `history` / `smb_*` fields are Meta's requirement for
+running coexistence at all; the code names and ignores them today (see
+`whatsapp/webhook.ts`), and `smb_message_echoes` is the one worth
+building on first, since it is what would let a booking's timeline show
+that the merchant replied from their own app.
+
+### K4a. Coexistence — the merchant keeps their WhatsApp Business app
+
+**This is the difference between a feature merchants adopt and one they
+refuse.** A salon or clinic lives in the WhatsApp Business app; it is
+how they talk to customers all day.
+
+Meta decides which path applies from what the number already is, and
+tells us afterwards through the session event — so there is nothing to
+configure per merchant and nothing for them to choose wrongly:
+
+| Meta's event | Path | What happens to the app |
+|---|---|---|
+| `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` | coexistence | **Kept.** They chat from the app, we send the automation, history syncs |
+| `FINISH` / `FINISH_ONLY_WABA` | classic | Number moves to the Cloud API; the app is signed out for it |
+
+The code reads the event and branches, and the consequence is one line:
+a coexistence number is **already registered**, so `/register` is
+skipped. Calling it is precisely what would take the app away.
+
+What a merchant on coexistence gives up, which the Connect card states
+before the popup rather than after:
+
+- Disappearing messages, view-once, live location and broadcast lists
+  switch off in their 1:1 chats
+- Linked devices (WhatsApp Web, desktop, tablets) unlink and need
+  re-linking
+- Fixed 20 messages/second ceiling — irrelevant at booking volumes
+- History sync has a **24-hour window** after onboarding, or the flow
+  has to be repeated
+- Messages they send from the app stay free; ours are charged at Cloud
+  API rates
 
 ### K5. What to test, in this order
 
+- [ ] A number **already on the WhatsApp Business app** connects, lands
+      `active` as `coexistence`, and **the app still works** — this is
+      the test that matters most, and the one to run first
+- [ ] A number **not** on the app connects as `classic` and registers
 - [ ] A test merchant completes Embedded Signup and lands `active`
 - [ ] Five templates appear as **In review**, then **Ready** — this is
       where you find out whether Meta likes the copy
@@ -588,9 +630,10 @@ leaves every merchant stuck on "In review" forever.
   that — no offers, no encouragement, nothing the customer did not ask
   for. Changing it is changing a submission.
 - **A number already signed in to the WhatsApp Business app** cannot be
-  registered for the Cloud API until it is signed out there. This is the
-  single most common merchant-side failure, and Meta's error message for
-  it is surfaced verbatim rather than paraphrased.
+  registered for the Cloud API until it is signed out there — which is
+  why coexistence exists and why the code never registers a coexistence
+  number. If you see a registration error mentioning this, the mode was
+  detected wrongly; check which session event came back.
 - **Quality rating.** Failed sends and customer blocks push a number
   toward RED, and a RED number stops sending. That is why
   `toWhatsAppNumber()` refuses a malformed number locally instead of

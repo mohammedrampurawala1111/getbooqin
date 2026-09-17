@@ -38,15 +38,22 @@ export async function action({ request, params }: Route.ActionArgs) {
       const code = String(form.get("code") ?? "").trim();
       const wabaId = String(form.get("waba_id") ?? "").trim();
       const phoneNumberId = String(form.get("phone_number_id") ?? "").trim();
+      const mode = String(form.get("mode") ?? "") === "coexistence" ? "coexistence" : "classic";
 
-      // All three or nothing. The ids arrive by postMessage and the code
-      // by the SDK callback, and a browser that caught one but not the
-      // other would otherwise store half an integration.
-      if (!code || !wabaId || !phoneNumberId) {
+      // The code and the WABA are both required; the phone number id is
+      // not, because Meta's coexistence event carries only the WABA.
+      // completeSignup resolves it from there rather than refusing.
+      if (!code || !wabaId) {
         return data({ error: "WhatsApp didn't finish connecting. Please try again." }, { status: 400 });
       }
 
-      const account = await WhatsAppAccounts.completeSignup({ connectionId, code, wabaId, phoneNumberId });
+      const account = await WhatsAppAccounts.completeSignup({
+        connectionId,
+        code,
+        wabaId,
+        phoneNumberId: phoneNumberId || undefined,
+        mode,
+      });
       // Submitted straight away, because approval is per-merchant and
       // takes minutes to days. A merchant who connects and then waits a
       // day before we even ask Meta would think the integration is

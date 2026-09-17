@@ -17,8 +17,10 @@ import {
   exchangeCode,
   fetchPhoneNumber,
   generatePin,
+  listPhoneNumbers,
   registerPhone,
   subscribeApp,
+  type OnboardingMode,
 } from "./embeddedSignup.js";
 
 export type AccountStatus = "pending" | "active" | "revoked" | "error";
@@ -31,6 +33,7 @@ export interface PublicAccount {
   displayPhoneNumber: string;
   verifiedName: string;
   status: AccountStatus;
+  onboardingMode: OnboardingMode;
   qualityRating: string | null;
   messagingLimit: string | null;
   lastError: string | null;
@@ -45,6 +48,7 @@ export function toPublic(row: WhatsAppAccount): PublicAccount {
     displayPhoneNumber: row.displayPhoneNumber,
     verifiedName: row.verifiedName,
     status: row.status as AccountStatus,
+    onboardingMode: row.onboardingMode as OnboardingMode,
     qualityRating: row.qualityRating,
     messagingLimit: row.messagingLimit,
     lastError: row.lastError,
@@ -134,7 +138,14 @@ export interface SignupInput {
   code: string;
   /** From the WA_EMBEDDED_SIGNUP postMessage. */
   wabaId: string;
-  phoneNumberId: string;
+  /**
+   * Present for a classic `FINISH`, **absent for coexistence** — that
+   * event carries only `waba_id`, because the number was already on the
+   * merchant's WhatsApp Business app and nobody picked it in a wizard.
+   * Looked up from the WABA when it is missing.
+   */
+  phoneNumberId?: string;
+  mode: OnboardingMode;
 }
 
 /**
@@ -156,18 +167,33 @@ export interface SignupInput {
 export async function completeSignup(input: SignupInput, fetchImpl: typeof fetch = fetch): Promise<PublicAccount> {
   const token = await exchangeCode(input.code, fetchImpl);
 
+  // Coexistence hands back a WABA and nothing else, so the number has to
+  // be asked for. Done before the write rather than during setup,
+  // because phoneNumberId is the row's unique key — there is no
+  // meaningful account to store without it.
+  let phoneNumberId = input.phoneNumberId;
+  if (!phoneNumberId) {
+    const numbers = await listPhoneNumbers(input.wabaId, token, fetchImpl);
+    phoneNumberId = numbers[0]?.id;
+    if (!phoneNumberId) {
+      throw new Error("That WhatsApp account has no phone number on it yet.");
+    }
+  }
+
   const stored = await prisma.whatsAppAccount.upsert({
     where: { connectionId: input.connectionId },
     create: {
       connectionId: input.connectionId,
       wabaId: input.wabaId,
-      phoneNumberId: input.phoneNumberId,
+      phoneNumberId,
+      onboardingMode: input.mode,
       accessToken: encryptCredentials(token),
       status: "pending",
     },
     update: {
       wabaId: input.wabaId,
-      phoneNumberId: input.phoneNumberId,
+      phoneNumberId,
+      onboardingMode: input.mode,
       accessToken: encryptCredentials(token),
       status: "pending",
       lastError: null,
@@ -189,7 +215,16 @@ export async function finishSetup(accountId: string, fetchImpl: typeof fetch = f
   try {
     return await withToken(account, async (token) => {
       await subscribeApp(account.wabaId, token, fetchImpl);
-      await registerPhone(account.phoneNumberId, token, generatePin(), fetchImpl);
+
+      // The one branch in this whole module that a merchant would
+      // notice. A coexistence number is already registered — to their
+      // own WhatsApp Business app — and /register is the call that
+      // would move it off. Skipping it is the entire difference between
+      // "you keep your app" and "you have just lost the thing you run
+      // your business on".
+      if (account.onboardingMode !== "coexistence") {
+        await registerPhone(account.phoneNumberId, token, generatePin(), fetchImpl);
+      }
 
       const info = await fetchPhoneNumber(account.phoneNumberId, token, fetchImpl);
       const updated = await prisma.whatsAppAccount.update({
