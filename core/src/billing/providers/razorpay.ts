@@ -22,7 +22,12 @@ import {
   type Currency,
   type PlanId,
 } from "../plans.js";
-import type { BillingProvider, BillingEventType, NormalisedEvent } from "./provider.js";
+import type {
+  BillingProvider,
+  BillingEventType,
+  NormalisedEvent,
+  ProviderPaymentMethod,
+} from "./provider.js";
 
 const SIGNATURE_HEADER = "x-razorpay-signature";
 const EVENT_ID_HEADER = "x-razorpay-event-id";
@@ -235,6 +240,7 @@ export const RazorpayProvider: BillingProvider = {
   planId: (plan, currency, cycle) => providerPlanId(plan, currency, cycle) ?? "",
   createSubscription: (args) => createSubscription(args),
   fetchSubscription: (id) => fetchSubscription(id),
+  fetchPaymentMethod: (id) => fetchPaymentMethod(id),
   fetchPaidCharges: (id) => fetchPaidCharges(id),
   cancelSubscription: (id, opts) => cancelSubscription(id, opts),
   statusFor: statusFromProvider,
@@ -483,6 +489,99 @@ export interface ProviderCharge {
   paidAt: Date | null;
   periodStart: Date | null;
   periodEnd: Date | null;
+}
+
+/**
+ * What is actually paying this subscription.
+ *
+ * Read off the **most recent successful charge** rather than stored at
+ * checkout, and that choice is the whole point: a card gets replaced on
+ * expiry, a UPI mandate moves to another app, and Razorpay swaps the
+ * instrument under a live mandate without telling us. The last payment
+ * that cleared is the only thing that says what is paying today.
+ *
+ * `expand[]=card` is what turns a payment id into a network and a last
+ * four. Without it the payment carries a `card_id` and nothing legible,
+ * and a second round trip would be needed to resolve it.
+ *
+ * Returns null rather than throwing for every ordinary "nothing to say
+ * yet" case — a mandate authorised but never charged, a subscription
+ * cancelled before its first payment. This renders a card on a settings
+ * page; it must never be the reason that page 500s.
+ */
+export async function fetchPaymentMethod(subscriptionId: string): Promise<ProviderPaymentMethod | null> {
+  const authorization = auth();
+  if (!authorization) return null;
+
+  let charges: ProviderCharge[];
+  try {
+    charges = await fetchPaidCharges(subscriptionId);
+  } catch {
+    return null;
+  }
+
+  // Newest first. Razorpay returns invoices in creation order, which is
+  // oldest first, and the oldest card is the one most likely to have
+  // been replaced.
+  const latest = charges
+    .filter((charge) => charge.paidAt)
+    .sort((a, b) => (b.paidAt!.getTime() - a.paidAt!.getTime()))[0];
+  if (!latest) return null;
+
+  const response = await fetch(
+    `${API_BASE}/payments/${encodeURIComponent(latest.paymentId)}?expand[]=card`,
+    { headers: { Authorization: authorization } }
+  );
+  if (!response.ok) return null;
+
+  const payment = asRecord(await response.json());
+  if (!payment) return null;
+
+  return describePayment(payment);
+}
+
+/** One Razorpay payment → something a merchant can recognise. */
+export function describePayment(payment: Record<string, unknown>): ProviderPaymentMethod | null {
+  const method = typeof payment.method === "string" ? payment.method.toLowerCase() : "";
+  if (!method) return null;
+
+  if (method === "card") {
+    const card = asRecord(payment.card);
+    const network = typeof card?.network === "string" ? card.network : "";
+    const last4 = typeof card?.last4 === "string" ? card.last4 : "";
+    // Never both blank — "Card" alone is still more use than nothing,
+    // and Razorpay does occasionally return a payment whose card has
+    // been purged.
+    const label = last4 ? `${network || "Card"} ending ${last4}` : network || "Card";
+    return { kind: "card", label };
+  }
+
+  if (method === "upi") {
+    // The VPA *is* the recognisable thing here — "priya@okhdfcbank" is
+    // how a merchant thinks about their own UPI mandate, and there is
+    // no last-four equivalent.
+    const vpa = typeof payment.vpa === "string" ? payment.vpa : "";
+    return { kind: "upi", label: vpa ? `UPI · ${vpa}` : "UPI AutoPay" };
+  }
+
+  if (method === "emandate" || method === "nach") {
+    const bank = typeof payment.bank === "string" ? payment.bank : "";
+    return { kind: method, label: bank ? `Bank mandate · ${bank}` : "Bank mandate" };
+  }
+
+  if (method === "netbanking") {
+    const bank = typeof payment.bank === "string" ? payment.bank : "";
+    return { kind: "netbanking", label: bank ? `Net banking · ${bank}` : "Net banking" };
+  }
+
+  if (method === "wallet") {
+    const wallet = typeof payment.wallet === "string" ? payment.wallet : "";
+    return { kind: "wallet", label: wallet || "Wallet" };
+  }
+
+  // A method Razorpay has added since this was written. Showing its own
+  // word for it beats showing nothing, and beats guessing.
+  return { kind: method, label: method };
 }
 
 export async function fetchPaidCharges(subscriptionId: string): Promise<ProviderCharge[]> {

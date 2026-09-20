@@ -33,6 +33,7 @@ import type {
   CreatedSubscription,
   NormalisedEvent,
   ProviderCharge,
+  ProviderPaymentMethod,
   ProviderSubscriptionSnapshot,
   BillingEventType,
 } from "./provider.js";
@@ -260,6 +261,49 @@ function asDate(value: unknown): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/**
+ * What is paying a PayPal subscription.
+ *
+ * Structurally different from Razorpay's answer, and honestly so.
+ * PayPal subscriptions are charged against the **payer's PayPal
+ * account**, not against a card we can see — PayPal deliberately keeps
+ * the funding instrument behind their wallet, and which card or bank
+ * sits behind it is between the merchant and PayPal. So the
+ * recognisable thing is the account itself, which is exactly what a
+ * merchant would look for: "which PayPal is this coming out of?"
+ *
+ * Reported as a single call on the subscription rather than from the
+ * last charge, because the subscriber block is on the subscription
+ * itself and there is no card to go stale.
+ */
+export async function fetchPaymentMethod(id: string): Promise<ProviderPaymentMethod | null> {
+  if (!credentials()) return null;
+
+  let sub: Record<string, unknown> | null;
+  try {
+    const response = await api(`/v1/billing/subscriptions/${encodeURIComponent(id)}`);
+    if (!response.ok) return null;
+    sub = asRecord(await response.json());
+  } catch {
+    // Same rule as Razorpay's: this renders a card on a settings page
+    // and must never be why that page fails.
+    return null;
+  }
+  if (!sub) return null;
+
+  const subscriber = asRecord(sub.subscriber);
+  const email = typeof subscriber?.email_address === "string" ? subscriber.email_address : "";
+  const name = asRecord(subscriber?.name);
+  const given = typeof name?.given_name === "string" ? name.given_name : "";
+  const surname = typeof name?.surname === "string" ? name.surname : "";
+  const person = `${given} ${surname}`.trim();
+
+  // Email first: it is the thing a merchant can match against their own
+  // PayPal login. A name alone is ambiguous on a shared account.
+  const label = email || person;
+  return { kind: "paypal", label: label ? `PayPal · ${label}` : "PayPal" };
+}
+
 export const PayPalProvider: BillingProvider = {
   id: "paypal",
 
@@ -430,6 +474,8 @@ export const PayPalProvider: BillingProvider = {
 
     return { providerSubscriptionId: body.id, approvalUrl };
   },
+
+  fetchPaymentMethod,
 
   async fetchSubscription(id: string): Promise<ProviderSubscriptionSnapshot | null> {
     const response = await api(`/v1/billing/subscriptions/${encodeURIComponent(id)}`);

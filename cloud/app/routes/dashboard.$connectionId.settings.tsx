@@ -220,6 +220,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       trialDaysLeft: entitlements.trialDaysLeft,
       currentPeriodEnd: entitlements.currentPeriodEnd ? entitlements.currentPeriodEnd.toISOString() : null,
       cancelAtPeriodEnd: entitlements.cancelAtPeriodEnd,
+      // Cached on the row by the charge webhook, so this costs no
+      // provider round trip. Null until the first payment clears.
+      paymentMethod: subscriptionRow?.paymentMethodLabel
+        ? { kind: subscriptionRow.paymentMethodKind, label: subscriptionRow.paymentMethodLabel }
+        : null,
       currency: billingCurrency,
       sellable: Checkout.sellablePrices(billingCurrency),
       // Pre-filled from whatever the account already told us, so a

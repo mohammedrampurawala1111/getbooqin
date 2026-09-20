@@ -223,6 +223,19 @@ export async function handleWebhook(
       });
     }
 
+    // Refresh what is paying this subscription, after the money moved.
+    //
+    // Deliberately not awaited into the webhook's own success, for the
+    // same reason as the dunning email below: the provider is holding
+    // this connection open, and a slow lookup must not turn a correctly
+    // applied charge into a 500 and a retry. A stale payment-method
+    // label is cosmetic; a retried charge event is not.
+    if (event.payment && event.providerSubscriptionId) {
+      void refreshPaymentMethod(connectionId, provider, event.providerSubscriptionId).catch((err) =>
+        console.error(`[getbooqin billing] payment method refresh failed for ${connectionId}:`, err)
+      );
+    }
+
     await prisma.billingEvent.update({ where: { id: recordId }, data: { processedAt: new Date() } });
 
     // Dunning. Fired after the state change and deliberately not
@@ -252,4 +265,29 @@ export async function handleWebhook(
     });
     throw err;
   }
+}
+
+/**
+ * Re-read the instrument behind a mandate and cache it on the row.
+ *
+ * Called after a charge rather than on a schedule, because a charge is
+ * the only moment the answer can have changed *and* be knowable: the
+ * provider reports the method that actually paid, so before the first
+ * one there is nothing to report and between them nothing moves.
+ *
+ * Silent on failure by design. This exists to put a line on a settings
+ * page; every caller treats it as best-effort.
+ */
+export async function refreshPaymentMethod(
+  connectionId: string,
+  provider: BillingProvider,
+  providerSubscriptionId: string
+): Promise<void> {
+  const method = await provider.fetchPaymentMethod(providerSubscriptionId);
+  if (!method) return;
+
+  await prisma.subscription.updateMany({
+    where: { connectionId },
+    data: { paymentMethodKind: method.kind, paymentMethodLabel: method.label },
+  });
 }

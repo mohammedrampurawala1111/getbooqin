@@ -85,6 +85,35 @@ export interface ProviderSubscriptionSnapshot {
   cancelAtPeriodEnd: boolean;
 }
 
+/**
+ * How a merchant's subscription to *us* is actually being paid.
+ *
+ * Not to be confused with Settings → Payments, which is how a merchant
+ * collects money from **their** customers over UPI or PayPal.me. That
+ * one we are genuinely not party to. This one runs through our own
+ * provider account, so the vendor will tell us what instrument is
+ * behind the mandate — and a merchant asking "which card is this coming
+ * off?" deserves an answer rather than a link out.
+ *
+ * Read from the vendor rather than stored at checkout, because the
+ * instrument can change without us: a card is replaced on expiry, a UPI
+ * mandate is moved to another app. The most recent successful charge is
+ * the only thing that actually says what is paying today.
+ */
+export interface ProviderPaymentMethod {
+  /** card | upi | emandate | netbanking | wallet | paypal — the vendor's own word, lowercased. */
+  kind: string;
+  /**
+   * Ready to render, and deliberately never the full instrument:
+   * "Visa ending 4526", "priya@okhdfcbank", "priya@example.com".
+   *
+   * Built here rather than in the UI so that one vendor's `card.network`
+   * and another's payer email land in the same shape, and so nothing
+   * downstream has to know which rail it is looking at.
+   */
+  label: string;
+}
+
 /** One payment that was actually taken. An invoice is issued against one of these. */
 export interface ProviderCharge {
   paymentId: string;
@@ -165,6 +194,13 @@ export interface BillingProvider {
   planId(plan: PlanId, currency: Currency, cycle: BillingCycle): string;
 
   createSubscription(args: CreateSubscriptionArgs): Promise<CreatedSubscription>;
+
+  /**
+   * The instrument behind a live mandate, or null when the vendor will
+   * not say — a subscription authorised but never charged has nothing
+   * to report yet, and that is an ordinary state rather than a fault.
+   */
+  fetchPaymentMethod(id: string): Promise<ProviderPaymentMethod | null>;
 
   /** Null when the vendor has never heard of it — a live id after a mode switch reads like this. */
   fetchSubscription(id: string): Promise<ProviderSubscriptionSnapshot | null>;

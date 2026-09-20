@@ -29,6 +29,8 @@ export interface BillingView {
   trialDaysLeft: number | null;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  /** How the subscription is paid, cached from the provider. Blank before the first charge. */
+  paymentMethod: { kind: string; label: string } | null;
   currency: Currency;
   billingCycle: BillingCycle;
   inGrace: boolean;
@@ -57,6 +59,64 @@ export interface BillingView {
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(iso));
+}
+
+/**
+ * What is actually paying for this.
+ *
+ * Worth its own card because "which card is this coming off?" is a
+ * question a merchant asks with their finance hat on, and until now the
+ * only answer was to go and log in at the provider.
+ *
+ * ## It is read-only, and that is not laziness
+ *
+ * Under RBI tokenisation rules the instrument lives with Razorpay and
+ * the card network, never on our servers, and swapping it on a live
+ * mandate means cancelling and re-authorising — which is precisely the
+ * step that loses people. So the action here is "set up a new payment
+ * method", stated as what it is, rather than an inline card form that
+ * would have to lie about what pressing it does.
+ *
+ * ## Blank is a real state
+ *
+ * A mandate can be authorised and not yet charged, and the provider
+ * reports the method that *paid* — so there is genuinely nothing to
+ * show until the first charge clears. Saying so beats an empty row.
+ */
+function PaymentMethodCard({ billing }: { billing: BillingView }) {
+  // Nothing to pay with, and nothing to say. A Free account has no
+  // mandate and no card here at all.
+  if (billing.status === "free" || billing.status === "trialing") return null;
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h2 className="card-title">Payment method</h2>
+      </div>
+      <div className="card-body flex items-center justify-between gap-3">
+        {billing.paymentMethod ? (
+          <div className="flex flex-col gap-[3px]">
+            <span className="text-body font-medium">{billing.paymentMethod.label}</span>
+            <span className="text-meta text-muted">
+              Billed by {billing.providerName}
+              {billing.currentPeriodEnd ? `, next on ${billing.currentPeriodEnd}` : ""}.
+            </span>
+          </div>
+        ) : (
+          <span className="text-body text-muted">
+            We'll show this once your first payment clears — {billing.providerName} tells us which method paid,
+            not which one is on file.
+          </span>
+        )}
+      </div>
+      <div className="card-footer">
+        <span className="text-meta text-muted">
+          To change it, start a new plan — {billing.providerName} has to authorise a new mandate, and your card
+          details never reach us.
+        </span>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -551,6 +611,7 @@ export function BillingPage({
         </div>
       </div>
 
+      <PaymentMethodCard billing={billing} />
       <InvoiceHistory connectionId={connectionId} invoices={billing.invoices} />
     </div>
   );

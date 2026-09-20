@@ -853,6 +853,19 @@ model Subscription {
   currentPeriodEnd  DateTime?
   cancelAtPeriodEnd Boolean   @default(false)
 
+  /// How this subscription is actually being paid, cached from the
+  /// provider so the Billing page costs no round trip to render.
+  ///
+  /// Refreshed when a charge webhook lands, because the instrument can
+  /// change without us — a card replaced on expiry, a UPI mandate moved
+  /// to another app. Blank until the first payment clears, which is an
+  /// ordinary state: a mandate can be authorised and not yet charged.
+  ///
+  /// Display only, and never the full instrument. "Visa ending 4526",
+  /// "UPI · priya@okhdfcbank", "PayPal · priya@example.com".
+  paymentMethodKind  String     @default("")
+  paymentMethodLabel String     @default("")
+
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
   connection Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
