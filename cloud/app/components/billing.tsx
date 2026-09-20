@@ -21,6 +21,10 @@ import {
   priceFor, formatPrice, formatLimit, monthlyEquivalent, planRank,
   type Currency, type BillingCycle, type FeatureKey, type LimitKey, type PlanId,
 } from "getbooqin-core/billing/plans";
+// Zero imports of its own, so it is safe in the client bundle — same
+// contract as plans.ts. The EU list has to be the one the server
+// validates against, not a second copy that can drift.
+import { isEuCountry } from "getbooqin-core/billing/tax";
 
 export interface BillingView {
   plan: PlanId;
@@ -330,6 +334,10 @@ export function BillingPage({
   // supply, everywhere else is a zero-rated B2B export — and the tax
   // number is what evidences the "B2B" half.
   const isExport = country.trim().toUpperCase() !== "IN";
+  // The EU is the only place outside India where the number does
+  // anything — see validateTaxIdentity. Everywhere else a plain export
+  // of services needs no evidence beyond the country.
+  const isEu = isEuCountry(country);
   const features = new Set(billing.features as FeatureKey[]);
   const overCaps = LIMIT_KEYS.filter((key) => {
     const cap = billing.limits[key];
@@ -559,7 +567,7 @@ export function BillingPage({
               />
             </label>
             <label className="flex flex-col gap-1 text-[12px] text-muted">
-              {isExport ? "VAT / business tax number" : "GSTIN (optional)"}
+              {!isExport ? "GSTIN (optional)" : isEu ? "VAT number" : "Business tax number (optional)"}
               <input
                 className="input w-full min-w-0"
                 value={taxId}
@@ -570,9 +578,11 @@ export function BillingPage({
             </label>
           </div>
           <p className="m-0 text-[11.5px] text-subtle">
-            {isExport
-              ? "We sell to registered businesses outside India. Your tax number makes this a zero-rated export — if you're in the EU, VAT is accounted for by you under the reverse charge."
-              : "Indian GST applies. A GSTIN is optional and only needed if you want to claim input credit."}
+            {!isExport
+              ? "Indian GST applies. A GSTIN is optional and only needed if you want to claim input credit."
+              : isEu
+                ? "EU businesses account for VAT themselves under the reverse charge, so we need your VAT number to invoice you correctly. We can't sell to EU consumers."
+                : "A zero-rated export of services — no tax is added. Add a tax number only if you want it on your invoice."}
           </p>
 
           {/* A Save of their own.

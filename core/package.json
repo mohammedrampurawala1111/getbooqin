@@ -39,6 +39,10 @@
       "types": "./dist/billing/plans.d.ts",
       "default": "./dist/billing/plans.js"
     },
+    "./billing/tax": {
+      "types": "./dist/billing/tax.d.ts",
+      "default": "./dist/billing/tax.js"
+    },
     "./booking/tz": {
       "types": "./dist/booking/tz.d.ts",
       "default": "./dist/booking/tz.js"

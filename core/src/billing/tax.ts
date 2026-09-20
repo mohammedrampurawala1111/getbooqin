@@ -134,14 +134,46 @@ export function validateTaxIdentity(input: { country?: string | null; taxId?: st
     if (taxId && !looksLikeGstin(taxId)) {
       problems.push({ field: "taxId", message: "That doesn't look like a GSTIN. Leave it blank if you aren't registered." });
     }
-  } else {
+  } else if (isEuCountry(country)) {
+    // Required here and nowhere else, because here it does something.
+    //
+    // An Indian entity supplying a digital service into the EU shifts
+    // the VAT to the customer under the reverse charge — but only if
+    // the customer is a taxable person, and the VAT number is the
+    // evidence of that. Without one the supply looks like B2C, where
+    // the *supplier* owes VAT at the customer's own local rate and has
+    // to register to remit it. Collecting the number is what keeps the
+    // simple position true, and is the whole of the plan's G2 decision:
+    // B2B-only outside India, reverse charge, no OSS registration.
     if (!taxId) {
       problems.push({
         field: "taxId",
-        message: "We sell to registered businesses outside India. Enter your VAT or business tax number to continue.",
+        message:
+          "EU businesses account for VAT themselves under the reverse charge, so we need your VAT number. " +
+          "We can't sell to EU consumers.",
       });
     } else if (!looksLikeTaxId(taxId)) {
-      problems.push({ field: "taxId", message: "That doesn't look like a VAT or business tax number." });
+      problems.push({ field: "taxId", message: "That doesn't look like a VAT number." });
+    }
+  } else {
+    // Optional everywhere else, and it used to be demanded.
+    //
+    // For a customer in the US, Australia, the UAE or anywhere outside
+    // the EU, this is a plain zero-rated export of services. There is
+    // no reverse charge to evidence and frequently no such number to
+    // give — a US company has an EIN, which is not a VAT number and has
+    // nothing to do with an Indian export. Asking for it was friction
+    // at the worst possible moment, in exchange for a field nobody
+    // reads.
+    //
+    // Still validated when offered, since a merchant who types one
+    // wants it on their invoice and a typo there is theirs to find now
+    // rather than at their own year end.
+    if (taxId && !looksLikeTaxId(taxId)) {
+      problems.push({
+        field: "taxId",
+        message: "That doesn't look like a business tax number. Leave it blank if you don't have one.",
+      });
     }
   }
 

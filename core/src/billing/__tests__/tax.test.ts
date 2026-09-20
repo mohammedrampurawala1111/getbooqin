@@ -97,21 +97,50 @@ describe("validateTaxIdentity()", () => {
     expect(validateTaxIdentity({ country: "IN", taxId: "not-a-gstin" }).problems[0].field).toBe("taxId");
   });
 
-  it("a non-India customer MUST supply a tax number", () => {
+  it("an EU customer MUST supply a VAT number", () => {
+    // The one place outside India where the number does something: the
+    // reverse charge only applies to a taxable person, and this is the
+    // evidence of that. Without it the supply looks B2C, where the
+    // *supplier* owes VAT at the customer's local rate and has to
+    // register to remit it — which is the whole of G2's decision to
+    // sell B2B-only in the EU.
     const { identity, problems } = validateTaxIdentity({ country: "NL" });
+
     expect(identity).toBeNull();
     expect(problems[0].field).toBe("taxId");
-    expect(problems[0].message).toContain("registered businesses");
+    expect(problems[0].message).toContain("reverse charge");
   });
 
-  it("a non-India customer with a valid number is a zero-rated export", () => {
+  it("an EU customer with a valid number is a zero-rated export", () => {
     const { identity } = validateTaxIdentity({ country: "NL", taxId: "nl 1234 56789 b01" });
     expect(identity).toEqual({ country: "NL", taxId: "NL123456789B01", status: "export_zero_rated" });
   });
 
-  it("applies the same rule outside the EU", () => {
-    // Australia, Singapore, the UK — all exports, all B2B-only.
-    expect(validateTaxIdentity({ country: "AU" }).identity).toBeNull();
+  it.each(["AU", "US", "AE", "SG", "GB"])("does not demand one from %s", (country) => {
+    // A plain zero-rated export of services. There is no reverse charge
+    // to evidence and often no such number to give — a US company has
+    // an EIN, which is not a VAT number and has nothing to do with an
+    // Indian export. Demanding it was friction at checkout buying
+    // nothing.
+    //
+    // GB is in this list deliberately: post-Brexit it is an export like
+    // any other, and treating it as EU has been wrong since 2020.
+    const { identity, problems } = validateTaxIdentity({ country });
+
+    expect(problems).toEqual([]);
+    expect(identity).toEqual({ country, taxId: "", status: "export_zero_rated" });
+  });
+
+  it("still checks a number that is offered outside the EU", () => {
+    // A merchant who types one wants it on their invoice, so a typo is
+    // theirs to find now rather than at their own year end.
+    const { problems } = validateTaxIdentity({ country: "AU", taxId: "?" });
+
+    expect(problems[0].field).toBe("taxId");
+    expect(problems[0].message).toContain("Leave it blank");
+  });
+
+  it("accepts a number offered outside the EU", () => {
     expect(validateTaxIdentity({ country: "AU", taxId: "AU12345678901" }).identity?.status)
       .toBe("export_zero_rated");
   });
