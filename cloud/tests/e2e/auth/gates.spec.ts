@@ -156,7 +156,12 @@ test.describe("Shopify is shipped dark", () => {
     await signInAs(page, tenant);
     await page.goto(`/dashboard/${tenant.connectionId}/settings?page=integrations`);
 
-    await expect(page.getByText("WhatsApp Business")).toBeVisible();
+    // A positive control, so "Shopify is absent" cannot pass on a page
+    // that simply failed to render. WhatsApp used to play this part and
+    // can no longer: it is admin-granted now too, so on an ungranted
+    // account it is absent for the same reason Shopify is.
+    await expect(page.getByText("Put booking on your website")).toBeVisible();
+
     // Hidden outright, not shown disabled: a "coming soon" tile for
     // something already built invites questions nobody wants yet.
     await expect(page.getByText("Shopify", { exact: true })).toHaveCount(0);
@@ -199,5 +204,68 @@ test.describe("team roles are locked, not silently swapped", () => {
     const role = page.locator('select[name="role"]');
     await expect(role).toBeEnabled();
     await expect(role.locator("option")).toHaveCount(3);
+  });
+});
+
+test.describe("WhatsApp is shipped dark", () => {
+  // Granted by no plan, for a different reason from Shopify's: the
+  // integration is finished, and Meta will not let us onboard anyone
+  // until Business Verification, App Review and Tech Provider are all
+  // approved. Until then a Connect button leads a merchant to a Meta
+  // screen saying we cannot onboard them, which is worse than no button.
+  test("no plan offers it in Settings → Integrations", async ({ page }) => {
+    await setPlan(tenant, "growth");
+    await signInAs(page, tenant);
+    await page.goto(`/dashboard/${tenant.connectionId}/settings?page=integrations`);
+
+    await expect(page.getByText("Put booking on your website")).toBeVisible();
+    // Hidden, not locked. An UpgradePrompt would name a plan that does
+    // not grant it either.
+    await expect(page.getByText("Connect WhatsApp")).toHaveCount(0);
+  });
+
+  test("an admin grant makes it appear, on the same plan", async ({ page }) => {
+    await setPlan(tenant, "growth");
+    await grantFeature(tenant, "whatsapp");
+    await signInAs(page, tenant);
+    await page.goto(`/dashboard/${tenant.connectionId}/settings?page=integrations`);
+
+    await expect(page.getByRole("heading", { name: "WhatsApp" })).toBeVisible();
+  });
+});
+
+test.describe("staff management is shipped dark", () => {
+  // Not waiting on a vendor, unlike the two above — this one is about
+  // how much product a first customer should be shown. Nearly every
+  // account starting out is one person, and Staff and Time off manage a
+  // thing they will never add a second of.
+  test("neither Staff nor Time off is in the nav", async ({ page }) => {
+    await setPlan(tenant, "growth");
+    await signInAs(page, tenant);
+    await page.goto(`/dashboard/${tenant.connectionId}`);
+
+    const nav = page.getByRole("navigation");
+    await expect(nav.getByRole("link", { name: "Overview" })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Time off" })).toHaveCount(0);
+  });
+
+  test("hiding the screens does not hide the concept — hours still save", async ({ page }) => {
+    // The load-bearing half. Resources still compute availability and
+    // still back every booking; what moved is where a one-person
+    // business answers "when are you open?".
+    await setPlan(tenant, "growth");
+    await signInAs(page, tenant);
+    await page.goto(`/dashboard/${tenant.connectionId}/settings?page=general`);
+
+    await expect(page.getByRole("heading", { name: "Business hours" })).toBeVisible();
+  });
+
+  test("an admin grant brings both screens back", async ({ page }) => {
+    await setPlan(tenant, "growth");
+    await grantFeature(tenant, "staff");
+    await signInAs(page, tenant);
+    await page.goto(`/dashboard/${tenant.connectionId}`);
+
+    await expect(page.getByRole("navigation").getByRole("link", { name: "Time off" })).toBeVisible();
   });
 });

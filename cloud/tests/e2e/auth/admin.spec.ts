@@ -31,6 +31,8 @@ test("a signed-in merchant cannot reach /admin", async ({ page }) => {
   // 404, not 403 — a 403 would confirm the route exists and that there
   // is something behind it worth guarding.
   await expect(page.getByText("GetBooqin admin")).toHaveCount(0);
+  // Still a bare locator here, deliberately: a non-admin must see *no*
+  // table at all, coverage or accounts.
   await expect(page.getByRole("table")).toHaveCount(0);
 });
 
@@ -39,7 +41,12 @@ test("a platform admin sees the accounts table", async ({ page }) => {
   await page.goto("/admin");
 
   await expect(page.getByRole("heading", { name: "GetBooqin admin" })).toBeVisible();
-  await expect(page.getByRole("table")).toBeVisible();
+  // Scoped to the accounts table by a column only it has. /admin grew a
+  // second table — billing coverage, which lists price points with no
+  // provider plan id — and a bare getByRole("table") now matches both.
+  // Naming the one under test beats .first(), which would silently
+  // follow whichever card happens to render first.
+  await expect(page.getByRole("table").filter({ hasText: "Trial ends" })).toBeVisible();
   // The seeded merchant is an account, so it must be listed. `.first()`
   // because the business name and the shop id both render in the row.
   await expect(page.getByText("E2E merchant").first()).toBeVisible();
