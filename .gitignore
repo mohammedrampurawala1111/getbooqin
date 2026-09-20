@@ -46,3 +46,9 @@ Repo connection needed.zip
 **/*-key.txt
 **/*secret*.csv
 **/*credentials*.json
+
+# Playwright output. test-results/.last-run.json was tracked once and
+# came back on every local run as a spurious diff; the traces and
+# screenshots under it are build artefacts of a single run.
+**/test-results
+**/playwright-report
