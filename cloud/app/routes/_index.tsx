@@ -146,8 +146,23 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               </>
             ) : (
               <>
-                <a href="/login" className="mkt-link">Log in</a>
-                <a href="/signup" className="mkt-cta text-[13px] no-underline hover:no-underline">Sign up free</a>
+                {/* The same 400px treatment the logged-in branch has
+                    had, and for the same reason it needed it.
+                    "Log in" + "Sign up free" + the hamburger do not fit
+                    across a 375px phone: both links wrapped mid-word, so
+                    the header read "Log / in" above a two-line button.
+                    Below 400px Log in moves into the mobile nav panel,
+                    leaving the signup CTA — the one a visitor is more
+                    likely to want — with room to sit on one line.
+
+                    whitespace-nowrap on both regardless: a header link
+                    breaking mid-phrase is never the right answer to a
+                    narrow screen, and a future translation will be
+                    longer than the English. */}
+                <a href="/login" className="mkt-link hidden whitespace-nowrap min-[400px]:inline-flex">Log in</a>
+                <a href="/signup" className="mkt-cta whitespace-nowrap text-[13px] no-underline hover:no-underline">
+                  Sign up free
+                </a>
               </>
             )}
             {/* Was a <label role="button"> for a hidden checkbox — role=
@@ -184,7 +199,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           <ThemeToggle className="mkt-link flex items-center gap-2 py-[9px] text-left" showLabel />
           {loggedIn ? (
             <LogoutButton className="mkt-link py-[9px] text-left min-[400px]:hidden" />
-          ) : null}
+          ) : (
+            // Where Log in goes on the narrowest phones, so hiding it
+            // from the header does not make it unreachable.
+            <a href="/login" className="mkt-link py-[9px] min-[400px]:hidden">Log in</a>
+          )}
         </nav>
       </div>
 

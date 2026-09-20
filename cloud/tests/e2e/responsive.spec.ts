@@ -83,3 +83,43 @@ for (const vp of VIEWPORTS) {
     });
   }
 }
+
+test.describe("the marketing header on a narrow phone", () => {
+  /**
+   * Not overflow — the header fitted, by wrapping. "Log in" broke into
+   * "Log" / "in" above a two-line "Sign up free", which is the kind of
+   * thing a visitor reads as "this is broken" a second before they
+   * leave. The logged-in branch had solved it at 400px already; the
+   * logged-out one never got the same treatment.
+   */
+  for (const width of [320, 360, 375]) {
+    test(`nothing in the header wraps at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 700 });
+      await page.goto("/");
+
+      const wrapped = await page.evaluate(() => {
+        const out: string[] = [];
+        for (const el of Array.from(document.querySelectorAll("header a, header button"))) {
+          const box = el.getBoundingClientRect();
+          const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 20;
+          const text = (el.textContent || el.getAttribute("aria-label") || "").trim();
+          // Comfortably more than one line's worth of height, allowing
+          // for the padding a button legitimately has.
+          if (text && box.height > lineHeight * 1.7) out.push(`${text} (${Math.round(box.height)}px)`);
+        }
+        return out;
+      });
+
+      expect(wrapped, `header items wrapping at ${width}px`).toEqual([]);
+    });
+  }
+
+  test("Log in is still reachable once it leaves the header", async ({ page }) => {
+    // Hidden below 400px, not deleted — it moves into the menu panel.
+    await page.setViewportSize({ width: 375, height: 700 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Toggle menu" }).click();
+
+    await expect(page.locator("#mkt-mobile-nav").getByRole("link", { name: "Log in" })).toBeVisible();
+  });
+});
