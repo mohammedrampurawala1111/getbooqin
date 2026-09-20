@@ -26,7 +26,29 @@
  *     out on an invoice line is a real invoicing requirement and is not
  *     implemented here.
  */
-export type TaxStatus = "india_gst" | "export_zero_rated";
+export type TaxStatus = "india_gst" | "export_zero_rated" | "eu_no_vat_id";
+
+/**
+ * Whether an EU customer must produce a VAT number to buy.
+ *
+ * On by default, and the default is the safe one. Off accepts EU
+ * customers who have no VAT number — small businesses below their own
+ * registration threshold, and consumers — which is a commercial
+ * decision with a tax consequence attached: a supply to a
+ * non-taxable EU person is **not** covered by the reverse charge, and a
+ * non-EU supplier has no de-minimis. The obligation is to register for
+ * the non-Union OSS scheme and charge the customer's local rate, from
+ * the first sale.
+ *
+ * Which this flag does not do for you. What it does is stop the product
+ * *lying* about it: an EU sale with no VAT number gets its own status
+ * and its own invoice line, rather than being labelled a reverse-charge
+ * supply it is not.
+ *
+ * Read from BILLING_EU_REQUIRE_VAT at the edge and passed in, never
+ * read here — this module has no imports and runs in the browser.
+ */
+export const DEFAULT_REQUIRE_EU_VAT_ID = true;
 
 export interface TaxIdentity {
   country: string;
@@ -47,6 +69,22 @@ export function normalizeCountry(value: string | null | undefined): string {
 
 export function statusForCountry(country: string): TaxStatus {
   return normalizeCountry(country) === "IN" ? "india_gst" : "export_zero_rated";
+}
+
+/**
+ * The position a specific sale is actually in, which the country alone
+ * cannot answer once EU customers without a VAT number are allowed.
+ *
+ * The distinction that matters: an EU supply is a reverse-charge supply
+ * *because the customer produced a VAT number*, not because they are in
+ * the EU. Without one it is an ordinary taxable supply in their country
+ * and the seller owes the VAT.
+ */
+export function statusFor(country: string, taxId: string | null | undefined): TaxStatus {
+  const code = normalizeCountry(country);
+  if (code === "IN") return "india_gst";
+  if (isEuCountry(code) && !normalizeTaxId(taxId)) return "eu_no_vat_id";
+  return "export_zero_rated";
 }
 
 /**
@@ -113,10 +151,14 @@ export function normalizeTaxId(value: string | null | undefined): string {
  * Validates a customer-entered tax identity, returning problems rather
  * than throwing so a form can show them all at once.
  */
-export function validateTaxIdentity(input: { country?: string | null; taxId?: string | null }): {
+export function validateTaxIdentity(
+  input: { country?: string | null; taxId?: string | null },
+  opts: { requireEuVatId?: boolean } = {}
+): {
   identity: TaxIdentity | null;
   problems: TaxIdentityProblem[];
 } {
+  const requireEuVatId = opts.requireEuVatId ?? DEFAULT_REQUIRE_EU_VAT_ID;
   const problems: TaxIdentityProblem[] = [];
   const country = normalizeCountry(input.country);
   const taxId = normalizeTaxId(input.taxId);
@@ -134,7 +176,7 @@ export function validateTaxIdentity(input: { country?: string | null; taxId?: st
     if (taxId && !looksLikeGstin(taxId)) {
       problems.push({ field: "taxId", message: "That doesn't look like a GSTIN. Leave it blank if you aren't registered." });
     }
-  } else if (isEuCountry(country)) {
+  } else if (isEuCountry(country) && requireEuVatId) {
     // Required here and nowhere else, because here it does something.
     //
     // An Indian entity supplying a digital service into the EU shifts
@@ -178,12 +220,25 @@ export function validateTaxIdentity(input: { country?: string | null; taxId?: st
   }
 
   if (problems.length > 0) return { identity: null, problems };
-  return { identity: { country, taxId, status }, problems: [] };
+  // Recomputed from what actually arrived rather than from the country
+  // alone: with the EU requirement off, an EU sale with no VAT number
+  // is a different position from one with, and the invoice has to say
+  // which.
+  return { identity: { country, taxId, status: statusFor(country, taxId) }, problems: [] };
 }
 
 /** The line an invoice or the Billing screen should carry. */
 export function taxNote(status: TaxStatus | string, country: string): string {
   if (status === "india_gst") return "Indian GST applies. Prices include tax.";
+  if (status === "eu_no_vat_id") {
+    // Deliberately states no treatment it cannot support. It is not a
+    // reverse-charge supply — no VAT number was given — and claiming so
+    // on a document a customer may hand to their own accountant would
+    // be worse than saying nothing. Whether VAT was charged is a
+    // question of whether the seller has registered for OSS, which this
+    // module has no way to know.
+    return "Supplied to a customer in the EU without a VAT registration number.";
+  }
   if (status === "export_zero_rated") {
     // The reverse-charge sentence is about EU VAT, so it belongs only on
     // an invoice going to the EU. Shown to a customer in the US,
@@ -262,4 +317,19 @@ const TIMEZONE_COUNTRY: Record<string, string> = {
  */
 export function countryFromTimezone(timezone: string | null | undefined): string {
   return TIMEZONE_COUNTRY[(timezone ?? "").trim()] ?? "";
+}
+
+/**
+ * The EU requirement as this deployment has it configured.
+ *
+ * Server-only — `process.env` is meaningless in the browser bundle,
+ * which is why every function above takes the answer as an argument
+ * instead of reaching for it. A screen gets this through its loader.
+ *
+ * Off takes a deliberate "false": a typo, a blank, or an unset variable
+ * all leave the safe behaviour in place, because the unsafe one carries
+ * a registration obligation in twenty-seven countries.
+ */
+export function requireEuVatIdFromEnv(env: { BILLING_EU_REQUIRE_VAT?: string } = process.env): boolean {
+  return (env.BILLING_EU_REQUIRE_VAT ?? "").trim().toLowerCase() !== "false";
 }

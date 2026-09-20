@@ -21,7 +21,7 @@ import { reconcileSubscription } from "./reconcile.js";
 import type { BillingProvider } from "./providers/provider.js";
 import { ensureSubscription } from "./subscriptions.js";
 import { getSettings } from "../booking/settings.js";
-import { validateTaxIdentity, type TaxIdentity } from "./tax.js";
+import { validateTaxIdentity, requireEuVatIdFromEnv, type TaxIdentity } from "./tax.js";
 import {
   PLANS,
   planRank,
@@ -166,7 +166,10 @@ export async function startCheckout(args: {
   // registration from the first euro, with no threshold. Captured rather
   // than derived: the billing currency is a guess from the shop's
   // settings, and a tax position must not rest on a guess.
-  const tax = validateTaxIdentity({ country: args.country, taxId: args.taxId });
+  const tax = validateTaxIdentity(
+    { country: args.country, taxId: args.taxId },
+    { requireEuVatId: requireEuVatIdFromEnv() }
+  );
   if (!tax.identity) {
     throw new GetBooqinError("getbooqin_tax_identity", tax.problems[0]!.message, 400);
   }
