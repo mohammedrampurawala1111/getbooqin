@@ -438,9 +438,21 @@ export function defaultWeek(): DayHours[] {
 export function WeeklyHoursEditor({
   days,
   onChange,
+  inset = false,
 }: {
   days: DayHours[];
   onChange: (days: DayHours[]) => void;
+  /**
+   * Adds the 18px gutter every other settings row has.
+   *
+   * SettingsCard renders its children with no padding at all — each one
+   * supplies its own, so that a row's divider runs the full width of
+   * the card while its content lines up with the header above it (see
+   * Row in components/settings.tsx, which does exactly this). Onboarding
+   * puts this inside a card that is already padded, so it asks for the
+   * plain version.
+   */
+  inset?: boolean;
 }) {
   function update(dayOfWeek: number, patch: Partial<DayHours>) {
     onChange(days.map((day) => (day.dayOfWeek === dayOfWeek ? { ...day, ...patch } : day)));
@@ -451,36 +463,46 @@ export function WeeklyHoursEditor({
       {days.map((day) => (
         <div
           key={day.dayOfWeek}
-          className="flex flex-wrap items-center gap-3 border-b border-row py-[10px] last:border-0"
+          // The same grid as Row, so a day name sits in the label column
+          // with every other settings label and the times start where
+          // every other control starts. A bespoke flex layout here is
+          // what made this card look like it belonged to a different
+          // product.
+          className={`grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] items-center gap-x-6 gap-y-2 border-b border-row py-[11px] last:border-0 ${
+            inset ? "px-[18px]" : ""
+          }`}
         >
-          <label className="flex min-w-[140px] items-center gap-[10px] text-body">
+          <label className="flex items-center gap-[10px] text-[13px] font-medium">
             <input
               type="checkbox"
               checked={day.open}
               onChange={(e) => update(day.dayOfWeek, { open: e.target.checked })}
             />
-            <span className={day.open ? "font-medium" : "text-muted"}>{DAY_NAMES[day.dayOfWeek]}</span>
+            <span className={day.open ? "" : "text-muted"}>{DAY_NAMES[day.dayOfWeek]}</span>
           </label>
           {day.open ? (
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              {/* Capped rather than full-width: a time input has a fixed
+                  amount to say, and letting it stretch across the track
+                  leaves two enormous boxes with four characters in them. */}
               <input
                 type="time"
                 aria-label={`${DAY_NAMES[day.dayOfWeek]} opening time`}
-                className="input w-[120px]"
+                className="input max-w-[130px]"
                 value={day.start}
                 onChange={(e) => update(day.dayOfWeek, { start: e.target.value })}
               />
-              <span className="text-muted">to</span>
+              <span className="shrink-0 text-meta text-muted">to</span>
               <input
                 type="time"
                 aria-label={`${DAY_NAMES[day.dayOfWeek]} closing time`}
-                className="input w-[120px]"
+                className="input max-w-[130px]"
                 value={day.end}
                 onChange={(e) => update(day.dayOfWeek, { end: e.target.value })}
               />
             </div>
           ) : (
-            <span className="text-meta text-muted">Closed</span>
+            <span className="text-[13px] text-subtle">Closed</span>
           )}
         </div>
       ))}

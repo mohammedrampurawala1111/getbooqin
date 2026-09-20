@@ -1455,7 +1455,7 @@ function BusinessHoursCard({
       <input type="hidden" name="hours" value={JSON.stringify(days)} />
 
       {resourceCount > 1 && (
-        <p className="m-0 mb-[10px] rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+        <p className="m-[14px_18px_4px] rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
           This account has {resourceCount} bookable {resourceCount === 1 ? "person or room" : "people or rooms"}, and
           saving here gives all of them these hours.{" "}
           {canManageStaff ? (
@@ -1468,7 +1468,7 @@ function BusinessHoursCard({
         </p>
       )}
 
-      <WeeklyHoursEditor days={days} onChange={setDays} />
+      <WeeklyHoursEditor days={days} onChange={setDays} inset />
     </SettingsCard>
   );
 }
