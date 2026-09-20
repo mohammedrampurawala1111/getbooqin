@@ -97,16 +97,21 @@ NODE_ENV = "production"
 # resolve, which is strictly worse than the fly.dev link it replaces.
 APP_URL = "https://app.getbooqin.com"
 
-# Deliberately the fly.dev host, and deliberately different from APP_URL.
+# Shopify needs no secrets here at all.
 #
-# This has to match what is registered in the Shopify Partner dashboard
-# and in shopify-openslot/shopify.app.production.toml, and changing it
-# means a Partner dashboard edit plus `shopify app deploy`. Shopify is
-# shipped dark — no plan grants it — so there is nothing to gain by
-# touching it until a Shopify merchant is actually in front of you. The
-# fly.dev hostname keeps serving whatever the custom domain points at,
-# so OAuth keeps working.
-SHOPIFY_APP_URL = "https://getbooqin-prod.fly.dev"
+# SHOPIFY_API_KEY, SHOPIFY_API_SECRET, SCOPES and SHOPIFY_APP_URL are
+# all optional now. They were required only because shopifyApp()
+# validates its config when the combined server imports it at boot,
+# which made an integration no plan grants a hard dependency for every
+# deployment. shopify.server.ts constructs with obvious placeholders
+# instead, so their absence is a switched-off integration rather than a
+# dead app, and the boot log says which.
+#
+# When Shopify is turned on, SHOPIFY_APP_URL has to match what is
+# registered in the Shopify Partner dashboard and in
+# shopify-openslot/shopify.app.production.toml — which is why it is not
+# simply APP_URL, and why changing it later means a Partner dashboard
+# edit plus `shopify app deploy`.
 
 # Everything else is `fly secrets set`. See .env.example, which is
 # generated from core/src/env.ts and cannot drift from what the app

@@ -51,12 +51,6 @@ export const ENV_VARS: EnvVar[] = [
     requirement: "required",
     purpose: "Compiled into the client bundle at build time — see fly.toml's [build.args]",
   },
-  // The Shopify app is mounted by the combined server whether or not
-  // anyone uses it, and shopifyApp() needs these to construct at all.
-  { name: "SHOPIFY_API_KEY", requirement: "required", purpose: "Shopify app credentials" },
-  { name: "SHOPIFY_API_SECRET", requirement: "required", purpose: "Shopify app credentials" },
-  { name: "SHOPIFY_APP_URL", requirement: "required", purpose: "Shopify OAuth callback origin" },
-  { name: "SCOPES", requirement: "required", purpose: "Shopify OAuth scopes" },
 
   // --- Degrade a capability --------------------------------------
   {
@@ -90,6 +84,36 @@ export const ENV_VARS: EnvVar[] = [
     requirement: "capability",
     purpose: "The authenticated From address",
     capability: "email deliverability — mail would be sent as the merchant's own domain and fail SPF/DKIM",
+  },
+  {
+    // Optional since Shopify was shipped dark. They were required only
+    // because shopifyApp() throws on a missing apiKey when the combined
+    // server imports it at boot — which made an integration no plan
+    // grants a hard dependency for every deployment. shopify.server.ts
+    // now constructs with obvious placeholders instead, so the absence
+    // of these is a switched-off integration rather than a dead app.
+    name: "SHOPIFY_API_KEY",
+    requirement: "capability",
+    purpose: "Shopify app credentials",
+    capability: "Shopify — the app cannot be installed on a store",
+  },
+  {
+    name: "SHOPIFY_API_SECRET",
+    requirement: "capability",
+    purpose: "Shopify app credentials",
+    capability: "Shopify — the app cannot be installed on a store",
+  },
+  {
+    name: "SCOPES",
+    requirement: "capability",
+    purpose: "Shopify OAuth scopes",
+    capability: "Shopify — the app cannot be installed on a store",
+  },
+  {
+    name: "SHOPIFY_APP_URL",
+    requirement: "capability",
+    purpose: "Shopify OAuth callback origin, which must match the Partner dashboard",
+    capability: "Shopify OAuth — an install would be redirected back to the wrong host",
   },
   {
     name: "RAZORPAY_KEY_ID",
