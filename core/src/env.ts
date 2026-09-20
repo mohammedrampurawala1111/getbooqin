@@ -66,6 +66,26 @@ export const ENV_VARS: EnvVar[] = [
     capability: "email — no confirmations, reminders, invoices, trial nudges or team invites",
   },
   {
+    // Read by the mailer's nodemailer transport and, until now, declared
+    // nowhere — so a deployment with SMTP_HOST and no credentials
+    // reported "email: configured" at boot and then failed
+    // authentication on the first confirmation, which is the exact
+    // shape of failure this file exists to prevent.
+    //
+    // SMTP_PORT is deliberately absent: it defaults to 587, which is
+    // right for every relay we would plausibly use.
+    name: "SMTP_USER",
+    requirement: "capability",
+    purpose: "SMTP authentication",
+    capability: "email — the relay will refuse to send without credentials",
+  },
+  {
+    name: "SMTP_PASS",
+    requirement: "capability",
+    purpose: "SMTP authentication",
+    capability: "email — the relay will refuse to send without credentials",
+  },
+  {
     name: "MAIL_FROM_EMAIL",
     requirement: "capability",
     purpose: "The authenticated From address",
@@ -142,6 +162,18 @@ export const ENV_VARS: EnvVar[] = [
     requirement: "capability",
     purpose: "Answers Meta's one-time webhook verification handshake",
     capability: "WhatsApp deliveries — message status, replies and template approvals never arrive",
+  },
+  {
+    // Read by @clerk/react-router's verifyWebhook() from the
+    // environment rather than passed to it, so nothing in this codebase
+    // names it and it was invisible here. Without it every Clerk
+    // delivery fails verification: no User row is ever created, which
+    // takes account deletion and the duplicate-mailbox check down with
+    // it.
+    name: "CLERK_WEBHOOK_SIGNING_SECRET",
+    requirement: "capability",
+    purpose: "Verifies Clerk webhook deliveries",
+    capability: "user sync — signups never reach our own User table",
   },
   {
     name: "PLATFORM_ADMIN_EMAILS",
