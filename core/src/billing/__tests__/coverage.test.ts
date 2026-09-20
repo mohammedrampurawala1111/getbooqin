@@ -72,8 +72,15 @@ describe("billingCoverage()", () => {
   it("does not count a live id when the rail is running in sandbox", () => {
     // The asymmetry that makes a sandbox deployment look configured:
     // the id is right there in the table, and it is the wrong half.
+    //
+    // Both halves are set explicitly rather than only `live`, so this
+    // observes the property regardless of which slots happen to be
+    // populated. It first failed when the real sandbox ids landed —
+    // the assertion was right and the fixture had quietly stopped
+    // isolating it.
     const slot = PRICES.starter.USD.monthly.paypal!;
     const restore = { ...slot };
+    slot.test = "";
     slot.live = "P-LIVE-STARTER-USD-MONTHLY";
 
     process.env.PAYPAL_ENV = "sandbox";

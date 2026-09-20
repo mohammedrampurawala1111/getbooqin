@@ -343,12 +343,12 @@ export const PRICES: Record<PaidPlanId, Record<Currency, Record<BillingCycle, Pr
       yearly: { amount: 399_000, razorpay: { test: "plan_TbDcfyTcaaGoaG", live: "plan_TbDRyOPpAbW8PW" } },
     },
     USD: {
-      monthly: { amount: 500, razorpay: { test: "plan_TbEJl53SjngQhB", live: "" }, paypal: { test: "", live: "" } },
-      yearly: { amount: 5_000, razorpay: { test: "plan_TbEJlXlTVjNx2o", live: "" }, paypal: { test: "", live: "" } },
+      monthly: { amount: 500, razorpay: { test: "plan_TbEJl53SjngQhB", live: "" }, paypal: { test: "P-7KL38122H6639815HNKX62DY", live: "" } },
+      yearly: { amount: 5_000, razorpay: { test: "plan_TbEJlXlTVjNx2o", live: "" }, paypal: { test: "P-9LT67377JG425913CNKX62EA", live: "" } },
     },
     EUR: {
-      monthly: { amount: 500, razorpay: { test: "plan_TbEJildXewGMHz", live: "" }, paypal: { test: "", live: "" } },
-      yearly: { amount: 5_000, razorpay: { test: "plan_TbEJjamIDOP9q3", live: "" }, paypal: { test: "", live: "" } },
+      monthly: { amount: 500, razorpay: { test: "plan_TbEJildXewGMHz", live: "" }, paypal: { test: "P-4S2263687H823501VNKX62EI", live: "" } },
+      yearly: { amount: 5_000, razorpay: { test: "plan_TbEJjamIDOP9q3", live: "" }, paypal: { test: "P-63V53190MN293182XNKX62EQ", live: "" } },
     },
   },
   growth: {
@@ -365,12 +365,12 @@ export const PRICES: Record<PaidPlanId, Record<Currency, Record<BillingCycle, Pr
       yearly: { amount: 799_000, razorpay: { test: "plan_TbDdFi79xihffD", live: "" } },
     },
     USD: {
-      monthly: { amount: 1_000, razorpay: { test: "plan_TbEJm05s3QoX7Z", live: "" }, paypal: { test: "", live: "" } },
-      yearly: { amount: 10_000, razorpay: { test: "plan_TbEJmSjhRMH2yJ", live: "" }, paypal: { test: "", live: "" } },
+      monthly: { amount: 1_000, razorpay: { test: "plan_TbEJm05s3QoX7Z", live: "" }, paypal: { test: "P-35689172L7866560MNKX62EQ", live: "" } },
+      yearly: { amount: 10_000, razorpay: { test: "plan_TbEJmSjhRMH2yJ", live: "" }, paypal: { test: "P-2UK193623L0139631NKX62EY", live: "" } },
     },
     EUR: {
-      monthly: { amount: 1_000, razorpay: { test: "plan_TbEJk5hXqnTEYh", live: "" }, paypal: { test: "", live: "" } },
-      yearly: { amount: 10_000, razorpay: { test: "plan_TbEJkbTWSa1VNN", live: "" }, paypal: { test: "", live: "" } },
+      monthly: { amount: 1_000, razorpay: { test: "plan_TbEJk5hXqnTEYh", live: "" }, paypal: { test: "P-194649801C2675048NKX62FA", live: "" } },
+      yearly: { amount: 10_000, razorpay: { test: "plan_TbEJkbTWSa1VNN", live: "" }, paypal: { test: "P-17444498J8570415TNKX62FI", live: "" } },
     },
   },
   business: {
@@ -379,12 +379,12 @@ export const PRICES: Record<PaidPlanId, Record<Currency, Record<BillingCycle, Pr
       yearly: { amount: 1_199_000, razorpay: { test: "", live: "" } },
     },
     USD: {
-      monthly: { amount: 1_500, razorpay: { test: "", live: "" }, paypal: { test: "", live: "" } },
-      yearly: { amount: 15_000, razorpay: { test: "", live: "" }, paypal: { test: "", live: "" } },
+      monthly: { amount: 1_500, razorpay: { test: "", live: "" }, paypal: { test: "P-1EC77578PF0511358NKX62FQ", live: "" } },
+      yearly: { amount: 15_000, razorpay: { test: "", live: "" }, paypal: { test: "P-6RH666932Y345013ANKX62FY", live: "" } },
     },
     EUR: {
-      monthly: { amount: 1_500, razorpay: { test: "", live: "" }, paypal: { test: "", live: "" } },
-      yearly: { amount: 15_000, razorpay: { test: "", live: "" }, paypal: { test: "", live: "" } },
+      monthly: { amount: 1_500, razorpay: { test: "", live: "" }, paypal: { test: "P-4VP10404HE536815BNKX62GA", live: "" } },
+      yearly: { amount: 15_000, razorpay: { test: "", live: "" }, paypal: { test: "P-7L203218TR043970KNKX62GA", live: "" } },
     },
   },
 };
