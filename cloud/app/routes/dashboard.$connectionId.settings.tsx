@@ -14,7 +14,7 @@ import { type BookingRuleField, bookingWindowIsClosed, cancelCutoffExceedsNotice
 import { requireTenant } from "~/tenant.server";
 import { getClerkClient } from "~/session.server";
 import { AlertError, Badge, TimezoneSelect, Toggle, useToast } from "~/components/ui";
-import { IntegrationRow, LogoMark } from "~/components/onboarding";
+import { IntegrationRow, LogoMark, WeeklyHoursEditor } from "~/components/onboarding";
 import { UpgradePrompt } from "~/components/upgrade";
 import type { PlanId } from "getbooqin-core/billing/plans";
 import * as PaymentLinks from "getbooqin-core/booking/paymentLinks";
@@ -1409,29 +1409,6 @@ function EmbedSnippetCard({ bookingUrl, vocab }: { bookingUrl: string; vocab: Re
  * into the booking page. The server re-checks the size and format
  * regardless — everything that happens in a browser is a suggestion.
  */
-const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-
-/**
- * When the business is open.
- *
- * ## Why this is on Settings and not only on Staff
- *
- * Hours are stored per bookable resource, because that is what
- * availability is computed from and a salon where one stylist works
- * Saturdays genuinely has different hours per person. But nearly every
- * account starting out is one person, and with the Staff screens behind
- * an admin grant they would otherwise have nowhere at all to say when
- * they are open — which is the first question anybody has about their
- * own business, and the last one they should have to learn a data model
- * to answer.
- *
- * ## The warning is the important part
- *
- * Saving applies one pattern to every active resource. For one person
- * that is invisible and exactly right. For three staff on different
- * shifts it is destructive, so the card says so *before* the button
- * when there is more than one, rather than reporting it afterwards.
- */
 function BusinessHoursCard({
   hours, resourceCount, canManageStaff, connectionId, savedAt,
 }: {
@@ -1451,10 +1428,6 @@ function BusinessHoursCard({
       end: day.end || "17:00",
     }))
   );
-
-  function update(dayOfWeek: number, patch: Partial<(typeof days)[number]>) {
-    setDays((current) => current.map((day) => (day.dayOfWeek === dayOfWeek ? { ...day, ...patch } : day)));
-  }
 
   return (
     <SettingsCard
@@ -1480,42 +1453,7 @@ function BusinessHoursCard({
         </p>
       )}
 
-      <div className="flex flex-col">
-        {days.map((day) => (
-          <div
-            key={day.dayOfWeek}
-            className="flex flex-wrap items-center gap-3 border-b border-row py-[10px] last:border-0"
-          >
-            <label className="flex min-w-[140px] items-center gap-[10px] text-body">
-              <input
-                type="checkbox"
-                checked={day.open}
-                onChange={(e) => update(day.dayOfWeek, { open: e.target.checked })}
-              />
-              <span className={day.open ? "font-medium" : "text-muted"}>{DAY_NAMES[day.dayOfWeek]}</span>
-            </label>
-            {day.open ? (
-              <div className="flex items-center gap-2">
-                <input
-                  type="time"
-                  className="input w-[120px]"
-                  value={day.start}
-                  onChange={(e) => update(day.dayOfWeek, { start: e.target.value })}
-                />
-                <span className="text-muted">to</span>
-                <input
-                  type="time"
-                  className="input w-[120px]"
-                  value={day.end}
-                  onChange={(e) => update(day.dayOfWeek, { end: e.target.value })}
-                />
-              </div>
-            ) : (
-              <span className="text-meta text-muted">Closed</span>
-            )}
-          </div>
-        ))}
-      </div>
+      <WeeklyHoursEditor days={days} onChange={setDays} />
     </SettingsCard>
   );
 }

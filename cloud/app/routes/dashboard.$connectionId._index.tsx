@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Route } from "./+types/dashboard.$connectionId._index";
-import { Metrics, Bookings, Data, Settings, ensureSlug } from "getbooqin-core";
+import { Metrics, Bookings, Data, Entitlements, Settings, ensureSlug } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
 import { PageHeader, StatCard, BarChart, MeterRow, EmptyState } from "~/components/ui";
 import { SetupChecklist, EmptyStat } from "~/components/onboarding";
@@ -84,8 +84,14 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // worth showing. See Metrics.money().
   const money = await Metrics.money(shop, platform, range, settings.currency);
 
+  // Decides whether the setup checklist asks for staff or for business
+  // hours — the same entitlement the nav uses, so the two can never
+  // disagree about whether a Staff screen exists to be sent to.
+  const canManageStaff = (await Entitlements.entitlementsFor(params.connectionId!)).features.has("staff");
+
   return {
     money,
+    canManageStaff,
     overview,
     pendingCount,
     activeServiceCount,
@@ -161,7 +167,7 @@ function BookingWindowClosedBanner({
 }
 
 export default function Overview({ loaderData, params }: Route.ComponentProps) {
-  const { money, overview, pendingCount, activeServiceCount, range, timezone, allTimeBookingCount, setupFacts, hiddenCards, bookingUrl, conflictCount, unbookableCount, bookingWindowClosed, minNoticeHours, maxAdvanceDays } = loaderData;
+  const { money, canManageStaff, overview, pendingCount, activeServiceCount, range, timezone, allTimeBookingCount, setupFacts, hiddenCards, bookingUrl, conflictCount, unbookableCount, bookingWindowClosed, minNoticeHours, maxAdvanceDays } = loaderData;
   const totalBookings = overview.bookingsSeries.reduce((sum, d) => sum + d.count, 0);
   const v = useVocabulary();
 
@@ -170,6 +176,7 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
       <EmptyOverview
         connectionId={params.connectionId}
         setupFacts={setupFacts}
+        canManageStaff={canManageStaff}
         bookingUrl={bookingUrl}
         bookingWindowClosed={bookingWindowClosed}
         minNoticeHours={minNoticeHours}
@@ -361,6 +368,7 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
 function EmptyOverview({
   connectionId,
   setupFacts,
+  canManageStaff,
   bookingUrl,
   bookingWindowClosed,
   minNoticeHours,
@@ -368,13 +376,14 @@ function EmptyOverview({
 }: {
   connectionId: string;
   setupFacts: Route.ComponentProps["loaderData"]["setupFacts"];
+  canManageStaff: boolean;
   bookingUrl: string;
   bookingWindowClosed: boolean;
   minNoticeHours: number;
   maxAdvanceDays: number;
 }) {
   const base = `/dashboard/${connectionId}`;
-  const summary = setupSummary(setupFacts);
+  const summary = setupSummary(setupFacts, canManageStaff);
   const v = useVocabulary();
   const hrefs: Record<string, string> = {
     // Was ?tab=… — stale since Settings moved off tabs onto the rail
@@ -383,7 +392,8 @@ function EmptyOverview({
     name: `${base}/settings?page=general`,
     services: `${base}/services`,
     resources: `${base}/resources/new`,
-    channel: `${base}/settings?page=integrations`,
+    // Where hours live when there is no Staff screen to send them to.
+    hours: `${base}/settings?page=general`,
     reminders: `${base}/settings?page=notifications`,
   };
   const firstUnfinished = summary.tasks.find((t) => !t.done);

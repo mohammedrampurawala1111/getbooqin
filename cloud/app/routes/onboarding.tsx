@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { redirect, useFetcher, useNavigate, useSearchParams } from "react-router";
 import type { Route } from "./+types/onboarding";
 import { getClerkClient, requireUserSession, ensureUserRow } from "~/session.server";
 import { AlertError, Field, Input, Toggle, TimezoneSelect } from "~/components/ui";
-import { OnboardingShell, PresetTiles, PresetScaffold, STEP_NAMES } from "~/components/onboarding";
+import {
+  OnboardingShell, PresetTiles, PresetScaffold, STEP_NAMES,
+  WeeklyHoursEditor, defaultWeek, type DayHours,
+} from "~/components/onboarding";
 import { starterTemplate, templateCard, vocabFor, SERVICE_SWATCHES } from "~/lib/presets";
 import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
 import { CURRENCIES, guessCurrency } from "~/lib/currency";
@@ -219,8 +222,17 @@ async function handleStep2(userId: string, form: FormData): Promise<ActionResult
     return { error: "Something went wrong — go back to the previous step and try again." };
   }
 
-  const resourceName = String(form.get("resource_name") || "").trim();
-  if (resourceName) {
+  // Hours the merchant actually chose, not a template's guess.
+  let chosenHours: Array<{ dayOfWeek: number; open: boolean; start: string; end: string }> = [];
+  try {
+    const parsed = JSON.parse(String(form.get("hours") ?? "[]"));
+    if (Array.isArray(parsed)) chosenHours = parsed;
+  } catch {
+    // Falls through to the template below, which is the old behaviour
+    // and still leaves the account bookable.
+  }
+
+  if (chosenHours.length > 0 || form.get("hours") !== null) {
     // This step just showed the merchant their industry's default business
     // hours a moment earlier, but never carried them into the resource it
     // creates — the resource landed with every day off and 0 bookable
@@ -233,13 +245,23 @@ async function handleStep2(userId: string, form: FormData): Promise<ActionResult
     // needs the identical seeding, not a shared helper worth extracting for
     // two call sites this small.
     const settings = await Settings.getSettings(connection.shop, connection.platform);
-    const template = templateCard(settings.preset);
-    const [start, end] = template.range.split("–");
-    const schedule: Array<{ day: number; start: string; end: string }> = [];
-    for (let day = 0; day < 7; day++) {
-      // Schedule.day is Sunday-first (0=Sunday); template.open is Monday-first.
-      const templateDay = day === 0 ? 6 : day - 1;
-      if (template.open[templateDay]) schedule.push({ day, start, end });
+
+    // What the merchant chose on step 2. Falls back to the business-type
+    // template only when nothing usable arrived — a hand-rolled POST, or
+    // an older client — so the account is still bookable either way.
+    let schedule = chosenHours
+      .filter((day) => day.open && day.start && day.end && day.start < day.end)
+      .map((day) => ({ day: day.dayOfWeek, start: day.start, end: day.end }));
+
+    if (schedule.length === 0) {
+      const template = templateCard(settings.preset);
+      const [start, end] = template.range.split("–");
+      schedule = [];
+      for (let day = 0; day < 7; day++) {
+        // Schedule.day is Sunday-first (0=Sunday); template.open is Monday-first.
+        const templateDay = day === 0 ? 6 : day - 1;
+        if (template.open[templateDay]) schedule.push({ day, start, end });
+      }
     }
 
     // Every preset-seeded service from step 1 has no resource assigned yet
@@ -255,7 +277,11 @@ async function handleStep2(userId: string, form: FormData): Promise<ActionResult
     const existingServices = await Data.catalogServices(connection.shop, connection.platform, false);
 
     await Data.saveResource(connection.shop, connection.platform, {
-      name: resourceName,
+      // Named after the business, not after a person. Staff management
+      // is shipped dark, so nobody is going to see this until an admin
+      // turns it on — at which point the business's own name is a far
+      // better thing to find than a blank or a placeholder.
+      name: settings.business_name || "Bookings",
       title: "",
       email: "",
       phone: "",
@@ -359,7 +385,7 @@ type OnboardingState = {
   currency: string;
   currencySymbol: string;
   teamSize: string;
-  resourceName: string;
+  hours: DayHours[];
   remindersOn: boolean;
 };
 
@@ -384,7 +410,7 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
     currency: "USD",
     currencySymbol: "$",
     teamSize: "1",
-    resourceName: "",
+    hours: defaultWeek(),
     remindersOn: true,
   }));
 
@@ -468,7 +494,7 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
     const fd = new FormData();
     fd.set("_intent", "step2");
     fd.set("cid", cid);
-    fd.set("resource_name", state.resourceName);
+    fd.set("hours", JSON.stringify(state.hours));
     pendingOutcomeRef.current = outcome;
     fetcher.submit(fd, { method: "post" });
   }
@@ -608,6 +634,22 @@ function StepBusiness({
   );
 }
 
+/**
+ * When are you open?
+ *
+ * This step used to ask for the name of a "staff member" and seed their
+ * hours invisibly from a business-type template the merchant had seen
+ * once, on the previous screen, and never confirmed. Both halves were
+ * wrong now that staff management is shipped dark: it asked a
+ * one-person business to name an employee they do not have, and then
+ * guessed the one fact they definitely do have an opinion about.
+ *
+ * So it asks for the hours and derives the rest. The bookable resource
+ * is still created — availability is computed from it and every booking
+ * is made against one — it is just named after the business instead of
+ * after a person, which is what a merchant sees if staff management is
+ * ever turned on for them.
+ */
 function StepSetup({
   state, update, saving, onNext, onBack,
 }: {
@@ -617,43 +659,40 @@ function StepSetup({
   onNext: () => void;
   onBack: () => void;
 }) {
+  const v = useMemo(() => vocabFor(starterTemplate(state.preset).terms), [state.preset]);
   const [touched, setTouched] = useState(false);
-  const nameMissing = touched && !state.resourceName.trim();
-  const v = vocabFor(starterTemplate(state.preset).terms);
+  // Every day closed is not a business, it is a booking page that offers
+  // nothing — and the merchant would only find that out by sending a
+  // customer to it.
+  const noneOpen = state.hours.every((day) => !day.open);
+  // A day that closes before it opens produces no slots at all, silently.
+  const backwards = state.hours.some((day) => day.open && day.start >= day.end);
 
   function handleNext() {
-    if (!state.resourceName.trim()) {
-      setTouched(true);
-      return;
-    }
+    setTouched(true);
+    if (noneOpen || backwards) return;
     onNext();
   }
 
   return (
     <>
-      <h1 className="ob-h1">Your setup</h1>
-      <PresetScaffold presetId={state.preset} />
+      <h1 className="ob-h1">When are you open?</h1>
       <div className="card p-[18px]">
-        <h2 className="card-title mb-3">Add your first {v.resourceOne}</h2>
-        <Field
-          label="Name"
-          // Genericized to "staff member, room, table or bay" for every
-          // industry, even restaurants (whose "resource" is a table, not a
-          // person) and clinics (whose auditor expects "Practitioner", not
-          // "staff member") — vocabFor's resourceOne/bookingMany already
-          // carry the right noun for this preset (UX audit's #5 finding).
-          hint={nameMissing ? undefined : `A ${v.resourceOne} — whatever takes your ${v.bookingMany}. You can add more later.`}
-          error={nameMissing ? "A booking system needs at least one of these — add a name to continue." : undefined}
-        >
-          <Input
-            value={state.resourceName}
-            onChange={(e) => update({ resourceName: e.target.value })}
-            // A person's name doesn't fit every industry's resource — an
-            // automotive account's first resource is a bay, not someone
-            // named Alex Rivera (UX audit's B6 finding).
-            placeholder={`e.g. ${v.resourceOne.charAt(0).toUpperCase()}${v.resourceOne.slice(1)} 1`}
-          />
-        </Field>
+        <p className="m-0 mb-3 -mt-1 text-meta text-muted">
+          Customers can book {v.bookingMany.toLowerCase()} during these hours. You can change them any time, and
+          set different hours per person later.
+        </p>
+        <WeeklyHoursEditor days={state.hours} onChange={(hours) => update({ hours })} />
+        {touched && noneOpen && (
+          <p className="m-0 mt-3 text-[12.5px] text-danger">
+            Pick at least one day, or nobody can book anything.
+          </p>
+        )}
+        {touched && backwards && (
+          <p className="m-0 mt-3 text-[12.5px] text-danger">
+            A closing time has to be later than its opening time.
+          </p>
+        )}
       </div>
       <div className="flex justify-between">
         <button type="button" className="btn-sec" onClick={onBack} disabled={saving}>Back</button>

@@ -397,3 +397,93 @@ export function PlanCard({
 }
 
 export type { TemplateCard };
+
+/* ------------------------------------------------------------------ */
+/* Weekly hours                                                        */
+/* ------------------------------------------------------------------ */
+
+export const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+export interface DayHours {
+  dayOfWeek: number;
+  open: boolean;
+  start: string;
+  end: string;
+}
+
+/** A plausible working week, for a merchant who has not said otherwise yet. */
+export function defaultWeek(): DayHours[] {
+  return Array.from({ length: 7 }, (_, dayOfWeek) => ({
+    dayOfWeek,
+    // Monday to Friday. Not a guess about their trade so much as the
+    // shape of week that is least surprising to correct.
+    open: dayOfWeek >= 1 && dayOfWeek <= 5,
+    start: "09:00",
+    end: "17:00",
+  }));
+}
+
+/**
+ * Seven rows: open or closed, and from when to when.
+ *
+ * Shared by onboarding and Settings → General deliberately. They ask the
+ * same question of the same data, and the version where they drifted is
+ * the version where a merchant sets hours during setup and finds
+ * something different waiting for them afterwards.
+ *
+ * Purely presentational — the caller owns the value and decides what
+ * saving means, which for onboarding is "create the first resource with
+ * these" and for Settings is "apply to every active resource".
+ */
+export function WeeklyHoursEditor({
+  days,
+  onChange,
+}: {
+  days: DayHours[];
+  onChange: (days: DayHours[]) => void;
+}) {
+  function update(dayOfWeek: number, patch: Partial<DayHours>) {
+    onChange(days.map((day) => (day.dayOfWeek === dayOfWeek ? { ...day, ...patch } : day)));
+  }
+
+  return (
+    <div className="flex flex-col">
+      {days.map((day) => (
+        <div
+          key={day.dayOfWeek}
+          className="flex flex-wrap items-center gap-3 border-b border-row py-[10px] last:border-0"
+        >
+          <label className="flex min-w-[140px] items-center gap-[10px] text-body">
+            <input
+              type="checkbox"
+              checked={day.open}
+              onChange={(e) => update(day.dayOfWeek, { open: e.target.checked })}
+            />
+            <span className={day.open ? "font-medium" : "text-muted"}>{DAY_NAMES[day.dayOfWeek]}</span>
+          </label>
+          {day.open ? (
+            <div className="flex items-center gap-2">
+              <input
+                type="time"
+                aria-label={`${DAY_NAMES[day.dayOfWeek]} opening time`}
+                className="input w-[120px]"
+                value={day.start}
+                onChange={(e) => update(day.dayOfWeek, { start: e.target.value })}
+              />
+              <span className="text-muted">to</span>
+              <input
+                type="time"
+                aria-label={`${DAY_NAMES[day.dayOfWeek]} closing time`}
+                className="input w-[120px]"
+                value={day.end}
+                onChange={(e) => update(day.dayOfWeek, { end: e.target.value })}
+              />
+            </div>
+          ) : (
+            <span className="text-meta text-muted">Closed</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}

@@ -66,7 +66,7 @@ primary_region = "ams"
   # about anything that is not a pk_live_ key, so a deploy with this
   # placeholder still in it will say so in the first lines of its log.
   [build.args]
-    VITE_CLERK_PUBLISHABLE_KEY = "REPLACE_WITH_pk_live_KEY_FROM_CLERK_PRODUCTION"
+    VITE_CLERK_PUBLISHABLE_KEY = "pk_live_Y2xlcmsuZ2V0Ym9vcWluLmNvbSQ"
 
 # Migrations run here, not in the machine's CMD, and the difference
 # matters: a release command runs once, before any machine is replaced,

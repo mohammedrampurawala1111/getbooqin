@@ -181,7 +181,7 @@ export type SetupFacts = {
   remindersOn: boolean;
 };
 
-export function setupTasks(f: SetupFacts) {
+export function setupTasks(f: SetupFacts, canManageStaff = false) {
   const v = vocabFor(f.terms);
   return [
     // Accounts from before onboarding persisted a real name see their raw
@@ -190,24 +190,35 @@ export function setupTasks(f: SetupFacts) {
     // that as a real checklist item instead of a silent gap.
     { key: "name", name: "Name your business", hint: "Shown in the sidebar and on booking confirmations", done: f.businessNamed },
     { key: "services", name: `Add your ${v.services.toLowerCase()}`, hint: `${f.serviceCount} added so far`, done: f.serviceCount > 0 },
-    // done requires bookable *hours*, not just a resource row existing — a
-    // resource can be created with every day toggled off (onboarding's own
-    // resource step used to do exactly that) and take zero bookings despite
-    // technically existing (UX audit's B1 finding).
-    { key: "resources", name: `Add ${v.resources.toLowerCase()}`, hint: `At least one ${v.resourceOne} needs bookable hours`, done: f.bookableResourceCount > 0 },
-    {
-      key: "channel",
-      name: "Connect a channel",
-      hint: f.connectedChannels > 0 ? `${f.connectedChannels} connected` : f.channelSetupSkipped ? "Skipped — selling without Shopify" : "Shopify, or share your booking link directly",
-      done: f.connectedChannels > 0 || f.channelSetupSkipped,
-    },
+    // The same underlying fact either way — bookable *hours* exist, not
+    // merely a resource row, since a resource with every day toggled off
+    // takes zero bookings while technically existing (UX audit's B1
+    // finding). What changes is where the merchant is sent to fix it.
+    //
+    // With staff management dark there is no Staff screen to send them
+    // to, and "Add staff" is a task a one-person business cannot
+    // complete and should not be asked to. They set hours on Settings,
+    // which writes through to the resource onboarding already made.
+    canManageStaff
+      ? {
+          key: "resources",
+          name: `Add ${v.resources.toLowerCase()}`,
+          hint: `At least one ${v.resourceOne} needs bookable hours`,
+          done: f.bookableResourceCount > 0,
+        }
+      : {
+          key: "hours",
+          name: "Set your business hours",
+          hint: "When customers can book",
+          done: f.bookableResourceCount > 0,
+        },
     { key: "reminders", name: "Turn on reminders", hint: "Cuts no-shows by around a third", done: f.remindersOn },
   ];
 }
 
 /* "One step left before your first booking can come in." */
-export function setupSummary(f: SetupFacts) {
-  const tasks = setupTasks(f);
+export function setupSummary(f: SetupFacts, canManageStaff = false) {
+  const tasks = setupTasks(f, canManageStaff);
   const done = tasks.filter((t) => t.done).length;
   const left = tasks.length - done;
   const v = vocabFor(f.terms);
