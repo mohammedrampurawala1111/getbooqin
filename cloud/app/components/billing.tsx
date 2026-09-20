@@ -279,7 +279,9 @@ function UsageMeters({ billing }: { billing: BillingView }) {
         return (
           <div key={key} className="flex flex-col gap-[6px] border-b border-row py-[11px] last:border-b-0">
             <div className="flex items-baseline justify-between gap-3 text-[13px]">
-              <span className={over ? "font-medium text-danger" : ""}>{LIMIT_LABELS[key as LimitKey]}</span>
+              <span className={`first-letter:uppercase ${over ? "font-medium text-danger" : ""}`}>
+                {LIMIT_LABELS[key as LimitKey]}
+              </span>
               <span className="num shrink-0 text-[12px] text-muted">
                 {used} / {unlimited ? "Unlimited" : cap}
               </span>
@@ -351,7 +353,7 @@ export function BillingPage({
               the next create with no explanation. */}
           {overCaps.length > 0 && (
             <div className="rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
-              You're over your plan on {overCaps.map((k) => LIMIT_LABELS[k as LimitKey].toLowerCase()).join(", ")}.
+              You're over your plan on {overCaps.map((k) => LIMIT_LABELS[k as LimitKey]).join(", ")}.
               Nothing has been removed and everything you have keeps working — you just can't add more until you
               upgrade.
             </div>
@@ -464,7 +466,7 @@ export function BillingPage({
                 <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[12px]">
                   {LIMIT_KEYS.map((key) => (
                     <li key={key} className="flex items-baseline justify-between gap-2">
-                      <span className="text-subtle">{LIMIT_LABELS[key as LimitKey]}</span>
+                      <span className="text-subtle first-letter:uppercase">{LIMIT_LABELS[key as LimitKey]}</span>
                       <span className="num shrink-0">{formatLimit(plan.limits[key as LimitKey])}</span>
                     </li>
                   ))}
@@ -600,6 +602,13 @@ export function BillingPage({
           </span>
           {/* Cancelling is "don't renew", never "cut me off now" — the
               paid-for period is honoured either way. */}
+          {billing.status === "trialing" && (
+            <span className="text-meta text-muted">
+              Nothing to cancel — you haven't paid anything. The trial ends on{" "}
+              {formatDate(billing.trialEndsAt)} and the account moves to Free on its own, keeping every
+              booking and customer you've added.
+            </span>
+          )}
           {(billing.status === "active" || billing.status === "past_due") && !billing.cancelAtPeriodEnd && (
             <Form method="post">
               <input type="hidden" name="_section" value="billing_cancel" />

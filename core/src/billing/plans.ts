@@ -169,11 +169,22 @@ export const LIMIT_KEYS: readonly LimitKey[] = [
 ];
 
 export const LIMIT_LABELS: Record<LimitKey, string> = {
-  resources: "Resources (staff / rooms)",
-  services: "Services",
-  teamMembers: "Team members",
-  bookingsPerMonth: "Customer bookings per month",
-  businesses: "Businesses / locations",
+  // Not "Resources (staff / rooms)".
+  //
+  // Two problems with that. "Resources" is our word for a row in a
+  // table, not a merchant's word for anything — and the parenthetical
+  // pointed at Staff screens that are shipped dark, so a Free account
+  // read a cap on something it could not see and had no way to reach.
+  //
+  // Reads correctly in both places this appears: on a plan card as a
+  // row label, and mid-sentence in limitError's "your Free plan
+  // includes 1 bookable people or rooms" — which is why it is a noun
+  // phrase rather than a heading.
+  resources: "bookable people or rooms",
+  services: "services",
+  teamMembers: "team members",
+  bookingsPerMonth: "customer bookings per month",
+  businesses: "businesses or locations",
 };
 
 /** `Infinity` means unlimited. JSON-safe conversion is `limitToString` below. */
