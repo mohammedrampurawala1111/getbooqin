@@ -52,9 +52,21 @@ function gstRate(): number {
  * overstates the tax collected on every invoice in the series.
  *
  * An export is zero-rated, so there is nothing to back out.
+ *
+ * And an **unregistered seller charges no GST at all**. A business
+ * below the registration threshold — ₹20 lakh for services — is not
+ * merely excused from charging it, it is not permitted to: collecting
+ * GST without a registration is an offence, and an invoice stating a
+ * tax component is the claim to have done so. So a blank
+ * INVOICE_GSTIN zeroes this, rather than quietly reporting 18% of
+ * every domestic sale as tax somebody must account for.
  */
-export function taxComponent(amountMinor: number, status: TaxStatus | string): number {
-  if (status !== "india_gst") return 0;
+export function taxComponent(
+  amountMinor: number,
+  status: TaxStatus | string,
+  sellerRegistered = true
+): number {
+  if (status !== "india_gst" || !sellerRegistered) return 0;
   const rate = gstRate();
   return Math.round((amountMinor * rate) / (100 + rate));
 }
@@ -143,7 +155,7 @@ export async function issueInvoice(args: IssueInvoiceArgs): Promise<IssueResult>
 
           currency: args.currency,
           amountMinor: args.amountMinor,
-          taxAmountMinor: taxComponent(args.amountMinor, status),
+          taxAmountMinor: taxComponent(args.amountMinor, status, !!seller.gstin),
 
           planId: args.plan,
           billingCycle: args.cycle,
@@ -180,7 +192,15 @@ export async function issueInvoice(args: IssueInvoiceArgs): Promise<IssueResult>
  */
 export function invoiceDeclaration(status: TaxStatus | string, country: string, seller: SellerIdentity): string {
   if (status === "india_gst") {
-    return `Supply of services within India. GST @ ${gstRate()}% is included in the amount shown.`;
+    // Only a registered seller may say this. Without a GSTIN the
+    // business is below the threshold, charges no GST, and an invoice
+    // claiming otherwise asserts a collection that did not happen — on
+    // a document the customer may use to claim input credit they are
+    // not entitled to. seller.ts already refuses to print a placeholder
+    // GSTIN for the same reason; this is the sentence that went with it.
+    return seller.gstin
+      ? `Supply of services within India. GST @ ${gstRate()}% is included in the amount shown.`
+      : "Supply of services within India. The supplier is not registered under GST, so no GST has been charged.";
   }
   if (status === "export_zero_rated") {
     const basis = seller.lutOnFile

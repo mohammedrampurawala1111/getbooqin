@@ -13,6 +13,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import prisma from "../../db.js";
 import { issueInvoice, taxComponent, invoiceDeclaration, invoiceFilename } from "../invoices.js";
+import type { SellerIdentity } from "../seller.js";
 import { sellerIdentity } from "../seller.js";
 
 const RUN = Date.now();
@@ -255,5 +256,59 @@ describe("tax", () => {
 describe("the file that lands in an inbox", () => {
   it("is named so an accountant can find it again", () => {
     expect(invoiceFilename({ number: "GB/2026-27/0001" })).toBe("GB-2026-27-0001.pdf");
+  });
+});
+
+describe("an unregistered seller charges no GST", () => {
+  /**
+   * A business below India's registration threshold — ₹20 lakh for
+   * services — is not merely excused from charging GST, it is not
+   * permitted to. Collecting it without a registration is an offence,
+   * and an invoice stating a tax component is the claim to have done
+   * so, on a document the customer may use to claim input credit they
+   * are not entitled to.
+   *
+   * INVOICE_GSTIN being blank is the signal, and seller.ts already
+   * refuses to print a placeholder one for exactly this reason.
+   */
+  const registered: SellerIdentity = {
+    legalName: "GetBooqin Pvt Ltd",
+    address: "Mumbai",
+    gstin: "27AAPFU0939F1ZV",
+    country: "IN",
+    seriesPrefix: "GB",
+    lutOnFile: false,
+  };
+  const unregistered: SellerIdentity = { ...registered, gstin: "" };
+
+  it("backs GST out of the total for a registered seller", () => {
+    // Inclusive pricing, so the tax is backed *out* of the total:
+    // 99900 × 18 / 118 = 15239 paise (₹152.39). Adding 18% instead
+    // would give ₹179.82 and overstate the tax on every invoice.
+    expect(taxComponent(99_900, "india_gst", true)).toBe(15_239);
+  });
+
+  it("reports no tax component when the seller has no GSTIN", () => {
+    expect(taxComponent(99_900, "india_gst", false)).toBe(0);
+  });
+
+  it("says GST is included only when it actually is", () => {
+    expect(invoiceDeclaration("india_gst", "IN", registered)).toContain("GST @");
+    expect(invoiceDeclaration("india_gst", "IN", registered)).toContain("included");
+  });
+
+  it("says plainly that no GST was charged when it wasn't", () => {
+    const line = invoiceDeclaration("india_gst", "IN", unregistered);
+
+    expect(line).toContain("not registered under GST");
+    expect(line).toContain("no GST has been charged");
+    // The claim that must not survive: a customer reading this must not
+    // believe there is input credit in it.
+    expect(line).not.toContain("included in the amount shown");
+  });
+
+  it("changes nothing for an export, which was never taxed here", () => {
+    expect(taxComponent(1_000, "export_zero_rated", true)).toBe(0);
+    expect(taxComponent(1_000, "export_zero_rated", false)).toBe(0);
   });
 });
