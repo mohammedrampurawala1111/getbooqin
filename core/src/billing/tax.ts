@@ -31,24 +31,30 @@ export type TaxStatus = "india_gst" | "export_zero_rated" | "eu_no_vat_id";
 /**
  * Whether an EU customer must produce a VAT number to buy.
  *
- * On by default, and the default is the safe one. Off accepts EU
- * customers who have no VAT number — small businesses below their own
- * registration threshold, and consumers — which is a commercial
- * decision with a tax consequence attached: a supply to a
- * non-taxable EU person is **not** covered by the reverse charge, and a
- * non-EU supplier has no de-minimis. The obligation is to register for
- * the non-Union OSS scheme and charge the customer's local rate, from
- * the first sale.
+ * **Off by default**, which makes the tax number one field with one
+ * behaviour everywhere: always shown, never required, accepted and
+ * recorded when given. A GSTIN has always worked that way — an Indian
+ * customer below the registration threshold has none and must not be
+ * blocked — and there was no good reason for an EU merchant in the same
+ * position to meet a wall instead.
  *
- * Which this flag does not do for you. What it does is stop the product
- * *lying* about it: an EU sale with no VAT number gets its own status
- * and its own invoice line, rather than being labelled a reverse-charge
- * supply it is not.
+ * The tax consequence is unchanged by any of this and is worth stating
+ * once: a supply to a non-taxable EU person is **not** covered by the
+ * reverse charge, and a non-EU supplier has no de-minimis. Charging the
+ * customer's local rate, via a non-Union OSS registration or a merchant
+ * of record, is what answers that. This flag only decides whether the
+ * product turns them away at the door.
  *
- * Read from BILLING_EU_REQUIRE_VAT at the edge and passed in, never
- * read here — this module has no imports and runs in the browser.
+ * What the product does guarantee is that it never *describes* a
+ * treatment it cannot support: a sale with no VAT number carries
+ * `eu_no_vat_id` and an invoice line that says exactly that, rather
+ * than claiming a reverse charge that did not apply.
+ *
+ * Set BILLING_EU_REQUIRE_VAT=true to go back to B2B-only. Read at the
+ * edge and passed in, never read here — this module has no imports and
+ * runs in the browser.
  */
-export const DEFAULT_REQUIRE_EU_VAT_ID = true;
+export const DEFAULT_REQUIRE_EU_VAT_ID = false;
 
 export interface TaxIdentity {
   country: string;
@@ -326,10 +332,11 @@ export function countryFromTimezone(timezone: string | null | undefined): string
  * which is why every function above takes the answer as an argument
  * instead of reaching for it. A screen gets this through its loader.
  *
- * Off takes a deliberate "false": a typo, a blank, or an unset variable
- * all leave the safe behaviour in place, because the unsafe one carries
- * a registration obligation in twenty-seven countries.
+ * Opting *in* takes a deliberate "true". An unset or misspelled value
+ * leaves the field optional, which is the behaviour a merchant expects
+ * and the one that never blocks a sale — the strict mode is a
+ * deliberate commercial choice to sell B2B-only, not a fallback.
  */
 export function requireEuVatIdFromEnv(env: { BILLING_EU_REQUIRE_VAT?: string } = process.env): boolean {
-  return (env.BILLING_EU_REQUIRE_VAT ?? "").trim().toLowerCase() !== "false";
+  return (env.BILLING_EU_REQUIRE_VAT ?? "").trim().toLowerCase() === "true";
 }

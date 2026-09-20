@@ -103,14 +103,25 @@ describe("validateTaxIdentity()", () => {
     expect(validateTaxIdentity({ country: "IN", taxId: "not-a-gstin" }).problems[0].field).toBe("taxId");
   });
 
-  it("an EU customer MUST supply a VAT number", () => {
+  it("an EU customer is not required to supply a VAT number", () => {
+    // One field, one behaviour everywhere: always shown, never
+    // required, accepted when given. A GSTIN has always worked this
+    // way, and an EU merchant below their own registration threshold
+    // was meeting a wall for no reason the product could act on.
+    const { identity, problems } = validateTaxIdentity({ country: "NL" });
+
+    expect(problems).toEqual([]);
+    expect(identity).toEqual({ country: "NL", taxId: "", status: "eu_no_vat_id" });
+  });
+
+  it("can still be made B2B-only, which is a commercial choice", () => {
     // The one place outside India where the number does something: the
     // reverse charge only applies to a taxable person, and this is the
     // evidence of that. Without it the supply looks B2C, where the
     // *supplier* owes VAT at the customer's local rate and has to
     // register to remit it — which is the whole of G2's decision to
     // sell B2B-only in the EU.
-    const { identity, problems } = validateTaxIdentity({ country: "NL" });
+    const { identity, problems } = validateTaxIdentity({ country: "NL" }, { requireEuVatId: true });
 
     expect(identity).toBeNull();
     expect(problems[0].field).toBe("taxId");
@@ -201,26 +212,26 @@ describe("BILLING_EU_REQUIRE_VAT — selling to EU customers with no VAT number"
     expect(validateTaxIdentity({ country: "IN" }, allow).identity?.status).toBe("india_gst");
   });
 
-  it("defaults to requiring it when nobody says otherwise", () => {
-    expect(validateTaxIdentity({ country: "NL" }).identity).toBeNull();
-    expect(validateTaxIdentity({ country: "NL" }, {}).identity).toBeNull();
+  it("defaults to optional when nobody says otherwise", () => {
+    expect(validateTaxIdentity({ country: "NL" }).identity).not.toBeNull();
+    expect(validateTaxIdentity({ country: "NL" }, {}).identity).not.toBeNull();
   });
 });
 
 describe("requireEuVatIdFromEnv", () => {
   it.each([
-    [undefined, true],
-    ["", true],
-    ["true", true],
-    ["yes", true],
-    ["0", true],
-    ["FALSE", false],
+    [undefined, false],
+    ["", false],
     ["false", false],
-    [" false ", false],
+    ["yes", false],
+    ["1", false],
+    ["TRUE", true],
+    ["true", true],
+    [" true ", true],
   ])("%p → %p", (value, expected) => {
-    // Only a deliberate "false" turns it off. A typo, a blank or an
-    // unset variable all leave the safe behaviour in place, because the
-    // unsafe one carries a registration obligation in 27 countries.
+    // Opting in takes a deliberate "true". A typo or a blank leaves the
+    // field optional, which is the behaviour that never blocks a sale —
+    // B2B-only is a commercial choice, not a fallback.
     expect(requireEuVatIdFromEnv({ BILLING_EU_REQUIRE_VAT: value })).toBe(expected);
   });
 });

@@ -86,14 +86,18 @@ describe("tax identity", () => {
     });
   });
 
-  it("requires a tax number outside India — it is the evidence this is a B2B export", async () => {
-    // Without it we would be a non-EU supplier selling to an EU
-    // consumer, which triggers non-Union OSS registration from the very
-    // first euro.
+  it("does not require a tax number outside India either", async () => {
+    // One field, one behaviour everywhere: always shown, never
+    // required, accepted when given. An EU merchant below their own
+    // registration threshold has no VAT number, exactly as an Indian
+    // one below theirs has no GSTIN, and neither should meet a wall.
+    //
+    // The tax position is not lost, only stated honestly: the sale
+    // carries `eu_no_vat_id` rather than being labelled a reverse-charge
+    // export it is not. BILLING_EU_REQUIRE_VAT=true restores B2B-only.
     await subscribe({ plan: "free", status: "free", currency: "EUR" });
-    await expect(
-      startCheckout({ connectionId, country: "NL", plan: "growth", cycle: "monthly" })
-    ).rejects.toMatchObject({ code: "getbooqin_tax_identity" });
+    await expect(startCheckout({ connectionId, country: "NL", plan: "growth", cycle: "monthly" }))
+      .rejects.not.toMatchObject({ code: "getbooqin_tax_identity" });
   });
 
   it("does not require a GSTIN from an Indian customer", async () => {

@@ -577,7 +577,7 @@ export function BillingPage({
                   ? "VAT number"
                   : isEu
                     ? "VAT number (optional)"
-                    : "Business tax number (optional)"}
+                    : "Tax number (optional)"}
               <input
                 className="input w-full min-w-0"
                 value={taxId}
@@ -594,7 +594,7 @@ export function BillingPage({
                 ? "EU businesses account for VAT themselves under the reverse charge, so we need your VAT number to invoice you correctly. We can't sell to EU consumers."
                 : isEu
                   ? "If you're VAT-registered, add your number and VAT is accounted for by you under the reverse charge. Leave it blank if you aren't."
-                  : "A zero-rated export of services — no tax is added. Add a tax number only if you want it on your invoice."}
+                  : "A zero-rated export of services — no tax is added. Add your business tax number if you'd like it on your invoice."}
           </p>
 
           {/* A Save of their own.
