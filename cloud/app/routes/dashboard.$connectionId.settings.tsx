@@ -176,6 +176,14 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // a placeholder the merchant has to download to check.
   const bookingQr = await Qr.qrDataUrl(settings.booking_page_url, { width: 240 });
 
+  // The widest span any resource is open on each day — the read side of
+  // setBusinessHours. Paired with the count, because the card needs to
+  // warn before overwriting more than one person's schedule.
+  const [businessHours, resourceCount] = await Promise.all([
+    Data.businessHours(shop, platform),
+    Data.activeResourceCount(shop, platform),
+  ]);
+
   // The account and Meta's verdict on our templates, read from our own
   // cache rather than from Meta — the webhook keeps it fresh, and a
   // settings page load is the wrong place to spend a Graph call. The
@@ -211,6 +219,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
   return {
     bookingQr,
+    businessHours,
+    resourceCount,
     whatsapp,
     settings,
     billing: {
@@ -509,6 +519,37 @@ export async function action({ request, params }: Route.ActionArgs) {
     await Settings.setSettings(shop, platform, { terms, hidden_overview_cards: hidden });
     void current;
     return { saved: true };
+  } else if (section === "business_hours") {
+    // Parsed server-side and clamped, because the card posts JSON from a
+    // controlled component and a hand-rolled POST is the only other way
+    // in. Times that do not parse are dropped rather than rejected —
+    // Data.setBusinessHours already refuses a day whose end is not after
+    // its start, and the rest of the week should still save.
+    let parsed: unknown = [];
+    try {
+      parsed = JSON.parse(String(form.get("hours") ?? "[]"));
+    } catch {
+      return { error: "Those hours didn't save — please try again." };
+    }
+
+    const days = (Array.isArray(parsed) ? parsed : [])
+      .map((row) => (row && typeof row === "object" ? (row as Record<string, unknown>) : {}))
+      .map((row) => ({
+        day: Number(row.dayOfWeek),
+        open: row.open === true,
+        start: String(row.start ?? "").slice(0, 5),
+        end: String(row.end ?? "").slice(0, 5),
+      }))
+      .filter((row) => Number.isInteger(row.day) && row.day >= 0 && row.day <= 6);
+
+    const { resourcesUpdated } = await Data.setBusinessHours(shop, platform, days);
+    // Nothing to write the hours onto is a real state — an account that
+    // has somehow lost its resource — and silently reporting success
+    // would leave a merchant with a booking page that offers nothing.
+    if (resourcesUpdated === 0) {
+      return { error: "We couldn't find anything bookable to apply these hours to. Please get in touch." };
+    }
+    return { saved: true };
   } else if (section === "disconnect_store") {
     const targetId = String(form.get("connection_id") ?? "");
     await disconnectConnection(userId, targetId);
@@ -563,7 +604,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 export default function SettingsPage({ loaderData, actionData }: Route.ComponentProps) {
   const {
-    settings, billing, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites, bookingQr, whatsapp,
+    settings, billing, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites, bookingQr, whatsapp, businessHours, resourceCount,
   } = loaderData;
   const v = useVocabulary();
   // defaultSettings() seeds business_name to the connection's own opaque
@@ -655,6 +696,16 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
             <TimezoneSelect defaultValue={settings.timezone} />
           </Row>
         </SettingsCard>
+      )}
+
+      {page === "general" && (
+        <BusinessHoursCard
+          hours={businessHours}
+          resourceCount={resourceCount}
+          canManageStaff={billing.features.includes("staff")}
+          connectionId={currentConnectionId}
+          savedAt={savedAt}
+        />
       )}
 
       {page === "general" && (
@@ -1358,6 +1409,117 @@ function EmbedSnippetCard({ bookingUrl, vocab }: { bookingUrl: string; vocab: Re
  * into the booking page. The server re-checks the size and format
  * regardless — everything that happens in a browser is a suggestion.
  */
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/**
+ * When the business is open.
+ *
+ * ## Why this is on Settings and not only on Staff
+ *
+ * Hours are stored per bookable resource, because that is what
+ * availability is computed from and a salon where one stylist works
+ * Saturdays genuinely has different hours per person. But nearly every
+ * account starting out is one person, and with the Staff screens behind
+ * an admin grant they would otherwise have nowhere at all to say when
+ * they are open — which is the first question anybody has about their
+ * own business, and the last one they should have to learn a data model
+ * to answer.
+ *
+ * ## The warning is the important part
+ *
+ * Saving applies one pattern to every active resource. For one person
+ * that is invisible and exactly right. For three staff on different
+ * shifts it is destructive, so the card says so *before* the button
+ * when there is more than one, rather than reporting it afterwards.
+ */
+function BusinessHoursCard({
+  hours, resourceCount, canManageStaff, connectionId, savedAt,
+}: {
+  hours: { dayOfWeek: number; open: boolean; start: string; end: string }[];
+  resourceCount: number;
+  canManageStaff: boolean;
+  connectionId: string;
+  savedAt?: string;
+}) {
+  const [days, setDays] = useState(() =>
+    hours.map((day) => ({
+      ...day,
+      // A day with no schedule has no times to show. Seed the inputs
+      // with a plausible working day so ticking "open" does not then
+      // require typing both ends from scratch.
+      start: day.start || "09:00",
+      end: day.end || "17:00",
+    }))
+  );
+
+  function update(dayOfWeek: number, patch: Partial<(typeof days)[number]>) {
+    setDays((current) => current.map((day) => (day.dayOfWeek === dayOfWeek ? { ...day, ...patch } : day)));
+  }
+
+  return (
+    <SettingsCard
+      title="Business hours"
+      subtitle="When customers can book. Individual staff can differ."
+      saveLabel="Save hours"
+      savedAt={savedAt}
+    >
+      <input type="hidden" name="_section" value="business_hours" />
+      <input type="hidden" name="hours" value={JSON.stringify(days)} />
+
+      {resourceCount > 1 && (
+        <p className="m-0 mb-[10px] rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+          This account has {resourceCount} bookable {resourceCount === 1 ? "person or room" : "people or rooms"}, and
+          saving here gives all of them these hours.{" "}
+          {canManageStaff ? (
+            <a href={`/dashboard/${connectionId}/resources`} className="underline">
+              Set them individually instead
+            </a>
+          ) : (
+            "Ask us to turn on staff management if they need different hours."
+          )}
+        </p>
+      )}
+
+      <div className="flex flex-col">
+        {days.map((day) => (
+          <div
+            key={day.dayOfWeek}
+            className="flex flex-wrap items-center gap-3 border-b border-row py-[10px] last:border-0"
+          >
+            <label className="flex min-w-[140px] items-center gap-[10px] text-body">
+              <input
+                type="checkbox"
+                checked={day.open}
+                onChange={(e) => update(day.dayOfWeek, { open: e.target.checked })}
+              />
+              <span className={day.open ? "font-medium" : "text-muted"}>{DAY_NAMES[day.dayOfWeek]}</span>
+            </label>
+            {day.open ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="time"
+                  className="input w-[120px]"
+                  value={day.start}
+                  onChange={(e) => update(day.dayOfWeek, { start: e.target.value })}
+                />
+                <span className="text-muted">to</span>
+                <input
+                  type="time"
+                  className="input w-[120px]"
+                  value={day.end}
+                  onChange={(e) => update(day.dayOfWeek, { end: e.target.value })}
+                />
+              </div>
+            ) : (
+              <span className="text-meta text-muted">Closed</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </SettingsCard>
+  );
+}
+
 function BrandingCard({
   connectionId, canBrand, currentPlan, logo, accent, savedAt,
 }: {

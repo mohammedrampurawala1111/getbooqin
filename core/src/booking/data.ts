@@ -1145,3 +1145,58 @@ export async function deleteFaq(shop: string, id: number) {
 }
 
 export type { ServiceConfig, ProductCache, Resource };
+
+/**
+ * Set one weekly pattern as the whole business's opening hours.
+ *
+ * ## Why this exists on top of setSchedule
+ *
+ * Hours are stored per bookable resource, because that is what
+ * availability is actually computed from — a salon where one stylist
+ * works Saturdays genuinely has different hours per person, and the
+ * engine has to know. But nearly every account starting out is one
+ * person, and asking them to find a "Staff" screen to say when their
+ * shop is open is asking them to learn our data model to answer a
+ * question about their own business.
+ *
+ * So Settings asks the simple question and this applies the answer.
+ * `businessHours()` above is the read side of the same idea: the widest
+ * span any resource is open on each day.
+ *
+ * ## It overwrites, and the caller has to mean it
+ *
+ * Every active resource gets the same pattern. For a one-person account
+ * that is exactly right and invisible. For an account with three staff
+ * on different shifts it is destructive — so the Settings card only
+ * offers it without warning when there is one resource, and says plainly
+ * what it will do when there is more than one.
+ *
+ * Inactive resources are left alone: a deactivated practitioner is not
+ * part of the business's hours, and rewriting their schedule would
+ * quietly change what reactivating them does.
+ */
+export async function setBusinessHours(
+  shop: string,
+  platform: string,
+  days: Array<{ day: number; open: boolean; start: string; end: string }>
+): Promise<{ resourcesUpdated: number }> {
+  const resources = await prisma.resource.findMany({
+    where: { shop, platform, status: true },
+    select: { id: true },
+  });
+
+  const rows = days
+    .filter((day) => day.open)
+    .map((day) => ({ day: day.day, start: day.start, end: day.end }));
+
+  for (const resource of resources) {
+    await setSchedule(shop, resource.id, rows);
+  }
+
+  return { resourcesUpdated: resources.length };
+}
+
+/** How many bookable resources the account has — decides whether the hours card needs a warning. */
+export function activeResourceCount(shop: string, platform: string): Promise<number> {
+  return prisma.resource.count({ where: { shop, platform, status: true } });
+}

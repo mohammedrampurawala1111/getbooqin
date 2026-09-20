@@ -93,6 +93,7 @@ export type FeatureKey =
   | "no_badge"
   | "branding"
   | "whatsapp"
+  | "staff"
   | "waitlist"
   | "team_roles"
   | "email_templates"
@@ -102,7 +103,7 @@ export type FeatureKey =
   | "early_access";
 
 export const FEATURE_KEYS: readonly FeatureKey[] = [
-  "no_badge", "branding", "whatsapp", "waitlist", "team_roles",
+  "no_badge", "branding", "whatsapp", "staff", "waitlist", "team_roles",
   "email_templates", "shopify", "export", "priority_support", "early_access",
 ];
 
@@ -130,6 +131,21 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   // point of entitlements being per-account rather than per-deploy, and
   // it needs no deploy to flip.
   whatsapp: "Confirmations and reminders on WhatsApp",
+  // Also granted by no plan, and for a different reason from the two
+  // above: this one is about how much product a first customer should
+  // be shown, not about what they have paid for.
+  //
+  // Nearly every account starting out is one person. Onboarding already
+  // creates their single bookable resource and its weekly hours, and
+  // from then on the Staff and Time off screens are two nav items that
+  // manage a thing they will never add a second of. Business hours live
+  // on Settings instead, which is where someone looks for them.
+  //
+  // Nothing underneath changes. Resources remain how availability is
+  // computed and what a booking is made against — this hides two
+  // screens, not a concept. A salon with three chairs gets the grant
+  // and the screens appear, with their existing data already in them.
+  staff: "Manage staff, rooms and time off",
   waitlist: "Waitlist with automatic offer cascade",
   team_roles: "Team roles (admin / write / read)",
   email_templates: "Editable email templates",

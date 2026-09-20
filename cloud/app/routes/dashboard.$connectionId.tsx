@@ -239,8 +239,22 @@ function navItems(vocab: Vocabulary, pendingCount: number, canViewSettings: bool
     // feature at all can't discover it exists, which is the difference
     // between a plan ladder that sells and one that just restricts.
     { to: "/waitlist", label: "Waitlist", icon: NAV_ICONS.waitlist, feature: "waitlist" as const },
-    { to: "/resources", label: v.resources, icon: NAV_ICONS.resources },
-    { to: "/timeoff", label: "Time off", icon: NAV_ICONS.timeoff },
+    // Hidden rather than locked, unlike Waitlist above — and the
+    // difference is deliberate. A locked item sells a plan; no plan
+    // grants this one, so a padlock would point at an upgrade that
+    // includes nothing. An admin turns it on per account.
+    //
+    // Hiding the screens does not hide the concept: onboarding still
+    // creates the account's first bookable resource and its hours, a
+    // booking is still made against one, and availability is still
+    // computed from its schedule. A one-person business simply never
+    // has to meet any of that — they set their hours on Settings.
+    ...(features.has("staff")
+      ? [
+          { to: "/resources", label: v.resources, icon: NAV_ICONS.resources },
+          { to: "/timeoff", label: "Time off", icon: NAV_ICONS.timeoff },
+        ]
+      : []),
     { to: "/services", label: v.services, icon: NAV_ICONS.services },
     { to: "/customers", label: v.customers, icon: NAV_ICONS.customers },
     // Orders is out of the nav for launch.
