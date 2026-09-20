@@ -60,11 +60,13 @@ test merchant.
 
 Two deliberate differences from staging, both explained in the file:
 
-- **`bom`, not `ams`.** The people whose latency matters are not the
-  merchant, they are the merchant's customers, loading a booking page on
-  a phone while half-deciding to abandon it. India is the primary
-  market — INR prices, Razorpay, UPI. The database has to move with it
-  or the change is worse than useless.
+- **`sin`, not `ams`.** The latency that matters is not the merchant's,
+  it is their customer's, loading a booking page on a phone while
+  half-deciding to abandon it. India is the primary market — INR prices,
+  Razorpay, UPI. Singapore rather than Mumbai because **Fly has no
+  Indian region**: `bom` existed once and is gone from
+  `fly platform regions`. The database has to move with it or the change
+  is worse than useless.
 - **Two machines, not one.** A rolling deploy across two is
   zero-downtime where one cannot be. Safe for the background sweeps only
   because Phase 0's lease in `Jobs.record()` makes concurrent runs safe;
@@ -74,7 +76,7 @@ Create it before starting block B:
 
 ```bash
 fly apps create getbooqin-prod
-fly postgres create --name getbooqin-prod-db --region bom
+fly postgres create --name getbooqin-prod-db --region sin
 fly postgres attach getbooqin-prod-db --app getbooqin-prod
 ```
 

@@ -19,7 +19,7 @@
 # ## What has to be true before the first deploy
 #
 #   fly apps create getbooqin-prod
-#   fly postgres create --name getbooqin-prod-db --region bom
+#   fly postgres create --name getbooqin-prod-db --region sin
 #   fly postgres attach getbooqin-prod-db --app getbooqin-prod
 #   fly certs add app.getbooqin.com --app getbooqin-prod
 #
@@ -28,21 +28,24 @@
 
 app = "getbooqin-prod"
 
-# Mumbai, not Amsterdam.
+# Singapore, not Amsterdam.
 #
 # The staging app runs in `ams` for no better reason than that is where
-# it was first launched. Production's customers are the ones who matter
-# here, and they are not the merchant — they are the merchant's
-# customers, loading a booking page on a phone, deciding whether to go
-# through with it. India is the primary market: prices are in INR, the
-# billing rail is Razorpay, collection is UPI. Serving those pages from
-# Europe adds a round trip to every step of a form somebody is already
-# half-deciding to abandon.
+# it was first launched. The latency that matters here is not the
+# merchant's — it is their customer's, loading a booking page on a phone
+# while half deciding to abandon it. India is the primary market: prices
+# are in INR, the billing rail is Razorpay, collection is UPI.
+#
+# Singapore rather than Mumbai because **Fly has no Indian region** —
+# `bom` existed once and does not appear in `fly platform regions` any
+# more. `sin` is the closest available, and roughly halves the round
+# trip from India against Amsterdam. Check the list before changing
+# this; the set moves.
 #
 # The database has to be in the same region or this is worse than
 # useless — a Postgres round trip across continents on every query eats
-# far more than the latency saved. Hence `--region bom` above.
-primary_region = "bom"
+# far more than the hop saves. Hence `--region sin` above.
+primary_region = "sin"
 
 [build]
   # Vite compiles this into cloud's client bundle at image-build time, so
