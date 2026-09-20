@@ -79,6 +79,9 @@ export default [
   route("webhooks/paypal", "routes/webhooks.paypal.tsx"),
   // Meta/WhatsApp: delivery statuses, customer replies, template verdicts.
   route("webhooks/meta", "routes/webhooks.meta.tsx"),
+  // Resource route: "does this mailbox already have an account?", asked
+  // by signup before Clerk sees the address. See the route's own note.
+  route("signup/check-email", "routes/signup.check-email.tsx"),
   // Not /privacy or /terms — shopify-openslot already owns those paths (its
   // Shopify App Store submission) on the combined server. See
   // server/combined.js's CLOUD_PREFIXES, kept in sync with this file.

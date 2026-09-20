@@ -243,10 +243,16 @@ function navItems(vocab: Vocabulary, pendingCount: number, canViewSettings: bool
     { to: "/timeoff", label: "Time off", icon: NAV_ICONS.timeoff },
     { to: "/services", label: v.services, icon: NAV_ICONS.services },
     { to: "/customers", label: v.customers, icon: NAV_ICONS.customers },
-    // After Customers, because it is a reconciliation screen rather than
-    // a daily one — a merchant opens it when chasing money, not when
-    // running the day.
-    { to: "/orders", label: "Orders", icon: NAV_ICONS.orders },
+    // Orders is out of the nav for launch.
+    //
+    // The screen and its route both still work — nothing is deleted, and
+    // /orders is reachable by URL — but it reconciles payments a
+    // merchant collected over UPI or PayPal.me directly, and **a payment
+    // there is marked paid by a person, not verified**. That is a
+    // careful thing to explain to a first customer, and the wrong thing
+    // to put in the main nav of a booking product before anyone has
+    // asked for it. Restore this line when deposits are a deliberate
+    // conversation rather than a surprise.
     ...(canViewSettings ? [{ to: "/settings", label: "Settings", icon: NAV_ICONS.settings }] : []),
   ].map((item) => ({
     ...item,

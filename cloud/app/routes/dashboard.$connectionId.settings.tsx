@@ -802,15 +802,22 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
 
       {page === "integrations" && (
         <>
-          <WhatsAppCard
-            connectionId={currentConnectionId}
-            plan={billing.plan}
-            entitled={whatsapp.entitled}
-            account={whatsapp.account}
-            templates={whatsapp.templates}
-            appId={whatsapp.appId}
-            configId={whatsapp.configId}
-          />
+          {/* Only for an account an admin has granted it to. No plan
+              includes WhatsApp — Meta will not let us onboard anyone
+              until Tech Provider is approved — so an UpgradePrompt here
+              would name a plan that does not grant it either. Hidden is
+              honest; "upgrade for this" would not be. */}
+          {whatsapp.entitled && (
+            <WhatsAppCard
+              connectionId={currentConnectionId}
+              plan={billing.plan}
+              entitled
+              account={whatsapp.account}
+              templates={whatsapp.templates}
+              appId={whatsapp.appId}
+              configId={whatsapp.configId}
+            />
+          )}
           <BookingQrCard connectionId={currentConnectionId} bookingUrl={settings.booking_page_url} vocab={v} qr={bookingQr} />
           <EmbedSnippetCard bookingUrl={settings.booking_page_url} vocab={v} />
           <div className="card">
@@ -860,57 +867,14 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
             })}
           </div>
 
-          <div className="card">
-            <div className="card-header">
-              <h2 className="card-title">Sales channels</h2>
-            </div>
-            {connections.map((c) => (
-              <div key={c.id} className="trow" style={{ gridTemplateColumns: "32px 1fr auto auto" }}>
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-600">
-                  {c.platform === "manual" ? "M" : c.shop.slice(0, 1).toUpperCase()}
-                </span>
-                {c.id === currentConnectionId || c.status !== "active" ? (
-                  <span className="min-w-0 truncate font-medium">
-                    {/* Manual mode is the *absence* of a store, not a store
-                        — "no store connected" instead of a label implying
-                        there's a connection here to manage (Defect Dossier's
-                        BQ-12 finding). */}
-                    {c.platform === "manual" ? "No store connected — bookings run through your GetBooqin booking link" : c.shop}
-                  </span>
-                ) : (
-                  // The only way to reach a second store used to be pasting its
-                  // URL — this list showed every connection but none of them,
-                  // besides the current one, were actually clickable (UX
-                  // audit's D1 finding: a store created here became invisible
-                  // and unreachable from the UI the moment a newer one existed).
-                  <a href={`/dashboard/${c.id}`} className="min-w-0 truncate font-medium text-ink hover:underline">
-                    {c.shop}
-                  </a>
-                )}
-                <span className="flex items-center gap-2">
-                  {c.id === currentConnectionId && <Badge status="confirmed" label="Current" />}
-                  {c.status !== "active" && <Badge status="cancelled" label={c.status} />}
-                </span>
-                {/* Disconnecting nothing isn't a coherent action — a manual
-                    connection never gets the destructive button at all, not
-                    just a disabled one (same finding). */}
-                {c.status === "active" && c.platform !== "manual" ? (
-                  <Form method="post">
-                    <input type="hidden" name="_section" value="disconnect_store" />
-                    <input type="hidden" name="connection_id" value={c.id} />
-                    <button type="submit" className="btn-del">Disconnect</button>
-                  </Form>
-                ) : (
-                  <span />
-                )}
-              </div>
-            ))}
-            <div className="card-footer">
-              <a href="/connect/shopify" className="btn-sec no-underline hover:no-underline">
-                + Connect a Shopify store
-              </a>
-            </div>
-          </div>
+          {/* The "Sales channels" list is gone. It existed to manage
+              multiple Shopify connections, and with Shopify shipped dark
+              it rendered exactly one row on every account saying "No
+              store connected" above a Connect button that 402s. A card
+              whose only content is the absence of the thing it manages
+              is noise on the one page a merchant reads when something
+              is wrong. Reconnecting the multi-store list is a revert of
+              this hunk if Shopify is ever released generally. */}
         </>
       )}
 

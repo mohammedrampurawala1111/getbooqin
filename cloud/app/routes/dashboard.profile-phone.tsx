@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs } from "react-router";
-import { prisma } from "getbooqin-core";
+import { prisma, emailKey } from "getbooqin-core";
 import { getUserSession, getClerkClient } from "~/session.server";
 import { isValidPhone } from "~/lib/validation";
 
@@ -31,7 +31,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   await prisma.user.upsert({
     where: { id: session.userId },
-    create: { id: session.userId, email, phone },
+    create: { id: session.userId, email, emailKey: emailKey(email), phone },
     update: { phone },
   });
 

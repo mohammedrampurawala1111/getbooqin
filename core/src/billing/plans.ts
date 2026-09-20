@@ -114,13 +114,21 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   // money for something a merchant actually wants, and it is what makes
   // the cheapest paid tier feel like a purchase rather than a toll.
   branding: "Your logo and colour on the booking page",
-  // The merchant connects their own WhatsApp Business Account and
-  // attaches their own payment method, so Meta bills them for the
-  // messages and we carry no per-message cost. That is the only reason
-  // this can sit in a plan at all rather than being a metered add-on —
-  // the MVP plan ruled WhatsApp out precisely because per-message cost
-  // destroys the unit economics of a sub-$15 tier, and it does, when
-  // the cost is ours.
+  // Deliberately granted by **no plan**, exactly like `shopify`.
+  //
+  // The integration is built and the economics work — the merchant owns
+  // the WABA and Meta bills them, so we carry no per-message cost. What
+  // is not done is Meta's side: Embedded Signup refuses to onboard
+  // anyone until Business Verification, App Review for both
+  // whatsapp_business_* permissions, and Tech Provider status are all
+  // granted. Until then a Connect button leads a merchant to a Meta
+  // screen that says we cannot onboard them, which is worse than no
+  // button.
+  //
+  // So an admin grants this per account from /admin — to a design
+  // partner, or to everyone on the day Meta says yes. That is the whole
+  // point of entitlements being per-account rather than per-deploy, and
+  // it needs no deploy to flip.
   whatsapp: "Confirmations and reminders on WhatsApp",
   waitlist: "Waitlist with automatic offer cascade",
   team_roles: "Team roles (admin / write / read)",
@@ -195,7 +203,7 @@ export const PLANS: Record<PlanId, Plan> = {
     blurb: "A team with roles, and your own email wording.",
     visible: true,
     limits: { resources: 10, services: Infinity, teamMembers: 6, bookingsPerMonth: Infinity, businesses: 1 },
-    features: ["no_badge", "branding", "whatsapp", "waitlist", "team_roles", "email_templates", "export"],
+    features: ["no_badge", "branding", "waitlist", "team_roles", "email_templates", "export"],
   },
   business: {
     id: "business",
@@ -207,7 +215,7 @@ export const PLANS: Record<PlanId, Plan> = {
       bookingsPerMonth: Infinity, businesses: 5,
     },
     features: [
-      "no_badge", "branding", "whatsapp", "waitlist", "team_roles", "email_templates",
+      "no_badge", "branding", "waitlist", "team_roles", "email_templates",
       "export", "priority_support", "early_access",
     ],
   },

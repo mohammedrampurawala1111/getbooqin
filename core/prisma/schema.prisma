@@ -61,6 +61,20 @@ model User {
   // whether phone sign-in/verification is even enabled. Re-evaluate once
   // phone-based sign-in is wired up through Clerk properly.
   phone             String             @default("")
+  /// The mailbox this address actually reaches, for duplicate detection
+  /// only — never for sending. `info.scintillaweb@gmail.com` and
+  /// `info.scintilla.web@gmail.com` are one inbox, and left alone that
+  /// is a free duplicate-account generator: one person, two trials, two
+  /// booking pages, and then "where did my appointments go?".
+  ///
+  /// Indexed rather than unique. Existing accounts may already have
+  /// collided, and a unique constraint would refuse the migration over
+  /// data we would then have to merge by hand. The check happens at
+  /// signup, where it can explain itself.
+  ///
+  /// See auth/emailIdentity.ts — the SQL backfill in the migration
+  /// mirrors that function exactly.
+  emailKey          String             @default("")
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   // Platform-admin flag for the internal /admin console (§W8). Layered,
@@ -72,6 +86,8 @@ model User {
   connections       Connection[]
   connectionMembers ConnectionMember[]
   adminActions      AdminAuditLog[]
+
+  @@index([emailKey])
 }
 
 // One store a User has linked. `credentials` holds whatever the platform's

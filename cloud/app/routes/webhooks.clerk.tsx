@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
 import { verifyWebhook } from "@clerk/react-router/webhooks";
-import { prisma } from "getbooqin-core";
+import { prisma, emailKey } from "getbooqin-core";
 
 // Keeps the local User row (id + email) that Connection.userId points at in
 // sync with Clerk, which now owns identity — User.id is Clerk's own user id
@@ -22,10 +22,12 @@ export async function action({ request }: ActionFunctionArgs) {
       email_addresses[0]?.email_address ??
       "";
 
+    // emailKey travels with email everywhere it is written, so the two
+    // can never disagree. See core/src/auth/emailIdentity.ts.
     await prisma.user.upsert({
       where: { id },
-      create: { id, email },
-      update: { email },
+      create: { id, email, emailKey: emailKey(email) },
+      update: { email, emailKey: emailKey(email) },
     });
   }
 

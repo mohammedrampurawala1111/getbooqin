@@ -135,7 +135,26 @@ export default function ForgotPassword() {
             {error && <AlertError className="mt-3">{error}</AlertError>}
             <form onSubmit={handleReset} className="mt-5 flex flex-col gap-[14px]">
               <Field label="Reset code">
-                <Input name="code" required inputMode="numeric" maxLength={6} />
+                {/* autoComplete="one-time-code" is doing real work here,
+                    not box-ticking. Without it Chrome and every password
+                    manager read this as "the text field after an email
+                    address on a password page" and fill it with the
+                    email — the merchant then sees their own address sitting
+                    in a box labelled "Reset code" and an "Incorrect code"
+                    error, with no way to tell that anything autofilled.
+
+                    It also lets iOS and Android offer the code straight
+                    from the notification, which is the reason the
+                    attribute exists at all. */}
+                <Input
+                  name="code"
+                  required
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  placeholder="6-digit code"
+                />
               </Field>
               <PasswordField name="password" label="New password" hint="At least 15 characters." minLength={15} autoComplete="new-password" />
               <button type="submit" className="btn-pri w-full justify-center" disabled={submitting}>

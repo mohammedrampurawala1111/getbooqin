@@ -42,6 +42,28 @@ export async function loader({ request }: Route.LoaderArgs) {
   return null;
 }
 
+/**
+ * Asks the server whether this mailbox already has an account.
+ *
+ * Returns false on any failure. A duplicate is an annoyance; a signup
+ * form that refuses to submit because a side-check timed out is a lost
+ * customer.
+ */
+async function mailboxTaken(email: string): Promise<boolean> {
+  try {
+    const response = await fetch("/signup/check-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    if (!response.ok) return false;
+    const body = (await response.json()) as { taken?: boolean };
+    return body.taken === true;
+  } catch {
+    return false;
+  }
+}
+
 export default function Signup() {
   const { isLoaded, signUp, setActive } = useSignUp();
   const navigate = useNavigate();
@@ -104,6 +126,24 @@ export default function Signup() {
     setSubmitting(true);
     setError(null);
     try {
+      // Before Clerk, not after. Clerk enforces uniqueness on the
+      // address as typed — the right rule for Clerk, the wrong one for a
+      // mailbox: info.scintillaweb@ and info.scintilla.web@ are two
+      // strings and one Gmail inbox, so Clerk creates the second account
+      // happily and one person ends up with two trials and their
+      // bookings split across both.
+      //
+      // Best-effort. A failed check must never block a legitimate
+      // signup, so a network error falls through to Clerk, which still
+      // catches the exact-match case.
+      if (await mailboxTaken(email)) {
+        setError(
+          "An account already exists for that email address. Gmail ignores dots, so this may be the same inbox as one you have already used — try logging in, or reset your password."
+        );
+        setSubmitting(false);
+        return;
+      }
+
       const result = await signUp.create({ emailAddress: email, password, firstName });
       if (result.status === "complete") {
         await setActive({ session: result.createdSessionId });
@@ -210,13 +250,14 @@ export default function Signup() {
                 <Field label="Email">
                   <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
                 </Field>
-                <Field label="Phone number (optional)" hint="For us to reach you — not verified.">
+                <Field label="Phone number" hint="So we can reach you about your account.">
                   <Input
                     type="tel"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="+1 555 0100"
                     pattern={PHONE_PATTERN}
+                    required
                     autoComplete="tel"
                   />
                 </Field>

@@ -46,6 +46,11 @@ export * as Presets from "./booking/presets.js";
 // booking page runs so the frame can size itself. See booking/embed.ts.
 export * as Embed from "./booking/embed.js";
 
+// One mailbox, many spellings — Gmail ignores dots and everything after
+// a "+". Used to stop one person accidentally holding two accounts and
+// two trials. See auth/emailIdentity.ts.
+export { emailKey, sameMailbox } from "./auth/emailIdentity.js";
+
 // WhatsApp Business, connected per merchant through Meta's Embedded
 // Signup. The merchant owns the WABA and pays Meta directly, so this
 // costs us nothing per message — see whatsapp/templates.ts for why

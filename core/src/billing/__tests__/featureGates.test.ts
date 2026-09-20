@@ -266,23 +266,40 @@ describe("whatsapp", () => {
     await prisma.whatsAppAccount.deleteMany({ where: { connectionId } });
   });
 
-  it("is not granted on Free", async () => {
-    await setPlan("free");
+  it.each(["free", "starter", "growth", "business"])("is granted by no plan, including %s", async (plan) => {
+    // Shipped dark, exactly like `shopify`. The integration works and
+    // the economics work; what is not done is Meta's side, and until
+    // Tech Provider is approved a Connect button leads a merchant to a
+    // Meta screen saying we cannot onboard them.
+    await setPlan(plan);
     const ent = await entitlementsFor(connectionId);
 
     expect(ent.features.has("whatsapp")).toBe(false);
   });
 
-  it("is granted from Growth up, where a busier business asks for it", async () => {
-    await setPlan("growth");
-    const ent = await entitlementsFor(connectionId);
+  it("is granted per account by an admin, with no deploy", async () => {
+    // The whole reason entitlements are per-account rather than
+    // per-deploy: a design partner gets it today, everyone gets it the
+    // day Meta says yes, and neither needs a release.
+    await setPlan("free");
+    await prisma.entitlement.create({
+      data: {
+        connectionId,
+        key: "whatsapp",
+        value: "on",
+        grantedByUserId: ownerId,
+        reason: "design partner",
+      },
+    });
 
+    const ent = await entitlementsFor(connectionId);
     expect(ent.features.has("whatsapp")).toBe(true);
   });
 
-  it("sends nothing for a connected account whose plan lapsed to Free", async () => {
+  it("sends nothing for a connected account whose grant was revoked", async () => {
     await connectWhatsApp();
     await setPlan("free");
+    await prisma.entitlement.deleteMany({ where: { connectionId, key: "whatsapp" } });
 
     const settings = await getSettings(shop, platform);
     const booking = await prisma.booking.findFirst({ where: { shop } });
@@ -300,7 +317,7 @@ describe("whatsapp", () => {
     expect(outcome).toMatchObject({ reason: "not_connected" });
   });
 
-  it("stops before a token is ever decrypted, so a lapsed plan cannot call Meta", async () => {
+  it("stops before a token is ever decrypted, so a revoked grant cannot call Meta", async () => {
     // The stored token here is deliberately not decryptable. If the
     // gate ever moved to after the decrypt, this throws instead of
     // returning cleanly — which is exactly the regression to catch.
