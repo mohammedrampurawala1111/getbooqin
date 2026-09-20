@@ -552,9 +552,25 @@ export const PayPalProvider: BillingProvider = {
       body: JSON.stringify({ reason: "Cancelled from GetBooqin" }),
     });
 
-    // 204 on success. 422 usually means it is already cancelled, which
-    // is the state we wanted anyway.
-    if (response.ok || response.status === 422) return;
+    // 204 on success. 422 usually means it is already cancelled, and
+    // 404 means PayPal has nothing under that id — both are the state
+    // this call wanted, so both are success.
+    //
+    // The 404 is not hypothetical and it is not rare. PayPal creates a
+    // subscription in APPROVAL_PENDING the moment checkout starts, and
+    // refuses to cancel one that was never approved. So every merchant
+    // who closes the PayPal tab leaves an id behind that
+    // `liveMandateExists` reads as a live mandate — Razorpay's
+    // equivalent state, `created`, genuinely can be cancelled, which is
+    // why this only bites on this rail.
+    //
+    // The consequence before this: the next upgrade attempt tried to
+    // cancel it, got a 404, and was refused with "we couldn't close
+    // your current subscription". Permanently. One abandoned checkout
+    // and the account could never subscribe again — and the merchant
+    // could not clear it themselves, because there is nothing to cancel
+    // on a mandate that was never authorised.
+    if (response.ok || response.status === 422 || response.status === 404) return;
     const body = (await response.json().catch(() => ({}))) as { message?: string };
     throw new Error(`PayPal refused the cancellation (${response.status}): ${body.message ?? "no detail"}`);
   },

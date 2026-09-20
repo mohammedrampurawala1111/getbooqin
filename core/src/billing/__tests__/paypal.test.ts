@@ -351,3 +351,51 @@ describe("creating a subscription", () => {
     ).rejects.toThrow(/No PayPal sandbox plan/);
   });
 });
+
+describe("cancelling something that was never approved", () => {
+  /**
+   * The failure this exists for, and it bit a real account.
+   *
+   * PayPal creates a subscription in APPROVAL_PENDING the moment
+   * checkout starts. A merchant who closes the PayPal tab leaves that
+   * id on the row — and `isLive` counts APPROVAL_PENDING as a live
+   * mandate, correctly, because Razorpay's equivalent state can be
+   * cancelled and this is the shared predicate.
+   *
+   * PayPal cannot cancel one. It answers 404. So the next upgrade
+   * attempt was refused with "we couldn't close your current
+   * subscription, so we've stopped rather than risk charging you
+   * twice" — permanently, with no way for the merchant to clear it,
+   * because there is nothing to cancel on a mandate nobody authorised.
+   */
+  it("treats a 404 as already cancelled rather than a hard failure", async () => {
+    stubFetch((url) => {
+      if (String(url).includes("/oauth2/token")) return { access_token: "t" };
+      return new Response(JSON.stringify({ message: "The specified resource does not exist." }), { status: 404 });
+    });
+
+    await expect(PayPalProvider.cancelSubscription("I-NEVERAPPROVED", { immediately: false }))
+      .resolves.toBeUndefined();
+  });
+
+  it("still treats 422 as already cancelled", async () => {
+    stubFetch((url) => {
+      if (String(url).includes("/oauth2/token")) return { access_token: "t" };
+      return new Response(JSON.stringify({ message: "Invalid state." }), { status: 422 });
+    });
+
+    await expect(PayPalProvider.cancelSubscription("I-ALREADYGONE", {})).resolves.toBeUndefined();
+  });
+
+  it("still fails loudly on a real error", async () => {
+    // A 500 is not "nothing to cancel" — proceeding past it could leave
+    // two live mandates, which the merchant discovers through their
+    // bank statement.
+    stubFetch((url) => {
+      if (String(url).includes("/oauth2/token")) return { access_token: "t" };
+      return new Response(JSON.stringify({ message: "Internal error." }), { status: 500 });
+    });
+
+    await expect(PayPalProvider.cancelSubscription("I-LIVE", {})).rejects.toThrow(/500/);
+  });
+});
