@@ -41,6 +41,48 @@ file, is the real exit criterion.
 
 ---
 
+## Production is a separate app
+
+`fly.toml` is the app that has been deployed to since before Phase 0. It
+carries a Clerk development key compiled into its bundle, Razorpay test
+keys, credentials for features Phase 1 deleted, and a seeded test
+merchant. It is a good place to break things and a bad place to put a
+paying customer.
+
+**`fly.prod.toml` is production** — `fly deploy -c fly.prod.toml`.
+
+A separate app rather than upgrading that one in place, for a reason
+that is not tidiness: **Clerk users do not migrate between instances.**
+Block B means every account on the old app signs up again regardless,
+so there is nothing to preserve by converting it — and a clean app costs
+one `fly launch` to avoid inheriting five days of ad-hoc deploys and a
+test merchant.
+
+Two deliberate differences from staging, both explained in the file:
+
+- **`bom`, not `ams`.** The people whose latency matters are not the
+  merchant, they are the merchant's customers, loading a booking page on
+  a phone while half-deciding to abandon it. India is the primary
+  market — INR prices, Razorpay, UPI. The database has to move with it
+  or the change is worse than useless.
+- **Two machines, not one.** A rolling deploy across two is
+  zero-downtime where one cannot be. Safe for the background sweeps only
+  because Phase 0's lease in `Jobs.record()` makes concurrent runs safe;
+  before that it would have been a bug rather than redundancy.
+
+Create it before starting block B:
+
+```bash
+fly apps create getbooqin-prod
+fly postgres create --name getbooqin-prod-db --region bom
+fly postgres attach getbooqin-prod-db --app getbooqin-prod
+```
+
+Every block below then applies to `getbooqin-prod`, with
+`--app getbooqin-prod` on each command.
+
+---
+
 ## The order matters
 
 Items within a block are independent; the blocks are not.

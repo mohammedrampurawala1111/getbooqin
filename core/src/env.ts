@@ -280,13 +280,19 @@ interface ProductionCheck {
 
 const PRODUCTION_CHECKS: ProductionCheck[] = [
   {
-    // Clerk development instances carry a capped user count, relaxed
-    // security, unbranded shared OAuth consent screens and email
-    // delivery that does not match production — and none of that shows
-    // up as an error, only as a ceiling you hit later.
-    failing: (env) => (env.VITE_CLERK_PUBLISHABLE_KEY ?? "").startsWith("pk_test_"),
+    // Anything that is not a live key, rather than specifically a
+    // pk_test_ one. Clerk development instances carry a capped user
+    // count, relaxed security, unbranded shared OAuth consent screens
+    // and email delivery that does not match production — none of which
+    // shows up as an error, only as a ceiling you hit later.
+    //
+    // Stated as "not pk_live_" so it also catches the placeholder in
+    // fly.prod.toml's build args. That value has to be replaced before a
+    // real deploy, and a check that only knew about pk_test_ would have
+    // let it through silently into a build whose login is broken.
+    failing: (env) => !(env.VITE_CLERK_PUBLISHABLE_KEY ?? "").startsWith("pk_live_"),
     problem:
-      "Clerk is a development instance — capped users, shared unbranded OAuth consent screens, non-production email",
+      "Clerk is not a production instance — capped users, shared unbranded OAuth consent screens, non-production email",
     fix: "Create a Clerk production instance and rebuild with its pk_live_ key (fly.toml [build.args]) plus its sk_live_ CLERK_SECRET_KEY",
   },
   {

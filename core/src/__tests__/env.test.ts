@@ -174,7 +174,12 @@ describe("configured, but configured with a rehearsal", () => {
   });
 
   it.each([
-    ["a Clerk development instance", { VITE_CLERK_PUBLISHABLE_KEY: "pk_test_abc" }, /Clerk is a development instance/],
+    ["a Clerk development instance", { VITE_CLERK_PUBLISHABLE_KEY: "pk_test_abc" }, /not a production instance/],
+    // fly.prod.toml ships a placeholder that has to be replaced. A check
+    // that only knew about pk_test_ would wave it through into a build
+    // whose login is broken.
+    ["the fly.prod.toml placeholder", { VITE_CLERK_PUBLISHABLE_KEY: "REPLACE_WITH_pk_live_KEY_FROM_CLERK_PRODUCTION" }, /not a production instance/],
+    ["no publishable key at all", { VITE_CLERK_PUBLISHABLE_KEY: "" }, /not a production instance/],
     ["a Clerk development secret", { CLERK_SECRET_KEY: "sk_test_abc" }, /development key/],
     ["a fly.dev public origin", { APP_URL: "https://getbooqin.fly.dev" }, /isn't yours/],
     ["Razorpay in test mode", { RAZORPAY_KEY_ID: "rzp_test_abc" }, /no money moves/],

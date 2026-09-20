@@ -1,0 +1,168 @@
+# Production.
+#
+#   fly deploy -c fly.prod.toml
+#
+# `fly.toml` is the app you have been deploying to since before Phase 0.
+# It holds a Clerk *development* key compiled into its bundle, Razorpay
+# test keys, credentials for features that were deleted, and a seeded
+# test merchant. It has been a useful place to break things. It is not
+# somewhere to put a paying customer, and the reason is not tidiness:
+#
+#   Clerk users do not migrate between instances. Moving to a production
+#   Clerk instance means every account on the old app signs up again
+#   regardless — so there is nothing to preserve by upgrading it in
+#   place, and a clean app costs one `fly launch` to avoid inheriting
+#   five days of ad-hoc deploys.
+#
+# Treat `fly.toml` as staging from here on.
+#
+# ## What has to be true before the first deploy
+#
+#   fly apps create getbooqin-prod
+#   fly postgres create --name getbooqin-prod-db --region bom
+#   fly postgres attach getbooqin-prod-db --app getbooqin-prod
+#   fly certs add app.getbooqin.com --app getbooqin-prod
+#
+# then every secret from .env.example's required list — see
+# docs/launch-runbook.md, which is the ordered version of this.
+
+app = "getbooqin-prod"
+
+# Mumbai, not Amsterdam.
+#
+# The staging app runs in `ams` for no better reason than that is where
+# it was first launched. Production's customers are the ones who matter
+# here, and they are not the merchant — they are the merchant's
+# customers, loading a booking page on a phone, deciding whether to go
+# through with it. India is the primary market: prices are in INR, the
+# billing rail is Razorpay, collection is UPI. Serving those pages from
+# Europe adds a round trip to every step of a form somebody is already
+# half-deciding to abandon.
+#
+# The database has to be in the same region or this is worse than
+# useless — a Postgres round trip across continents on every query eats
+# far more than the latency saved. Hence `--region bom` above.
+primary_region = "bom"
+
+[build]
+  # Vite compiles this into cloud's client bundle at image-build time, so
+  # unlike every other credential here it cannot be a `fly secrets set`
+  # runtime value. It lived only on the deploy command line once, which
+  # meant any deploy that forgot the flag shipped an empty key and broke
+  # login with no build error — so it is pinned here, where it is visible
+  # and cannot be forgotten.
+  #
+  # Publishable keys are designed to ship in client bundles, so this is
+  # safe to commit.
+  #
+  # ⚠️ REPLACE THIS. It must be the `pk_live_` key from a Clerk
+  # **production** instance, with your own OAuth credentials attached —
+  # that is what removes Clerk's shared, unbranded consent screen from
+  # your merchants' Google sign-in. The boot check refuses to be quiet
+  # about anything that is not a pk_live_ key, so a deploy with this
+  # placeholder still in it will say so in the first lines of its log.
+  [build.args]
+    VITE_CLERK_PUBLISHABLE_KEY = "REPLACE_WITH_pk_live_KEY_FROM_CLERK_PRODUCTION"
+
+# Migrations run here, not in the machine's CMD, and the difference
+# matters: a release command runs once, before any machine is replaced,
+# and a non-zero exit aborts the deploy with the old version still
+# serving. Run from the CMD instead, a migration that fails just crashes
+# the new machine on boot, and Fly would happily crash-loop both.
+#
+# Not theoretical: the double-booking exclusion constraints cannot be
+# added over data that already violates them, and the migration refuses
+# rather than applying half. Refusing must cost a failed deploy, not an
+# outage.
+[deploy]
+  release_command = "npx prisma migrate deploy --schema core/prisma/schema.prisma"
+
+[env]
+PORT = "3000"
+HOST = "0.0.0.0"
+NODE_ENV = "production"
+
+# Every emailed link a customer ever receives is built from this —
+# confirmations, reminders, the manage-your-booking link, invoices. It
+# is the whole reason the custom domain matters: a message arriving from
+# getbooqin.com containing a link to a fly.dev host is a trust problem
+# and a DMARC-alignment problem at once.
+#
+# Do not set this until `fly certs show app.getbooqin.com` reads Ready.
+# Every email sent in between would carry a link to a host that does not
+# resolve, which is strictly worse than the fly.dev link it replaces.
+APP_URL = "https://app.getbooqin.com"
+
+# Deliberately the fly.dev host, and deliberately different from APP_URL.
+#
+# This has to match what is registered in the Shopify Partner dashboard
+# and in shopify-openslot/shopify.app.production.toml, and changing it
+# means a Partner dashboard edit plus `shopify app deploy`. Shopify is
+# shipped dark — no plan grants it — so there is nothing to gain by
+# touching it until a Shopify merchant is actually in front of you. The
+# fly.dev hostname keeps serving whatever the custom domain points at,
+# so OAuth keeps working.
+SHOPIFY_APP_URL = "https://getbooqin-prod.fly.dev"
+
+# Everything else is `fly secrets set`. See .env.example, which is
+# generated from core/src/env.ts and cannot drift from what the app
+# actually checks at boot.
+
+[http_service]
+internal_port = 3000
+force_https = true
+
+# Both false, and both load-bearing.
+#
+# `auto_stop_machines` must stay false because the reminder and
+# lifecycle sweeps run on a ten-minute in-process interval inside these
+# machines — there is deliberately no external scheduler. A machine that
+# scales to zero overnight is a machine that sends nobody their morning
+# reminder.
+auto_stop_machines = false
+auto_start_machines = true
+
+# Two, not one.
+#
+# Staging runs one because nothing there matters for the ninety seconds
+# a deploy takes. Here that ninety seconds is a booking page returning
+# nothing to a customer who will not come back, and a rolling deploy
+# across two machines is zero-downtime where a single machine cannot be.
+#
+# Safe for the background jobs specifically because Phase 0 made it so:
+# `Jobs.record()` takes a claim/lease before a sweep, so two machines
+# cannot send the same reminder twice. Before that lease this would have
+# been a bug rather than redundancy.
+min_machines_running = 2
+
+# Liveness, not product health.
+#
+# `/healthz` without `?strict=1` fails only when the database is
+# unreachable. A stale reminder sweep deliberately does NOT fail it: the
+# machine is still serving bookings perfectly well, and taking it out of
+# rotation over a background job would turn a background problem into an
+# outage.
+#
+# That alarm belongs on an external uptime monitor watching
+# `/healthz?strict=1` — which is also the only signal that originates
+# outside these machines, and therefore the only thing that can notice
+# all of them being wedged. See docs/launch-runbook.md block G.
+#
+# grace_period covers boot: migrations, Prisma connecting, and the first
+# sweep all happen before the app answers.
+[[http_service.checks]]
+  interval = "15s"
+  timeout = "5s"
+  grace_period = "60s"
+  method = "GET"
+  path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  # 1GB rather than staging's 512MB. One Node process serves core, cloud
+  # and shopify-openslot together, holds a Prisma client with its query
+  # engine, and renders PDFs for invoices — pdfkit buffers a whole
+  # document in memory. 512MB has been fine for one person clicking
+  # around; the failure mode under real traffic is an OOM kill mid-
+  # request, which costs more than the upgrade does.
+  memory = "1gb"

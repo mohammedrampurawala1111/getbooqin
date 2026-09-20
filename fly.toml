@@ -1,3 +1,10 @@
+# **Staging.** Production is fly.prod.toml — `fly deploy -c fly.prod.toml`.
+#
+# This app holds a Clerk *development* key compiled into its bundle,
+# Razorpay test keys, and a seeded test merchant. That is fine, and it
+# is what this app is for: somewhere to break things without a customer
+# noticing. Just do not point a paying merchant at it.
+#
 # Serves core + cloud + shopify-openslot as one Fly app (server/combined.js
 # dispatches by path — see that file). Build context is this directory.
 app = "getbooqin"
