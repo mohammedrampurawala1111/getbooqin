@@ -163,3 +163,71 @@ export function taxNote(status: TaxStatus | string, country: string): string {
   }
   return "";
 }
+
+/* ------------------------------------------------------------------ */
+/* Where the business is, from what we already know                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * IANA timezone → ISO-3166 country, for the zones we plausibly serve.
+ *
+ * Exact matches only, and that is the whole design. This value decides
+ * a **tax position** — `IN` means GST is charged, an EU country means
+ * reverse charge and a VAT number is demanded, anything else is
+ * zero-rated export — so a confident wrong answer here puts the wrong
+ * tax treatment on a real invoice, which is worse than asking.
+ *
+ * A zone that is not in this table returns "" and the merchant picks
+ * from the list themselves. That is the correct outcome for
+ * `Europe/Busingen` and for anywhere else nobody has thought about:
+ * the field is a select, pre-filling it is a convenience, and being
+ * unhelpful is cheaper than being wrong.
+ *
+ * Deliberately not derived from currency. A merchant pricing in EUR
+ * could be in any of twenty countries, and INR is the only currency
+ * that implies its country — which the caller handles separately,
+ * because that inference is about the *price list* rather than about
+ * where the business is registered.
+ */
+const TIMEZONE_COUNTRY: Record<string, string> = {
+  // India — the primary market, and the one where getting this wrong
+  // means charging GST to someone who owes none, or the reverse.
+  "Asia/Kolkata": "IN",
+  "Asia/Calcutta": "IN",
+
+  // Eurozone and the rest of the EU, where the answer decides whether a
+  // VAT number is required at checkout.
+  "Europe/Amsterdam": "NL", "Europe/Athens": "GR", "Europe/Berlin": "DE",
+  "Europe/Bratislava": "SK", "Europe/Brussels": "BE", "Europe/Bucharest": "RO",
+  "Europe/Budapest": "HU", "Europe/Copenhagen": "DK", "Europe/Dublin": "IE",
+  "Europe/Helsinki": "FI", "Europe/Lisbon": "PT", "Europe/Ljubljana": "SI",
+  "Europe/Luxembourg": "LU", "Europe/Madrid": "ES", "Europe/Malta": "MT",
+  "Europe/Nicosia": "CY", "Europe/Paris": "FR", "Europe/Prague": "CZ",
+  "Europe/Riga": "LV", "Europe/Rome": "IT", "Europe/Sofia": "BG",
+  "Europe/Stockholm": "SE", "Europe/Tallinn": "EE", "Europe/Vienna": "AT",
+  "Europe/Vilnius": "LT", "Europe/Warsaw": "PL", "Europe/Zagreb": "HR",
+
+  // Outside the EU, where the position is simply zero-rated export.
+  "Europe/London": "GB", "Europe/Zurich": "CH", "Europe/Oslo": "NO",
+  "Asia/Dubai": "AE", "Asia/Singapore": "SG", "Asia/Tokyo": "JP",
+  "Asia/Hong_Kong": "HK", "Asia/Karachi": "PK", "Asia/Dhaka": "BD",
+  "Asia/Colombo": "LK", "Asia/Kathmandu": "NP",
+  "Australia/Sydney": "AU", "Australia/Melbourne": "AU",
+  "Australia/Brisbane": "AU", "Australia/Perth": "AU",
+  "Pacific/Auckland": "NZ",
+  "America/New_York": "US", "America/Chicago": "US", "America/Denver": "US",
+  "America/Los_Angeles": "US", "America/Phoenix": "US", "America/Anchorage": "US",
+  "America/Toronto": "CA", "America/Vancouver": "CA", "America/Edmonton": "CA",
+  "America/Sao_Paulo": "BR", "America/Mexico_City": "MX",
+  "Africa/Johannesburg": "ZA", "Africa/Lagos": "NG", "Africa/Nairobi": "KE",
+};
+
+/**
+ * The country a merchant is most likely registered in, or "".
+ *
+ * Only ever a *default* for a field they can change — never the value
+ * an invoice is issued against without them having seen it.
+ */
+export function countryFromTimezone(timezone: string | null | undefined): string {
+  return TIMEZONE_COUNTRY[(timezone ?? "").trim()] ?? "";
+}

@@ -240,7 +240,22 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       // Pre-filled from whatever the account already told us, so a
       // returning merchant isn't asked twice.
       tax: {
-        country: subscriptionRow?.taxCountry || (billingCurrency === "INR" ? "IN" : ""),
+        // In order of how much each actually knows.
+        //
+        // What they already saved wins outright. Then the timezone they
+        // picked during onboarding, which is the one thing on file that
+        // says where the business *is* — a merchant in Amsterdam is not
+        // asked to tell us they are in the Netherlands.
+        //
+        // Currency comes last and only for INR, because it is a claim
+        // about a price list rather than about a country: a business
+        // pricing in EUR could be in any of twenty of them, and
+        // guessing wrong here puts the wrong tax treatment on a real
+        // invoice. Anything unrecognised stays blank and they choose.
+        country:
+          subscriptionRow?.taxCountry ||
+          Tax.countryFromTimezone(settings.timezone) ||
+          (billingCurrency === "INR" ? "IN" : ""),
         taxId: subscriptionRow?.taxId ?? "",
         note: Tax.taxNote(subscriptionRow?.taxStatus ?? "", subscriptionRow?.taxCountry ?? ""),
         billingName: subscriptionRow?.billingName ?? "",
