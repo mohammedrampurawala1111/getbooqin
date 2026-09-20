@@ -19,7 +19,7 @@
 # ## What has to be true before the first deploy
 #
 #   fly apps create getbooqin-prod
-#   fly postgres create --name getbooqin-prod-db --region sin
+#   fly postgres create --name getbooqin-prod-db --region ams
 #   fly postgres attach getbooqin-prod-db --app getbooqin-prod
 #   fly certs add app.getbooqin.com --app getbooqin-prod
 #
@@ -28,24 +28,25 @@
 
 app = "getbooqin-prod"
 
-# Singapore, not Amsterdam.
+# Amsterdam, on cost.
 #
-# The staging app runs in `ams` for no better reason than that is where
-# it was first launched. The latency that matters here is not the
-# merchant's — it is their customer's, loading a booking page on a phone
-# while half deciding to abandon it. India is the primary market: prices
-# are in INR, the billing rail is Razorpay, collection is UPI.
+# Fly has no Indian region — `bom` is gone from `fly platform regions` —
+# so serving India meant Singapore, and Singapore is the most expensive
+# region Fly sells. 1GB of shared-cpu-1x is $9.20/mo there against
+# $5.70 in `ams`, and Asia-Pacific egress is $0.04/GB against $0.02.
+# Roughly 60% more, for roughly 60ms less round trip.
 #
-# Singapore rather than Mumbai because **Fly has no Indian region** —
-# `bom` existed once and does not appear in `fly platform regions` any
-# more. `sin` is the closest available, and roughly halves the round
-# trip from India against Amsterdam. Check the list before changing
-# this; the set moves.
+# That is a bad trade before there is a customer to lose. It is a
+# reasonable one after — and the day page-load latency in India is
+# something you can actually measure the cost of, this is one line plus
+# a database move. Until then the money is better spent elsewhere.
 #
-# The database has to be in the same region or this is worse than
-# useless — a Postgres round trip across continents on every query eats
-# far more than the hop saves. Hence `--region sin` above.
-primary_region = "sin"
+# `iad` ties `ams` exactly on price. `ams` wins only because the staging
+# database is already there, so nothing has to be moved to try it.
+#
+# Check `fly platform regions` before changing this — the set moves, and
+# assuming it had not is how `bom` ended up here in the first place.
+primary_region = "ams"
 
 [build]
   # Vite compiles this into cloud's client bundle at image-build time, so
