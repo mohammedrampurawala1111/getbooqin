@@ -8,16 +8,7 @@
  * registration from the first euro with no threshold.
  */
 import { describe, expect, it } from "vitest";
-import {
-  normalizeCountry,
-  normalizeTaxId,
-  statusForCountry,
-  looksLikeGstin,
-  looksLikeTaxId,
-  validateTaxIdentity,
-  taxNote,
-  requireEuVatIdFromEnv,
-} from "../tax.js";
+import { normalizeCountry, normalizeTaxId, statusForCountry, looksLikeGstin, looksLikeTaxId, validateTaxIdentity, taxNote } from "../tax.js";
 
 describe("country", () => {
   it("normalises to ISO alpha-2", () => {
@@ -114,20 +105,6 @@ describe("validateTaxIdentity()", () => {
     expect(identity).toEqual({ country: "NL", taxId: "", status: "eu_no_vat_id" });
   });
 
-  it("can still be made B2B-only, which is a commercial choice", () => {
-    // The one place outside India where the number does something: the
-    // reverse charge only applies to a taxable person, and this is the
-    // evidence of that. Without it the supply looks B2C, where the
-    // *supplier* owes VAT at the customer's local rate and has to
-    // register to remit it — which is the whole of G2's decision to
-    // sell B2B-only in the EU.
-    const { identity, problems } = validateTaxIdentity({ country: "NL" }, { requireEuVatId: true });
-
-    expect(identity).toBeNull();
-    expect(problems[0].field).toBe("taxId");
-    expect(problems[0].message).toContain("reverse charge");
-  });
-
   it("an EU customer with a valid number is a zero-rated export", () => {
     const { identity } = validateTaxIdentity({ country: "NL", taxId: "nl 1234 56789 b01" });
     expect(identity).toEqual({ country: "NL", taxId: "NL123456789B01", status: "export_zero_rated" });
@@ -175,63 +152,31 @@ describe("taxNote()", () => {
   });
 });
 
-describe("BILLING_EU_REQUIRE_VAT — selling to EU customers with no VAT number", () => {
-  const allow = { requireEuVatId: false };
-
-  it("accepts an EU customer with no VAT number when the requirement is off", () => {
-    const { identity, problems } = validateTaxIdentity({ country: "NL" }, allow);
+describe("an EU sale with no VAT number is its own position", () => {
+  it("is accepted, and is not called a reverse-charge supply", () => {
+    // The distinction the eu_no_vat_id status exists to preserve: the
+    // reverse charge applies because a VAT number was produced, not
+    // because the customer is in the EU. Labelling this "VAT accounted
+    // for by you under the reverse charge" on an invoice the customer
+    // hands to their own accountant would be a false statement.
+    const { identity, problems } = validateTaxIdentity({ country: "NL" });
 
     expect(problems).toEqual([]);
-    expect(identity).toEqual({ country: "NL", taxId: "", status: "eu_no_vat_id" });
-  });
-
-  it("does not call that a reverse-charge supply, because it is not one", () => {
-    // The distinction the whole flag exists to preserve: the reverse
-    // charge applies because a VAT number was produced, not because the
-    // customer is in the EU. Labelling this "zero-rated export, VAT
-    // accounted for by you" on an invoice a customer hands to their own
-    // accountant would be a false statement.
-    const { identity } = validateTaxIdentity({ country: "NL" }, allow);
-
-    expect(identity!.status).not.toBe("export_zero_rated");
+    expect(identity!.status).toBe("eu_no_vat_id");
     expect(taxNote(identity!.status, "NL")).not.toContain("reverse charge");
     expect(taxNote(identity!.status, "NL")).toContain("without a VAT registration number");
   });
 
   it("still gives a VAT-registered EU customer the reverse charge", () => {
-    // Turning the requirement off must not cost the merchants who do
-    // have a number the treatment they are entitled to.
-    const { identity } = validateTaxIdentity({ country: "NL", taxId: "NL123456789B01" }, allow);
+    const { identity } = validateTaxIdentity({ country: "NL", taxId: "NL123456789B01" });
 
     expect(identity!.status).toBe("export_zero_rated");
     expect(taxNote(identity!.status, "NL")).toContain("reverse charge");
   });
 
-  it("changes nothing outside the EU", () => {
-    expect(validateTaxIdentity({ country: "US" }, allow).identity?.status).toBe("export_zero_rated");
-    expect(validateTaxIdentity({ country: "IN" }, allow).identity?.status).toBe("india_gst");
-  });
-
-  it("defaults to optional when nobody says otherwise", () => {
-    expect(validateTaxIdentity({ country: "NL" }).identity).not.toBeNull();
-    expect(validateTaxIdentity({ country: "NL" }, {}).identity).not.toBeNull();
+  it("leaves everywhere else alone", () => {
+    expect(validateTaxIdentity({ country: "US" }).identity?.status).toBe("export_zero_rated");
+    expect(validateTaxIdentity({ country: "IN" }).identity?.status).toBe("india_gst");
   });
 });
 
-describe("requireEuVatIdFromEnv", () => {
-  it.each([
-    [undefined, false],
-    ["", false],
-    ["false", false],
-    ["yes", false],
-    ["1", false],
-    ["TRUE", true],
-    ["true", true],
-    [" true ", true],
-  ])("%p → %p", (value, expected) => {
-    // Opting in takes a deliberate "true". A typo or a blank leaves the
-    // field optional, which is the behaviour that never blocks a sale —
-    // B2B-only is a commercial choice, not a fallback.
-    expect(requireEuVatIdFromEnv({ BILLING_EU_REQUIRE_VAT: value })).toBe(expected);
-  });
-});

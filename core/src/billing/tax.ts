@@ -28,34 +28,6 @@
  */
 export type TaxStatus = "india_gst" | "export_zero_rated" | "eu_no_vat_id";
 
-/**
- * Whether an EU customer must produce a VAT number to buy.
- *
- * **Off by default**, which makes the tax number one field with one
- * behaviour everywhere: always shown, never required, accepted and
- * recorded when given. A GSTIN has always worked that way — an Indian
- * customer below the registration threshold has none and must not be
- * blocked — and there was no good reason for an EU merchant in the same
- * position to meet a wall instead.
- *
- * The tax consequence is unchanged by any of this and is worth stating
- * once: a supply to a non-taxable EU person is **not** covered by the
- * reverse charge, and a non-EU supplier has no de-minimis. Charging the
- * customer's local rate, via a non-Union OSS registration or a merchant
- * of record, is what answers that. This flag only decides whether the
- * product turns them away at the door.
- *
- * What the product does guarantee is that it never *describes* a
- * treatment it cannot support: a sale with no VAT number carries
- * `eu_no_vat_id` and an invoice line that says exactly that, rather
- * than claiming a reverse charge that did not apply.
- *
- * Set BILLING_EU_REQUIRE_VAT=true to go back to B2B-only. Read at the
- * edge and passed in, never read here — this module has no imports and
- * runs in the browser.
- */
-export const DEFAULT_REQUIRE_EU_VAT_ID = false;
-
 export interface TaxIdentity {
   country: string;
   taxId: string;
@@ -157,14 +129,10 @@ export function normalizeTaxId(value: string | null | undefined): string {
  * Validates a customer-entered tax identity, returning problems rather
  * than throwing so a form can show them all at once.
  */
-export function validateTaxIdentity(
-  input: { country?: string | null; taxId?: string | null },
-  opts: { requireEuVatId?: boolean } = {}
-): {
+export function validateTaxIdentity(input: { country?: string | null; taxId?: string | null }): {
   identity: TaxIdentity | null;
   problems: TaxIdentityProblem[];
 } {
-  const requireEuVatId = opts.requireEuVatId ?? DEFAULT_REQUIRE_EU_VAT_ID;
   const problems: TaxIdentityProblem[] = [];
   const country = normalizeCountry(input.country);
   const taxId = normalizeTaxId(input.taxId);
@@ -182,47 +150,19 @@ export function validateTaxIdentity(
     if (taxId && !looksLikeGstin(taxId)) {
       problems.push({ field: "taxId", message: "That doesn't look like a GSTIN. Leave it blank if you aren't registered." });
     }
-  } else if (isEuCountry(country) && requireEuVatId) {
-    // Required here and nowhere else, because here it does something.
+  } else if (taxId && !looksLikeTaxId(taxId)) {
+    // Optional everywhere, exactly as a GSTIN is, and for the same
+    // reason: a business below its own country's registration threshold
+    // has no number to give, and turning it away is a worse outcome
+    // than any tax question it raises.
     //
-    // An Indian entity supplying a digital service into the EU shifts
-    // the VAT to the customer under the reverse charge — but only if
-    // the customer is a taxable person, and the VAT number is the
-    // evidence of that. Without one the supply looks like B2C, where
-    // the *supplier* owes VAT at the customer's own local rate and has
-    // to register to remit it. Collecting the number is what keeps the
-    // simple position true, and is the whole of the plan's G2 decision:
-    // B2B-only outside India, reverse charge, no OSS registration.
-    if (!taxId) {
-      problems.push({
-        field: "taxId",
-        message:
-          "EU businesses account for VAT themselves under the reverse charge, so we need your VAT number. " +
-          "We can't sell to EU consumers.",
-      });
-    } else if (!looksLikeTaxId(taxId)) {
-      problems.push({ field: "taxId", message: "That doesn't look like a VAT number." });
-    }
-  } else {
-    // Optional everywhere else, and it used to be demanded.
-    //
-    // For a customer in the US, Australia, the UAE or anywhere outside
-    // the EU, this is a plain zero-rated export of services. There is
-    // no reverse charge to evidence and frequently no such number to
-    // give — a US company has an EIN, which is not a VAT number and has
-    // nothing to do with an Indian export. Asking for it was friction
-    // at the worst possible moment, in exchange for a field nobody
-    // reads.
-    //
-    // Still validated when offered, since a merchant who types one
-    // wants it on their invoice and a typo there is theirs to find now
-    // rather than at their own year end.
-    if (taxId && !looksLikeTaxId(taxId)) {
-      problems.push({
-        field: "taxId",
-        message: "That doesn't look like a business tax number. Leave it blank if you don't have one.",
-      });
-    }
+    // Still checked when offered, because a merchant who types one
+    // wants it on their invoice and a typo is theirs to find now rather
+    // than at their own year end.
+    problems.push({
+      field: "taxId",
+      message: "That doesn't look like a tax number. Leave it blank if you don't have one.",
+    });
   }
 
   if (problems.length > 0) return { identity: null, problems };
@@ -325,18 +265,3 @@ export function countryFromTimezone(timezone: string | null | undefined): string
   return TIMEZONE_COUNTRY[(timezone ?? "").trim()] ?? "";
 }
 
-/**
- * The EU requirement as this deployment has it configured.
- *
- * Server-only — `process.env` is meaningless in the browser bundle,
- * which is why every function above takes the answer as an argument
- * instead of reaching for it. A screen gets this through its loader.
- *
- * Opting *in* takes a deliberate "true". An unset or misspelled value
- * leaves the field optional, which is the behaviour a merchant expects
- * and the one that never blocks a sale — the strict mode is a
- * deliberate commercial choice to sell B2B-only, not a fallback.
- */
-export function requireEuVatIdFromEnv(env: { BILLING_EU_REQUIRE_VAT?: string } = process.env): boolean {
-  return (env.BILLING_EU_REQUIRE_VAT ?? "").trim().toLowerCase() === "true";
-}

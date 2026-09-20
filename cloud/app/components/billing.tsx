@@ -45,7 +45,6 @@ export interface BillingView {
   /** "{plan}:{cycle}" -> can it actually be charged in this currency right now. */
   sellable: Record<string, boolean>;
   tax: { country: string; taxId: string; note: string; billingName: string; billingAddress: string };
-  requireEuVatId: boolean;
   /** A mandate exists at the provider but nothing is being paid on it yet. */
   awaitingActivation: boolean;
   overrides: { key: string; value: string; reason: string; expiresAt: string | null }[];
@@ -338,10 +337,9 @@ export function BillingPage({
   // The EU is the only place outside India where the number does
   // anything — see validateTaxIdentity. Everywhere else a plain export
   // of services needs no evidence beyond the country.
-  // Required only where it does something *and* the deployment still
-  // asks for it — see BILLING_EU_REQUIRE_VAT.
+  // Never required — see tax.ts. The country only decides what the
+  // field is called and what the note beneath it explains.
   const isEu = isEuCountry(country);
-  const vatRequired = isEu && billing.requireEuVatId;
   const features = new Set(billing.features as FeatureKey[]);
   const overCaps = LIMIT_KEYS.filter((key) => {
     const cap = billing.limits[key];
@@ -571,13 +569,7 @@ export function BillingPage({
               />
             </label>
             <label className="flex flex-col gap-1 text-[12px] text-muted">
-              {!isExport
-                ? "GSTIN (optional)"
-                : vatRequired
-                  ? "VAT number"
-                  : isEu
-                    ? "VAT number (optional)"
-                    : "Tax number (optional)"}
+              {!isExport ? "GSTIN (optional)" : isEu ? "VAT number (optional)" : "Tax number (optional)"}
               <input
                 className="input w-full min-w-0"
                 value={taxId}
@@ -590,9 +582,7 @@ export function BillingPage({
           <p className="m-0 text-[11.5px] text-subtle">
             {!isExport
               ? "Indian GST applies. A GSTIN is optional and only needed if you want to claim input credit."
-              : vatRequired
-                ? "EU businesses account for VAT themselves under the reverse charge, so we need your VAT number to invoice you correctly. We can't sell to EU consumers."
-                : isEu
+              : isEu
                   ? "If you're VAT-registered, add your number and VAT is accounted for by you under the reverse charge. Leave it blank if you aren't."
                   : "A zero-rated export of services — no tax is added. Add your business tax number if you'd like it on your invoice."}
           </p>

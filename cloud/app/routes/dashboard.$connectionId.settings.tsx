@@ -261,9 +261,6 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         billingName: subscriptionRow?.billingName ?? "",
         billingAddress: subscriptionRow?.billingAddress ?? "",
       },
-      // The screen needs it because the VAT field's label and whether
-      // it is required are the same decision.
-      requireEuVatId: Tax.requireEuVatIdFromEnv(),
       billingCycle: entitlements.billingCycle,
       inGrace: entitlements.inGrace,
       providerName: billingCurrency === "INR" ? "Razorpay" : "PayPal",
@@ -482,10 +479,7 @@ export async function action({ request, params }: Route.ActionArgs) {
     // to pay.
     const country = String(form.get("country") ?? "").trim();
     const taxId = String(form.get("tax_id") ?? "").trim();
-    const tax = Tax.validateTaxIdentity(
-      { country, taxId },
-      { requireEuVatId: Tax.requireEuVatIdFromEnv() }
-    );
+    const tax = Tax.validateTaxIdentity({ country, taxId });
     if (!tax.identity) return { error: tax.problems[0]!.message };
 
     await Subscriptions.saveBillingDetails(params.connectionId!, {

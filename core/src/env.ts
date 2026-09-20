@@ -200,18 +200,6 @@ export const ENV_VARS: EnvVar[] = [
     capability: "user sync — signups never reach our own User table",
   },
   {
-    // Absent means the tax number is optional everywhere, which is how
-    // a GSTIN has always worked. Set to "true" to sell B2B-only in the
-    // EU by demanding a VAT number — a commercial choice, and the one
-    // that avoids a non-Union OSS registration, since a non-EU supplier
-    // selling to a non-taxable EU person owes VAT at that person's
-    // local rate from the first sale. See billing/tax.ts.
-    name: "BILLING_EU_REQUIRE_VAT",
-    requirement: "capability",
-    purpose: "'true' demands a VAT number from EU customers — see billing/tax.ts",
-    capability: "nothing — absent leaves the tax number optional everywhere",
-  },
-  {
     name: "PLATFORM_ADMIN_EMAILS",
     requirement: "capability",
     purpose: "Allowlist for the platform admin console",

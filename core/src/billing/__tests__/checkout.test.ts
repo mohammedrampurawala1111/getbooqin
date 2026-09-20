@@ -94,7 +94,7 @@ describe("tax identity", () => {
     //
     // The tax position is not lost, only stated honestly: the sale
     // carries `eu_no_vat_id` rather than being labelled a reverse-charge
-    // export it is not. BILLING_EU_REQUIRE_VAT=true restores B2B-only.
+    // export it is not.
     await subscribe({ plan: "free", status: "free", currency: "EUR" });
     await expect(startCheckout({ connectionId, country: "NL", plan: "growth", cycle: "monthly" }))
       .rejects.not.toMatchObject({ code: "getbooqin_tax_identity" });

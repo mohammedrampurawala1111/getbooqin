@@ -21,7 +21,7 @@ import { reconcileSubscription } from "./reconcile.js";
 import type { BillingProvider } from "./providers/provider.js";
 import { ensureSubscription } from "./subscriptions.js";
 import { getSettings } from "../booking/settings.js";
-import { validateTaxIdentity, requireEuVatIdFromEnv, type TaxIdentity } from "./tax.js";
+import { validateTaxIdentity, type TaxIdentity } from "./tax.js";
 import {
   PLANS,
   planRank,
@@ -160,16 +160,15 @@ export async function startCheckout(args: {
   // answer than telling them they're already subscribed, and the state
   // checks are about whether this action makes sense at all.
   //
-  // GetBooqin sells from an Indian entity, so outside India this is a
-  // zero-rated B2B export and the customer's tax number is the evidence
-  // for it — selling to an EU *consumer* instead triggers non-Union OSS
-  // registration from the first euro, with no threshold. Captured rather
-  // than derived: the billing currency is a guess from the shop's
-  // settings, and a tax position must not rest on a guess.
-  const tax = validateTaxIdentity(
-    { country: args.country, taxId: args.taxId },
-    { requireEuVatId: requireEuVatIdFromEnv() }
-  );
+  // GetBooqin sells from an Indian entity, so the country decides
+  // between a domestic GST supply and a zero-rated export. Captured
+  // rather than derived: the billing currency is a guess from the
+  // shop's settings, and a tax position must not rest on a guess.
+  //
+  // The tax number itself is optional everywhere — see tax.ts. What it
+  // changes is the position recorded on the invoice, not whether the
+  // sale is allowed.
+  const tax = validateTaxIdentity({ country: args.country, taxId: args.taxId });
   if (!tax.identity) {
     throw new GetBooqinError("getbooqin_tax_identity", tax.problems[0]!.message, 400);
   }
