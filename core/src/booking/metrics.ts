@@ -7,10 +7,11 @@
  * or breakdown query exists anywhere to port, so this is built fresh.
  *
  * The revenue and payment-status aggregates came out with merchant
- * deposits in Phase 1's trim: nothing in the product can settle a payment
- * any more, so both would only ever report zeroes. The `Payment` table
- * and `Booking.paymentStatus` stay (no destructive migrations), so
- * whatever re-introduces deposits can bring the queries back with them.
+ * deposits in Phase 1's trim, because nothing in the product could
+ * settle a payment any more and both would have reported zeroes for
+ * ever. They are back as `money()` below, against the lighter
+ * direct-to-merchant collection that replaced deposits — and they are
+ * deliberately not called revenue. See that function.
  */
 import { DateTime } from "luxon";
 import prisma from "../db.js";
@@ -196,4 +197,147 @@ export async function overview(shop: string, platform: string, range: DateRange)
     noShowRate(shop, platform, range),
   ]);
   return { bookingsSeries, topServices: top, resourceUtilization: utilization, noShow };
+}
+
+/* ------------------------------------------------------------------ */
+/* Money                                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What the merchant has been paid, as far as anybody has told us.
+ *
+ * ## It is not revenue and must never be labelled as one
+ *
+ * GetBooqin is not in these transactions. The customer pays the
+ * merchant directly over UPI or PayPal.me, and `Payment.status` becomes
+ * `paid` because **a person clicked a button** — the UTR a customer
+ * quotes is evidence to match against a bank statement, not proof
+ * anything arrived.
+ *
+ * Two things follow, and both belong on the screen rather than only
+ * here. The figure is a *floor*, not a total: a customer who pays cash
+ * and is never recorded is invisible to us. And it is not an accounting
+ * number — the moment a merchant takes it to their accountant, the gap
+ * between "someone ticked this" and "money arrived" becomes their
+ * problem and our fault.
+ *
+ * ## Which method is not a setting we read — it is what happened
+ *
+ * `availableMethod()` routes by region: an Indian merchant with a UPI
+ * id collects over UPI, everyone else over PayPal.me. But a merchant
+ * can change that, and bookings taken under the old arrangement do not
+ * move. So the breakdown is built from the methods actually recorded,
+ * which is what lets the dashboard show a UPI merchant UPI, a PayPal
+ * merchant PayPal, and a merchant mid-switch both.
+ *
+ * ## Currencies are never summed together
+ *
+ * `Payment.currency` is per row. A shop that changed currency, or took
+ * one booking in USD, would otherwise produce a total that is the sum
+ * of two different things and means neither. Rows in the shop's own
+ * currency are counted; anything else is reported by name so the screen
+ * can say so instead of quietly being wrong.
+ */
+export interface MoneyByMethod {
+  method: string;
+  collected: number;
+  count: number;
+}
+
+export interface MoneyMetrics {
+  /** The shop's own currency — the one every figure here is in. */
+  currency: string;
+  /** Marked received within the range, by when it was received. */
+  collected: number;
+  collectedCount: number;
+  /** Asked for within the range, whether or not it arrived. The denominator of the collection rate. */
+  requested: number;
+  requestedCount: number;
+  /**
+   * Still owed, across all time rather than the range — a debt does not
+   * stop being a debt because the date filter moved.
+   */
+  outstanding: number;
+  outstandingCount: number;
+  /** Built from what was actually used, not from what settings say. */
+  byMethod: MoneyByMethod[];
+  /** Present but not counted, because summing currencies would be meaningless. */
+  otherCurrencies: string[];
+  /** False when nothing has ever been requested — the card hides itself rather than showing zeroes. */
+  used: boolean;
+}
+
+export async function money(
+  shop: string,
+  platform: string,
+  range: DateRange,
+  shopCurrency: string
+): Promise<MoneyMetrics> {
+  const currency = (shopCurrency || "").toUpperCase();
+
+  const [inRange, everRequested, outstandingRows] = await Promise.all([
+    // Received *in* the range, keyed on paidAt — when the money landed,
+    // not when it was asked for. A deposit requested in March and paid
+    // in April belongs to April.
+    prisma.payment.findMany({
+      where: { shop, platform, status: "paid", paidAt: { gte: range.from, lte: range.to } },
+      select: { amount: true, currency: true, method: true },
+    }),
+    prisma.payment.findMany({
+      where: { shop, platform, createdAt: { gte: range.from, lte: range.to } },
+      select: { amount: true, currency: true, status: true },
+    }),
+    // Deliberately unbounded by the range.
+    prisma.payment.findMany({
+      where: { shop, platform, status: "pending" },
+      select: { amount: true, currency: true },
+    }),
+  ]);
+
+  const others = new Set<string>();
+  const matches = (rowCurrency: string) => {
+    const code = (rowCurrency || "").toUpperCase();
+    if (code === currency) return true;
+    if (code) others.add(code);
+    return false;
+  };
+
+  const collectedRows = inRange.filter((row) => matches(row.currency));
+  const byMethod = new Map<string, { collected: number; count: number }>();
+  for (const row of collectedRows) {
+    const entry = byMethod.get(row.method) ?? { collected: 0, count: 0 };
+    entry.collected += row.amount;
+    entry.count += 1;
+    byMethod.set(row.method, entry);
+  }
+
+  const requestedRows = everRequested.filter((row) => matches(row.currency));
+  // Cancelled requests are not something anyone was ever asked to pay,
+  // so counting them would make the collection rate look worse than the
+  // merchant's customers actually behaved.
+  const liveRequests = requestedRows.filter((row) => row.status !== "cancelled");
+  const outstanding = outstandingRows.filter((row) => matches(row.currency));
+
+  return {
+    currency,
+    collected: round2(collectedRows.reduce((sum, row) => sum + row.amount, 0)),
+    collectedCount: collectedRows.length,
+    requested: round2(liveRequests.reduce((sum, row) => sum + row.amount, 0)),
+    requestedCount: liveRequests.length,
+    outstanding: round2(outstanding.reduce((sum, row) => sum + row.amount, 0)),
+    outstandingCount: outstanding.length,
+    byMethod: [...byMethod.entries()]
+      .map(([method, totals]) => ({ method, collected: round2(totals.collected), count: totals.count }))
+      .sort((a, b) => b.collected - a.collected),
+    otherCurrencies: [...others].sort(),
+    // Asked of requests rather than of receipts: a merchant who has
+    // asked for money and been paid none still needs the screen, and
+    // that is exactly when they need it most.
+    used: requestedRows.length > 0 || outstanding.length > 0,
+  };
+}
+
+/** Money, to the minor unit. Float columns accumulate error over a few hundred rows. */
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
 }

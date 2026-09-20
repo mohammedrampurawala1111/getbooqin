@@ -79,7 +79,13 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const bookingSlug = hasRealName ? await ensureSlug(params.connectionId!, settings.business_name) : params.connectionId;
   const bookingUrl = `${getAppUrl()}/book/${bookingSlug}`;
 
+  // Only queried once the account has a currency to report in — which
+  // it always has — and it decides for itself whether it has anything
+  // worth showing. See Metrics.money().
+  const money = await Metrics.money(shop, platform, range, settings.currency);
+
   return {
+    money,
     overview,
     pendingCount,
     activeServiceCount,
@@ -155,7 +161,7 @@ function BookingWindowClosedBanner({
 }
 
 export default function Overview({ loaderData, params }: Route.ComponentProps) {
-  const { overview, pendingCount, activeServiceCount, range, timezone, allTimeBookingCount, setupFacts, hiddenCards, bookingUrl, conflictCount, unbookableCount, bookingWindowClosed, minNoticeHours, maxAdvanceDays } = loaderData;
+  const { money, overview, pendingCount, activeServiceCount, range, timezone, allTimeBookingCount, setupFacts, hiddenCards, bookingUrl, conflictCount, unbookableCount, bookingWindowClosed, minNoticeHours, maxAdvanceDays } = loaderData;
   const totalBookings = overview.bookingsSeries.reduce((sum, d) => sum + d.count, 0);
   const v = useVocabulary();
 
@@ -194,6 +200,7 @@ export default function Overview({ loaderData, params }: Route.ComponentProps) {
         subtitle={`${dateRangeLabel(range.from, timezone)} – ${dateRangeLabel(range.to, timezone)}`}
       />
 
+      <MoneyCard money={money} connectionId={params.connectionId} />
       <ShareLinkCard bookingUrl={bookingUrl} vocab={v} />
 
       {bookingWindowClosed && (
@@ -500,6 +507,128 @@ function DismissibleSetupChecklist({
           : undefined
       }
     />
+  );
+}
+
+/** What a merchant calls each way of being paid. */
+const METHOD_LABELS: Record<string, string> = {
+  upi: "UPI",
+  paypal: "PayPal",
+  cash: "Cash",
+  bank: "Bank transfer",
+  other: "Other",
+};
+
+/**
+ * Money the merchant has been paid, as far as anybody has told us.
+ *
+ * ## Deliberately not called revenue
+ *
+ * GetBooqin is not in these transactions — the customer pays the
+ * merchant directly over UPI or PayPal.me, and a payment is `paid`
+ * because a person clicked a button. So the card says "Recorded as
+ * received", the footer says who recorded it, and nothing here invites
+ * a merchant to treat the figure as an accounting number. The moment
+ * one is taken to an accountant, the gap between "someone ticked this"
+ * and "money arrived" becomes their problem and our fault.
+ *
+ * ## It shapes itself around how they actually collect
+ *
+ * An Indian merchant collects over UPI, one outside India over
+ * PayPal.me — availableMethod() routes on exactly that. So a merchant
+ * who only uses one never sees a breakdown they would have to read to
+ * learn nothing; a merchant mid-switch, or one who also takes cash,
+ * gets the split. Built from methods actually recorded rather than from
+ * settings, because bookings taken under an old arrangement do not move
+ * when the setting does.
+ *
+ * ## Absent entirely for the merchants who do not use it
+ *
+ * `used` is false until something has been requested, and most accounts
+ * never will. A row of zeroes about a feature they have not switched on
+ * is noise on the one screen they read every morning.
+ */
+function MoneyCard({ money, connectionId }: {
+  money: Route.ComponentProps["loaderData"]["money"];
+  connectionId: string;
+}) {
+  if (!money.used) return null;
+
+  const cash = (value: number) =>
+    `${money.currency} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // Only worth drawing when there is more than one thing to compare.
+  const showBreakdown = money.byMethod.length > 1;
+
+  return (
+    <div className="card p-[18px]">
+      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="card-title m-0">Payments</h2>
+        <a href={`/dashboard/${connectionId}/orders`} className="btn-link text-meta">
+          See every payment &rarr;
+        </a>
+      </div>
+      <p className="m-0 mb-3 text-meta text-muted">
+        Recorded as received — these are payments you or your team marked as paid, not amounts we verified.
+      </p>
+
+      <div className="grid grid-cols-2 gap-[10px] md:grid-cols-3">
+        <div className="rounded-[9px] bg-canvas-alt px-[14px] py-[11px]">
+          <span className="block text-[11.5px] text-muted">Received</span>
+          <span className="num text-[20px] font-medium tracking-[-0.03em]">{cash(money.collected)}</span>
+          <span className="block text-[11.5px] text-muted">
+            {money.collectedCount} {money.collectedCount === 1 ? "payment" : "payments"}
+          </span>
+        </div>
+        <div className="rounded-[9px] bg-canvas-alt px-[14px] py-[11px]">
+          <span className="block text-[11.5px] text-muted">Still owed</span>
+          <span
+            className={`num text-[20px] font-medium tracking-[-0.03em] ${money.outstanding > 0 ? "text-warn" : ""}`}
+          >
+            {cash(money.outstanding)}
+          </span>
+          {/* All-time, and said so: a merchant comparing this against
+              the range above would otherwise think it disagreed. */}
+          <span className="block text-[11.5px] text-muted">
+            {money.outstandingCount} outstanding, all time
+          </span>
+        </div>
+        {money.requested > 0 && (
+          <div className="rounded-[9px] bg-canvas-alt px-[14px] py-[11px]">
+            <span className="block text-[11.5px] text-muted">Asked for</span>
+            <span className="num text-[20px] font-medium tracking-[-0.03em]">{cash(money.requested)}</span>
+            <span className="block text-[11.5px] text-muted">
+              {Math.round((money.collected / money.requested) * 100)}% recorded back
+            </span>
+          </div>
+        )}
+      </div>
+
+      {showBreakdown && (
+        <div className="mt-3 flex flex-col">
+          {money.byMethod.map((row) => (
+            <div
+              key={row.method}
+              className="flex items-center justify-between gap-3 border-b border-row py-[7px] text-[13px] last:border-0"
+            >
+              <span className="font-medium">{METHOD_LABELS[row.method] ?? row.method}</span>
+              <span className="flex items-center gap-3">
+                <span className="text-muted">{row.count}</span>
+                <span className="num">{cash(row.collected)}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {money.otherCurrencies.length > 0 && (
+        // Never summed with the rest — see Metrics.money(). Saying so
+        // beats a total that is the sum of two different things.
+        <p className="m-0 mt-3 rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+          Payments in {money.otherCurrencies.join(", ")} aren't included above — these figures are {money.currency}{" "}
+          only.
+        </p>
+      )}
+    </div>
   );
 }
 
