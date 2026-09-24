@@ -19,7 +19,16 @@ import { getAppUrl } from "~/lib/env.server";
  * whole design.
  */
 export async function action({ request, params }: Route.ActionArgs) {
-  const { shop, platform } = await requireTenant(request, params.connectionId);
+  // "admin", like Settings, not the default "read".
+  //
+  // Every action below is a change to how the business reaches its own
+  // customers: connecting a WhatsApp Business account, finishing its
+  // setup, or disconnecting one that is live. A read-only teammate —
+  // someone given the role precisely so they can look at the calendar
+  // and nothing else — could have disconnected the merchant's WhatsApp
+  // by posting to this route, and the nav hiding the card is not a
+  // security boundary.
+  const { shop, platform } = await requireTenant(request, params.connectionId, "admin");
   const connectionId = params.connectionId!;
 
   // The plan gate, stated once here so a merchant on Free gets a clear
