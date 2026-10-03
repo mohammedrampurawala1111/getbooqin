@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import prisma from "./db.js";
 import { encryptCredentials } from "./auth/encryption.js";
 import { assertCanAddBusiness, userHasFeature } from "./billing/enforcement.js";
@@ -156,39 +156,127 @@ export async function listUserConnections(userId: string) {
   return memberships.map((m) => m.connection);
 }
 
-function slugify(input: string): string {
-  return input.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+/**
+ * The alphabet a booking slug is drawn from.
+ *
+ * Crockford-ish: no 0/O, no 1/l/I. These links get read off a phone
+ * screen, typed from a printed QR card, and dictated over a counter, and
+ * those are the pairs that get that wrong.
+ */
+const SLUG_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+const SLUG_LENGTH = 8;
+
+/**
+ * Path segments a custom slug may not take.
+ *
+ * Narrower than it looks: a slug only ever appears as `/book/<slug>`, so
+ * it cannot collide with a top-level route. This is about the one real
+ * collision — `/book/:connectionId/slots` — plus a few words that would
+ * make a support conversation confusing.
+ */
+const RESERVED_SLUGS = new Set(["slots", "book", "admin", "api", "v1", "new", "edit", "null", "undefined"]);
+
+function randomSlug(): string {
+  const bytes = randomBytes(SLUG_LENGTH);
+  let out = "";
+  for (let i = 0; i < SLUG_LENGTH; i++) {
+    out += SLUG_ALPHABET[bytes[i] % SLUG_ALPHABET.length];
+  }
+  return out;
 }
 
 /**
- * Lazily generates and persists a human-readable slug for the public
- * /book/:connectionId link, from the shop's own business name — a raw cuid
- * reads badly in something a merchant is invited to put in a social bio
- * (UX audit's #13 finding). Idempotent per connection: once set, a slug is
- * never regenerated even if the business name changes later, so a link a
- * merchant already shared keeps working. The cuid `id` itself is left
- * fully functional too (getPublicConnection resolves either) — this is a
- * friendlier alias, not a replacement.
+ * Lazily generates and persists the slug behind a business's public
+ * /book/ link.
+ *
+ * ## Why this is no longer derived from the business name
+ *
+ * It used to be `slugify(businessName)` with a `-1`, `-2`, … suffix on
+ * collision, and the 10-01-2026 review (item 11) was right that this
+ * does not survive contact with reality:
+ *
+ *   - Two clinics called "Trevor Hayes" race for the good URL and the
+ *     loser is permanently `/book/trevorhayes-1`, which reads like a
+ *     second-rate copy of someone else.
+ *   - The suffix is sequential, so the URL leaks how many businesses
+ *     share that name and lets anyone enumerate them.
+ *   - A Connection *is* a location here (the plan meter counts
+ *     "Businesses or locations"), so a second location of one business
+ *     had no answer at all beyond `-2`.
+ *
+ * A random slug has none of those problems and costs nothing: nobody
+ * types these, they are copied, scanned or clicked.
+ *
+ * ## What does not change
+ *
+ * Still idempotent — a slug, once set, is never regenerated, so a link
+ * already printed on a card or sitting in an Instagram bio keeps
+ * working. Existing name-derived slugs are left exactly as they are;
+ * this only decides what *new* accounts get. And the cuid `id` keeps
+ * resolving permanently either way (getPublicConnection takes either),
+ * which is what makes the whole change migration-free.
  */
-export async function ensureSlug(connectionId: string, businessName: string): Promise<string> {
+export async function ensureSlug(connectionId: string): Promise<string> {
   const existing = await prisma.connection.findUnique({ where: { id: connectionId }, select: { slug: true } });
   if (existing?.slug) return existing.slug;
 
-  const base = slugify(businessName) || connectionId.slice(0, 8);
-  let candidate = base;
-  let suffix = 1;
-  // Two merchants picking the same business name is rare but not
-  // impossible — append a short numeric suffix rather than failing the
-  // page render over a unique-constraint collision.
-  while (true) {
-    const clash = await prisma.connection.findUnique({ where: { slug: candidate } });
-    if (!clash || clash.id === connectionId) break;
-    candidate = `${base}-${suffix}`;
-    suffix += 1;
+  // 31^8 is ~8.5e11, so a collision is already vanishingly unlikely —
+  // but "unlikely" is not "handled", and the column is unique, so a
+  // clash would otherwise surface as a 500 on a dashboard page load.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const candidate = randomSlug();
+    const clash = await prisma.connection.findFirst({
+      where: { OR: [{ slug: candidate }, { id: candidate }] },
+      select: { id: true },
+    });
+    if (clash && clash.id !== connectionId) continue;
+    await prisma.connection.update({ where: { id: connectionId }, data: { slug: candidate } });
+    return candidate;
+  }
+  throw new GetBooqinError("getbooqin_slug_exhausted", "Could not generate a booking link. Please try again.", 500);
+}
+
+/** Why a custom slug was refused, or "" if it is fine. Pure; see setCustomSlug. */
+export function customSlugProblem(slug: string): string {
+  const value = slug.trim().toLowerCase();
+  if (value.length < 3 || value.length > 40) return "Use between 3 and 40 characters.";
+  if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(value)) {
+    return "Use lowercase letters, numbers and hyphens only, starting and ending with a letter or number.";
+  }
+  if (value.includes("--")) return "Use single hyphens only.";
+  if (RESERVED_SLUGS.has(value)) return "That word is reserved — pick another.";
+  return "";
+}
+
+/**
+ * Claim a specific booking slug, first-come.
+ *
+ * The honest version of what the name-derived slug was pretending to
+ * offer: a merchant who actually wants `/book/trevorhayes` can ask for
+ * it, rather than being given it by accident and taken off someone else
+ * who asked first.
+ *
+ * Refuses a slug that matches *any* existing connection's id as well as
+ * any existing slug. getPublicConnection resolves `id OR slug`, so a
+ * slug equal to another account's cuid would make `/book/<their-id>`
+ * ambiguous — whichever row the query happened to return first. Nobody
+ * would hit that by accident; someone would hit it on purpose.
+ */
+export async function setCustomSlug(connectionId: string, slug: string): Promise<string> {
+  const value = slug.trim().toLowerCase();
+  const problem = customSlugProblem(value);
+  if (problem) throw new GetBooqinError("getbooqin_invalid_slug", problem, 400);
+
+  const clash = await prisma.connection.findFirst({
+    where: { OR: [{ slug: value }, { id: value }] },
+    select: { id: true },
+  });
+  if (clash && clash.id !== connectionId) {
+    throw new GetBooqinError("getbooqin_slug_taken", "That booking link is already taken — pick another.", 409);
   }
 
-  await prisma.connection.update({ where: { id: connectionId }, data: { slug: candidate } });
-  return candidate;
+  await prisma.connection.update({ where: { id: connectionId }, data: { slug: value } });
+  return value;
 }
 
 export async function getUserConnection(userId: string, connectionId: string) {

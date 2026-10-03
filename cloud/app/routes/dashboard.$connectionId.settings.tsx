@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Form, redirect, useFetcher, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.settings";
-import { Settings, Data, Mailer, Team, Entitlements, Billing, Checkout, BillingReconcile, Invoices, Plans, Qr, Subscriptions, Tax, WhatsAppAccounts, WhatsAppTemplates, listUserConnections, disconnectConnection, isGetBooqinError } from "getbooqin-core";
+import { Settings, Data, Mailer, Team, Entitlements, Billing, Checkout, BillingReconcile, Invoices, Plans, Qr, Subscriptions, Tax, WhatsAppAccounts, WhatsAppTemplates, listUserConnections, disconnectConnection, ensureSlug, setCustomSlug, isGetBooqinError } from "getbooqin-core";
 // Client-safe subpath for the two rule-checks the component below calls at
 // render time — importing these off the main `Settings` namespace instead
 // would pull core's *entire* barrel (nodemailer, the Razorpay/Shopify HMAC
@@ -13,6 +13,7 @@ import { Settings, Data, Mailer, Team, Entitlements, Billing, Checkout, BillingR
 import { type BookingRuleField, bookingWindowIsClosed, cancelCutoffExceedsNotice } from "getbooqin-core/booking/settingsShared";
 import { requireTenant } from "~/tenant.server";
 import { getClerkClient } from "~/session.server";
+import { getAppUrl } from "~/lib/env.server";
 import { AlertError, Badge, TimezoneSelect, Toggle, useToast } from "~/components/ui";
 import { IntegrationRow, LogoMark, WeeklyHoursEditor } from "~/components/onboarding";
 import { UpgradePrompt } from "~/components/upgrade";
@@ -222,6 +223,12 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     businessHours,
     resourceCount,
     whatsapp,
+    // The public /book/ slug, so the merchant can see and change it
+    // (10-01-2026 review, item 11). Generated on demand rather than read
+    // raw: an account that has never opened its Overview has no slug yet,
+    // and this page should still be able to show one.
+    bookingSlug: await ensureSlug(connection.id),
+    bookingBase: `${getAppUrl()}/book/`,
     settings,
     billing: {
       plan: entitlements.plan,
@@ -399,6 +406,18 @@ export async function action({ request, params }: Route.ActionArgs) {
     });
     return { saved: true };
   } else if (section === "general") {
+    // Before the settings write, not after: if the slug is refused, the
+    // merchant should land back on an unchanged page rather than one
+    // where half their edit saved.
+    const requestedSlug = String(form.get("booking_slug") ?? "").trim().toLowerCase();
+    if (requestedSlug && requestedSlug !== (await ensureSlug(params.connectionId!))) {
+      try {
+        await setCustomSlug(params.connectionId!, requestedSlug);
+      } catch (err) {
+        if (isGetBooqinError(err)) return { error: err.message };
+        throw err;
+      }
+    }
     await Settings.setSettings(shop, platform, {
       business_name: String(form.get("business_name") ?? ""),
       business_email: String(form.get("business_email") ?? ""),
@@ -632,7 +651,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 export default function SettingsPage({ loaderData, actionData }: Route.ComponentProps) {
   const {
-    settings, billing, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites, bookingQr, whatsapp, businessHours, resourceCount,
+    settings, billing, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites, bookingQr, whatsapp, businessHours, resourceCount, bookingSlug, bookingBase,
   } = loaderData;
   const v = useVocabulary();
   // defaultSettings() seeds business_name to the connection's own opaque
@@ -709,6 +728,17 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
               real contact details (and for a clinic, health-adjacent
               notes) should point this at their own notice once they have
               one (GetBooqin clinic audit's TS-01 finding). */}
+          {/* 10-01-2026 review, item 11. New accounts get a random slug —
+              `/book/tco71cw7` — rather than one derived from the business
+              name, which handed the good URL to whoever signed up first
+              and left everyone else on "-1". This is the honest version
+              of what that was pretending to offer: ask for the readable
+              one, first come, and keep the random one if you don't care.
+              Changing it does not break the old link — the cuid always
+              resolves, and so does any slug previously set. */}
+          <Row label="Booking link" hint={`Your public ${v.bookingOne} page. ${bookingBase}`}>
+            <RowInput name="booking_slug" defaultValue={bookingSlug} placeholder="tco71cw7" cap={40} />
+          </Row>
           <Row label="Privacy notice URL" hint="Linked from the consent checkbox on your booking form. Leave blank to use GetBooqin's own privacy page.">
             <RowInput type="url" name="privacy_notice_url" defaultValue={settings.privacy_notice_url} placeholder="https://your-clinic.example/privacy" cap={9999} />
           </Row>

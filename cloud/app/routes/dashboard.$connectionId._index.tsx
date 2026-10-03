@@ -68,16 +68,13 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     isManual: platform === "manual",
   };
 
-  // A human-readable link reads better in a social bio than a raw cuid (UX
-  // audit's #13 finding) — but only worth generating once there's a real
-  // business name to slugify; a manual account that hasn't named itself
-  // yet would otherwise get permanently stuck with a slug derived from its
-  // opaque manual-<uuid> shop id (ensureSlug never regenerates once set).
-  // The cuid link keeps working either way — getPublicConnection resolves
-  // both.
-  const hasRealName = !!settings.business_name && !(platform === "manual" && settings.business_name === shop);
-  const bookingSlug = hasRealName ? await ensureSlug(params.connectionId!, settings.business_name) : params.connectionId;
-  const bookingUrl = `${getAppUrl()}/book/${bookingSlug}`;
+  // A short slug reads better in a social bio than a raw cuid (UX audit's
+  // #13 finding). No longer conditional on having a real business name:
+  // the slug is random now, not derived from the name, so there is
+  // nothing to wait for and nothing to get stuck with (10-01-2026
+  // review, item 11). The cuid link keeps working either way —
+  // getPublicConnection resolves both.
+  const bookingUrl = `${getAppUrl()}/book/${await ensureSlug(params.connectionId!)}`;
 
   // Only queried once the account has a currency to report in — which
   // it always has — and it decides for itself whether it has anything

@@ -68,9 +68,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // below can link to the real, working URL.
   let bookingUrl: string | null = null;
   if (channelCount === 0) {
-    const hasRealName = !!settings.business_name && !(platform === "manual" && settings.business_name === shop);
-    const slug = hasRealName ? await ensureSlug(connection.id, settings.business_name) : connection.id;
-    bookingUrl = `${getAppUrl()}/book/${slug}`;
+    bookingUrl = `${getAppUrl()}/book/${await ensureSlug(connection.id)}`;
     bookingHandle = bookingUrl.replace(/^https?:\/\//, "");
   }
 
