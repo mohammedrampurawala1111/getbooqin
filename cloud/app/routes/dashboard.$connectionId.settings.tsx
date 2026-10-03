@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Form, redirect, useFetcher, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/dashboard.$connectionId.settings";
-import { Settings, Data, Mailer, Team, Entitlements, Billing, Checkout, BillingReconcile, Invoices, Plans, Qr, Subscriptions, Tax, WhatsAppAccounts, WhatsAppTemplates, listUserConnections, disconnectConnection, ensureSlug, setCustomSlug, isGetBooqinError } from "getbooqin-core";
+import { Settings, Data, Mailer, Team, Entitlements, Billing, Checkout, BillingReconcile, Invoices, PaymentGateway, Plans, Qr, Subscriptions, Tax, WhatsAppAccounts, WhatsAppTemplates, listUserConnections, disconnectConnection, ensureSlug, setCustomSlug, isGetBooqinError } from "getbooqin-core";
 // Client-safe subpath for the two rule-checks the component below calls at
 // render time — importing these off the main `Settings` namespace instead
 // would pull core's *entire* barrel (nodemailer, the Razorpay/Shopify HMAC
@@ -227,6 +227,20 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     // (10-01-2026 review, item 11). Generated on demand rather than read
     // raw: an account that has never opened its Overview has no slug yet,
     // and this page should still be able to show one.
+    // The connected-gateway rail. Entitlement checked here rather than
+    // trusted from the row, same as branding: an account that lost the
+    // feature must stop being offered it, not merely stop using it.
+    gateway: {
+      entitled: entitlements.features.has("payments_gateway"),
+      // Null until a merchant connects. `status` distinguishes "working"
+      // from "connected but the webhook never registered", which is a
+      // real state and the one worth surfacing — a payment taken there
+      // would succeed and never confirm the booking.
+      account: await (async () => {
+        const row = await PaymentGateway.forConnection(connection.id);
+        return row ? { status: row.status, accountId: row.accountId, lastError: row.lastError } : null;
+      })(),
+    },
     bookingSlug: await ensureSlug(connection.id),
     bookingBase: `${getAppUrl()}/book/`,
     settings,
@@ -404,6 +418,12 @@ export async function action({ request, params }: Route.ActionArgs) {
       brand_logo: String(form.get("brand_logo") ?? ""),
       brand_accent: String(form.get("brand_accent") ?? "").trim(),
     });
+    return { saved: true };
+  } else if (section === "gateway_disconnect") {
+    // Unconditional on our side even if Razorpay refuses — see
+    // PaymentGateway.disconnect(). A merchant who withdraws consent must
+    // end up disconnected.
+    await PaymentGateway.disconnect(params.connectionId!);
     return { saved: true };
   } else if (section === "general") {
     // Before the settings write, not after: if the slug is refused, the
@@ -651,7 +671,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 export default function SettingsPage({ loaderData, actionData }: Route.ComponentProps) {
   const {
-    settings, billing, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites, bookingQr, whatsapp, businessHours, resourceCount, bookingSlug, bookingBase,
+    settings, billing, notificationMessages, connections, currentConnectionId, isManual, shop, accountEmail, canManageTeam, members, pendingInvites, bookingQr, whatsapp, businessHours, resourceCount, bookingSlug, bookingBase, gateway,
   } = loaderData;
   const v = useVocabulary();
   // defaultSettings() seeds business_name to the connection's own opaque
@@ -923,6 +943,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
           businessName={settings.business_name}
           upiId={settings.upi_id}
           payPalMe={settings.paypal_me}
+          gateway={gateway}
           savedAt={savedAt}
           error={actionData && "error" in actionData ? actionData.error : undefined}
         />
@@ -1683,8 +1704,95 @@ async function downscaleToDataUrl(file: File, max: number): Promise<string> {
  * who believes this is automatic will stop checking their bank, and
  * that is the one outcome worse than having no feature at all.
  */
+/**
+ * Connect (or disconnect) the merchant's own Razorpay account.
+ *
+ * The distinction this card has to carry, and the reason it is not just
+ * a button: the UPI fields below it already collect money. What this
+ * adds is not payment, it is *confirmation* — a webhook that tells the
+ * product the money arrived, which an `upi://pay` deep link can never
+ * do. A merchant who reads this as "now I can take payments" has
+ * misunderstood what they already had.
+ *
+ * Funds still never touch GetBooqin. The merchant's Razorpay account is
+ * theirs; we hold a token to raise charges on it, and it settles to
+ * them. See core/src/payments/gateway.ts and
+ * docs/india-market-analysis.md §8.3.
+ */
+function GatewayCard({
+  connectionId, account,
+}: {
+  connectionId: string;
+  account: { status: string; accountId: string; lastError: string | null } | null;
+}) {
+  const [searchParams] = useSearchParams();
+  const justConnected = searchParams.get("gateway") === "connected";
+  const connectError = searchParams.get("gateway_error");
+  const live = account?.status === "active";
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="flex flex-col gap-[3px]">
+          <h2 className="card-title">Automatic payment confirmation</h2>
+          <p className="m-0 text-meta text-muted">
+            Connect your own Razorpay account and a booking confirms itself the moment the customer pays.
+            Without it you can still take payments below — you just mark them received yourself.
+          </p>
+        </div>
+      </div>
+      <div className="card-body flex flex-col gap-3">
+        {justConnected && live && (
+          <p className="m-0 rounded-[8px] bg-ok-bg px-3 py-2 text-[12.5px] font-medium text-ok">
+            Razorpay is connected. New bookings with a deposit will confirm automatically.
+          </p>
+        )}
+        {connectError && (
+          <p className="m-0 rounded-[8px] bg-danger-bg px-3 py-2 text-[12.5px] text-danger">{connectError}</p>
+        )}
+        {/* Connected-but-not-working is its own state and must not read
+            as success: a payment taken here would go through and the
+            booking would stay pending forever. */}
+        {account && !live && (
+          <p className="m-0 rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+            Connected, but we aren't receiving payment notifications yet, so bookings won't confirm on their
+            own. Reconnect to fix it.
+            {account.lastError && <span className="mt-1 block text-[11.5px] opacity-80">{account.lastError}</span>}
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          {live ? (
+            <>
+              <span className="text-[13px] text-muted">
+                Connected as <span className="num">{account.accountId}</span>
+              </span>
+              <Form method="post" className="ml-auto">
+                <input type="hidden" name="_section" value="gateway_disconnect" />
+                <button type="submit" className="btn-sec">Disconnect</button>
+              </Form>
+            </>
+          ) : (
+            <Form method="post" action="/connect/razorpay">
+              <input type="hidden" name="connection_id" value={connectionId} />
+              <button type="submit" className="btn-pri">
+                {account ? "Reconnect Razorpay" : "Connect Razorpay"}
+              </button>
+            </Form>
+          )}
+        </div>
+
+        <p className="m-0 text-[11.5px] text-subtle">
+          Your Razorpay account stays yours and money settles straight to it — GetBooqin never holds it.
+          You'll need to complete Razorpay's KYC if you haven't already.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function PaymentsPage({
-  connectionId, currency, businessName, upiId, payPalMe, savedAt, error,
+  connectionId, currency, businessName, upiId, payPalMe, savedAt, error, gateway,
 }: {
   connectionId: string;
   currency: string;
@@ -1693,6 +1801,10 @@ function PaymentsPage({
   payPalMe: string;
   savedAt?: string;
   error?: string;
+  gateway: {
+    entitled: boolean;
+    account: { status: string; accountId: string; lastError: string | null } | null;
+  };
 }) {
   const [upi, setUpi] = useState(upiId);
   const [pp, setPp] = useState(payPalMe);
@@ -1711,6 +1823,12 @@ function PaymentsPage({
 
   return (
     <div className="flex flex-col gap-[14px]">
+      {/* Only for an account an admin has granted it to. Same reasoning
+          as the WhatsApp card on Integrations: no plan grants
+          `payments_gateway`, so an UpgradePrompt here would name a plan
+          that doesn't grant it either. Hidden is honest; "upgrade for
+          this" would not be. */}
+      {gateway.entitled && <GatewayCard connectionId={connectionId} account={gateway.account} />}
       <Form method="post" className="contents">
         <input type="hidden" name="_section" value="payments" />
 

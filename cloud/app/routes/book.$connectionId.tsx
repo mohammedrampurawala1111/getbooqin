@@ -8,6 +8,7 @@ import {
   WhatsAppAccounts,
   Settings as CoreSettings,
   Payments,
+  PaymentGateway,
   Waitlist,
   getPublicConnection,
   isGetBooqinError,
@@ -419,16 +420,44 @@ async function handleBook(connectionId: string, request: Request, form: FormData
     // Best-effort: a booking that exists must never be reported as
     // failed because we could not render a QR for it, and the merchant
     // can still request payment by hand.
-    let payment: { amount: number; currencySymbol: string; reference: string; link: string; qr: string } | null = null;
+    let payment: {
+      amount: number;
+      currencySymbol: string;
+      reference: string;
+      link: string;
+      qr: string;
+      /**
+       * Set only when the merchant has connected their own Razorpay
+       * account. The customer pays through Razorpay Checkout and the
+       * booking confirms itself on the webhook — the thing a bare
+       * `upi://pay` link can never do, because NPCI deep links have no
+       * callback.
+       */
+      checkout: { orderId: string; keyId: string; accountId: string; amountMinor: number; currency: string } | null;
+    } | null = null;
+
     if (booking.amountDue > 0) {
       try {
+        // The gateway rail first, when it is live for this account —
+        // entitlement, connected account, and a registered webhook, all
+        // checked inside isLive(). Everything else falls through to the
+        // merchant-direct UPI flow below, which needs no provider and is
+        // what every account gets today.
+        const checkout = await PaymentGateway.createOrderForBooking(
+          connection.shop,
+          connection.platform,
+          connection.id,
+          booking.id
+        );
+
         const request = await Payments.requestPayment(connection.shop, connection.platform, booking.id);
         payment = {
           amount: request.amount,
           currencySymbol: settings.currency_symbol,
           reference: request.reference,
           link: request.link,
-          qr: await Payments.paymentQr(request.link),
+          qr: checkout ? "" : await Payments.paymentQr(request.link),
+          checkout,
         };
       } catch (err) {
         console.warn(`[getbooqin book] could not raise a payment request for ${booking.uid}:`, err);
@@ -1526,6 +1555,7 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
       reference: string;
       link: string;
       qr: string;
+      checkout: { orderId: string; keyId: string; accountId: string; amountMinor: number; currency: string } | null;
     } | null;
   }>();
 
@@ -2012,6 +2042,89 @@ function DetailsForm({
 }
 
 /**
+ * Opens Razorpay Checkout for a connected-gateway payment.
+ *
+ * The script is loaded on click rather than in the page head: it is
+ * ~100KB of third-party JavaScript on the public booking page, which
+ * nearly every customer reaches without owing anything, and the one
+ * screen in the product an anonymous visitor sees should not carry it
+ * speculatively.
+ *
+ * `handler` and the dismiss callback are deliberately *not* how the
+ * booking gets confirmed. That is the webhook's job
+ * (PaymentGateway.handlePaymentEvent) — a customer who pays and closes
+ * the tab before the callback fires must still end up confirmed, and
+ * anything the browser tells us is a claim rather than a fact. All this
+ * does is reload, so the page re-reads whatever the webhook has already
+ * recorded.
+ */
+function RazorpayCheckoutButton({
+  checkout, businessName, label,
+}: {
+  checkout: { orderId: string; keyId: string; accountId: string; amountMinor: number; currency: string };
+  businessName: string;
+  label: string;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  async function open() {
+    setBusy(true);
+    try {
+      await loadRazorpayScript();
+      const Razorpay = (window as unknown as { Razorpay?: new (opts: unknown) => { open: () => void } }).Razorpay;
+      if (!Razorpay) throw new Error("Razorpay checkout did not load");
+
+      new Razorpay({
+        key: checkout.keyId,
+        // Which merchant's account this charge belongs to. Without it a
+        // partner key would try to charge the platform's own account.
+        account_id: checkout.accountId,
+        order_id: checkout.orderId,
+        amount: checkout.amountMinor,
+        currency: checkout.currency,
+        name: businessName,
+        handler: () => window.location.reload(),
+        modal: { ondismiss: () => setBusy(false) },
+      }).open();
+    } catch (err) {
+      console.error("[getbooqin book] could not open checkout:", err);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button type="button" className="btn-pri" onClick={open} disabled={busy}>
+      {busy ? "Opening…" : label}
+    </button>
+  );
+}
+
+const RAZORPAY_SCRIPT = "https://checkout.razorpay.com/v1/checkout.js";
+
+/** Idempotent: a second click must not append a second <script>. */
+function loadRazorpayScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof document === "undefined") return reject(new Error("no document"));
+    const existing = document.querySelector<HTMLScriptElement>(`script[src="${RAZORPAY_SCRIPT}"]`);
+    if (existing) {
+      if (existing.dataset.loaded === "1") return resolve();
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error("checkout.js failed to load")));
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = RAZORPAY_SCRIPT;
+    script.async = true;
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "1";
+      resolve();
+    });
+    script.addEventListener("error", () => reject(new Error("checkout.js failed to load")));
+    document.body.appendChild(script);
+  });
+}
+
+/**
  * "+ Add to calendar" — a chooser, not a download.
  *
  * This was a single <a download> pointing at an .ics data URL. On Apple
@@ -2064,7 +2177,14 @@ function Confirmation({
   connectionId, businessName, businessAddress, showBadge, brand, vocab, booking, waitlist, payment,
 }: {
   /** What is owed up front, if anything — see item 13. */
-  payment: { amount: number; currencySymbol: string; reference: string; link: string; qr: string } | null;
+  payment: {
+    amount: number;
+    currencySymbol: string;
+    reference: string;
+    link: string;
+    qr: string;
+    checkout: { orderId: string; keyId: string; accountId: string; amountMinor: number; currency: string } | null;
+  } | null;
   connectionId: string;
   businessName: string;
   businessAddress: string;
@@ -2146,24 +2266,48 @@ function Confirmation({
             <p className="m-0 text-body font-medium">
               {payment.currencySymbol}{payment.amount.toFixed(2)} due to confirm
             </p>
-            {payment.qr && (
-              <img
-                src={payment.qr}
-                alt={`Payment QR code for ${payment.currencySymbol}${payment.amount.toFixed(2)}`}
-                className="h-[180px] w-[180px]"
-              />
+            {/* Two rails, and the copy differs because the promise does.
+                
+                With a connected gateway the webhook confirms the booking
+                by itself, so "confirmed as soon as your payment goes
+                through" is true. On the merchant-direct UPI rail nothing
+                can observe the payment, so the only honest wording is
+                that the business confirms it. Saying the stronger thing
+                on the weaker rail is the one mistake worth going out of
+                the way to avoid here. */}
+            {payment.checkout ? (
+              <>
+                <RazorpayCheckoutButton
+                  checkout={payment.checkout}
+                  businessName={businessName}
+                  label={`Pay ${payment.currencySymbol}${payment.amount.toFixed(2)}`}
+                />
+                <p className="m-0 max-w-[320px] text-[12px] text-subtle">
+                  Your {vocab.bookingOne} is confirmed as soon as your payment goes through.
+                </p>
+              </>
+            ) : (
+              <>
+                {payment.qr && (
+                  <img
+                    src={payment.qr}
+                    alt={`Payment QR code for ${payment.currencySymbol}${payment.amount.toFixed(2)}`}
+                    className="h-[180px] w-[180px]"
+                  />
+                )}
+                {payment.link && (
+                  <a href={payment.link} className="btn-pri no-underline hover:no-underline">
+                    Pay {payment.currencySymbol}{payment.amount.toFixed(2)}
+                  </a>
+                )}
+                <p className="m-0 text-[12px] text-subtle">
+                  Quote reference <strong>{payment.reference}</strong> so {businessName} can match your payment.
+                </p>
+                <p className="m-0 max-w-[320px] text-[12px] text-subtle">
+                  Your {vocab.bookingOne} is held until {businessName} confirms the payment has arrived.
+                </p>
+              </>
             )}
-            {payment.link && (
-              <a href={payment.link} className="btn-pri no-underline hover:no-underline">
-                Pay {payment.currencySymbol}{payment.amount.toFixed(2)}
-              </a>
-            )}
-            <p className="m-0 text-[12px] text-subtle">
-              Quote reference <strong>{payment.reference}</strong> so {businessName} can match your payment.
-            </p>
-            <p className="m-0 max-w-[320px] text-[12px] text-subtle">
-              Your {vocab.bookingOne} is held until {businessName} confirms the payment has arrived.
-            </p>
           </div>
         )}
 

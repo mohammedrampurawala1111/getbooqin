@@ -65,6 +65,12 @@ export default [
     route("features", "routes/admin.features.tsx"),
     route("audit", "routes/admin.audit.tsx"),
   ]),
+  // Razorpay Technology Partner OAuth — the merchant connects their own
+  // Razorpay account so booking payments can confirm themselves. Behind
+  // the `payments_gateway` entitlement, granted by no plan. See
+  // core/src/payments/gateway.ts.
+  route("connect/razorpay", "routes/connect.razorpay.tsx"),
+  route("connect/razorpay/callback", "routes/connect.razorpay.callback.tsx"),
   route("connect/shopify", "routes/connect.shopify.tsx"),
   route("connect/shopify/callback", "routes/connect.shopify.callback.tsx"),
   // Public, unauthenticated — the customer-facing booking page a merchant
@@ -76,6 +82,10 @@ export default [
   // Razorpay subscription events — see the route's own header comment,
   // and keep in sync with server/combined.js's CLOUD_PREFIXES.
   route("webhooks/razorpay", "routes/webhooks.razorpay.tsx"),
+  // Payment events on a *merchant's* account, signed with a per-account
+  // secret — not the same thing as the subscription webhook above, which
+  // is ours. Keep in sync with server/combined.js's CLOUD_PREFIXES.
+  route("webhooks/razorpay/payments", "routes/webhooks.razorpay.payments.tsx"),
   route("webhooks/paypal", "routes/webhooks.paypal.tsx"),
   // Meta/WhatsApp: delivery statuses, customer replies, template verdicts.
   route("webhooks/meta", "routes/webhooks.meta.tsx"),

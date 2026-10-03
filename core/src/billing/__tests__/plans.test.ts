@@ -10,7 +10,8 @@ import {
   currencyForCountry, providerForCountry,
   providerForCurrency, priceFor, formatPrice, billingCurrencyFor,
   formatLimit, limitToString, limitFromString, planRank, visiblePlans,
-  type Currency, type PlanId, type LimitKey,
+  FEATURE_LABELS,
+  type Currency, type PlanId, type LimitKey, type FeatureKey,
 } from "../plans.js";
 
 const PAID: Exclude<PlanId, "free">[] = ["starter", "growth", "business"];
@@ -283,5 +284,36 @@ describe("billingCurrencyFor()", () => {
     const currency = billingCurrencyFor({ currency: "INR", timezone: "Asia/Kolkata" });
     expect(PRICES.starter[currency].monthly.razorpay.test).toMatch(/^plan_/);
     expect(PRICES.growth[currency].yearly.razorpay.test).toMatch(/^plan_/);
+  });
+});
+
+/**
+ * Features that must stay granted by no plan.
+ *
+ * Both are built on our side and blocked on someone else's — Meta's
+ * Tech Provider approval for `whatsapp`, a signed partner agreement and
+ * live client credentials for `payments_gateway` — so the only safe
+ * default is off-for-everyone, with an admin granting them per account
+ * from /admin. Adding either to a plan ships it to every account on
+ * that plan at once, which for `payments_gateway` means offering a
+ * payment rail that may not exist yet.
+ *
+ * Deliberately not `early_access`: that one *is* granted (by business),
+ * because it is a marker saying "this account opts into the next thing
+ * we ship", not a capability that can be half-built.
+ */
+describe("dark features", () => {
+  const DARK: FeatureKey[] = ["whatsapp", "payments_gateway"];
+
+  it.each(DARK)("%s is granted by no plan", (feature) => {
+    for (const plan of PLAN_ORDER) {
+      expect(PLANS[plan].features).not.toContain(feature);
+    }
+  });
+
+  it.each(DARK)("%s is still a real key with admin copy", (feature) => {
+    // A key nobody can find in /admin is a key nobody can turn on.
+    expect(FEATURE_KEYS).toContain(feature);
+    expect(FEATURE_LABELS[feature]).toBeTruthy();
   });
 });

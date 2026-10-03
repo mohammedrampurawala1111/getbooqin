@@ -122,6 +122,20 @@ export const ENV_VARS: EnvVar[] = [
     capability: "the Razorpay rail — Indian merchants cannot subscribe",
   },
   {
+    name: "RAZORPAY_PARTNER_CLIENT_ID",
+    requirement: "capability",
+    purpose: "Razorpay Technology Partner OAuth client, for merchants taking booking payments on their own account",
+    capability:
+      "the connected-gateway rail — a booking deposit can still be collected over UPI, but nothing can confirm the booking automatically",
+  },
+  {
+    name: "RAZORPAY_PARTNER_CLIENT_SECRET",
+    requirement: "capability",
+    purpose: "Razorpay Technology Partner OAuth client secret",
+    capability:
+      "the connected-gateway rail — a booking deposit can still be collected over UPI, but nothing can confirm the booking automatically",
+  },
+  {
     name: "RAZORPAY_KEY_SECRET",
     requirement: "capability",
     purpose: "Razorpay API credentials",

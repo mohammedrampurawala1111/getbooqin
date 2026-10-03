@@ -110,22 +110,22 @@ model User {
 // belong to one User: reconnecting the same store from a different User
 // must be rejected or made an explicit transfer, never a silent duplicate.
 model Connection {
-  id              String             @id @default(cuid())
+  id              String                 @id @default(cuid())
   userId          String
-  platform        String             @default("shopify")
+  platform        String                 @default("shopify")
   shop            String
   credentials     String
-  status          String             @default("active") // active|revoked|error
-  connectedAt     DateTime           @default(now())
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  status          String                 @default("active") // active|revoked|error
+  connectedAt     DateTime               @default(now())
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
   // Human-readable alias for the public /book/:connectionId link (UX
   // audit's #13 finding — a raw cuid is unfriendly in a social bio). Null
   // until Connections.ensureSlug() generates one lazily; the cuid `id`
   // keeps resolving permanently either way, so an already-shared link never
   // breaks.
-  slug            String?            @unique
-  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug            String?                @unique
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   members         ConnectionMember[]
   invites         ConnectionInvite[]
   subscription    Subscription?
@@ -134,6 +134,7 @@ model Connection {
   lifecycleEmails LifecycleEmail[]
   invoices        Invoice[]
   whatsapp        WhatsAppAccount?
+  gatewayAccount  PaymentGatewayAccount?
 
   @@unique([platform, shop])
   @@index([userId])
@@ -1201,4 +1202,84 @@ model WhatsAppMessage {
 
   @@index([accountId, createdAt])
   @@index([bookingId])
+}
+
+/// The merchant's own payment-gateway account, connected through
+/// Razorpay's Technology Partner programme.
+///
+/// ## Why this exists, and why it is shaped like this
+///
+/// A deposit can already be collected without any of this: the merchant
+/// supplies a UPI ID, the customer pays them directly through an NPCI
+/// deep link, and the merchant marks it received. That flow is honest
+/// and needs no provider — but `upi://pay` has no callback, so nothing
+/// can tell the product the money arrived, and the booking cannot
+/// confirm itself.
+///
+/// Fixing that needs a provider in the loop, and there is exactly one
+/// version of it that does not make GetBooqin an unauthorised payment
+/// aggregator under RBI's PA/PG Guidelines (₹15 Cr net worth at
+/// application, ₹25 Cr after — see docs/india-market-analysis.md §8.3):
+/// the merchant holds their **own** Razorpay account, we hold an OAuth
+/// token against it, and funds settle to them without ever pooling with
+/// us. Razorpay's own split product (Route) would pool, and is gated on
+/// ₹40 lakh of *our* turnover besides.
+///
+/// So this row is a delegation, not a wallet. It stores what is needed
+/// to act on a merchant's behalf and nothing about money.
+///
+/// Deliberately mirrors WhatsAppAccount: same one-per-connection shape,
+/// same encrypted-token-at-rest rule, same pending/active/revoked/error
+/// lifecycle, same "last error, never a token" field. Two integrations
+/// with the same shape should look the same.
+model PaymentGatewayAccount {
+  id           String @id @default(cuid())
+  connectionId String @unique
+
+  /// razorpay — the only one today. Present so a second provider is a
+  /// row value rather than a second table.
+  provider String @default("razorpay")
+
+  /// The provider's id for the merchant's own account ("acc_..." at
+  /// Razorpay). Every API call we make on their behalf is scoped to it,
+  /// and it is what the webhook payload identifies.
+  accountId String
+
+  /// OAuth tokens, encrypted at rest with CONNECTION_ENCRYPTION_KEY —
+  /// exactly like Connection.credentials and WhatsAppAccount.accessToken.
+  /// These authorise us to create charges against someone else's
+  /// account; they are the most sensitive bytes in the database.
+  accessToken    String
+  refreshToken   String    @default("")
+  /// When accessToken stops working. Razorpay's OAuth tokens expire, so
+  /// this is read before every call and the refresh happens ahead of it
+  /// rather than as recovery from a 401.
+  tokenExpiresAt DateTime?
+
+  /// The webhook we registered **on the merchant's account** — this is
+  /// the whole point of the integration, the thing that tells us a
+  /// payment captured. Stored so we can tell a connected account whose
+  /// webhook is missing from one that never had it, and replace it
+  /// rather than stacking duplicates.
+  webhookId     String @default("")
+  /// The secret that webhook is signed with. Per-account and generated
+  /// by us, so it is NOT the platform-wide RAZORPAY_WEBHOOK_SECRET that
+  /// signs our own subscription events. Encrypted, same as the tokens.
+  webhookSecret String @default("")
+
+  /// pending|active|revoked|error. `pending` is a token exchanged but
+  /// no webhook registered yet — a real state, and one where taking a
+  /// payment would silently never confirm the booking, so the booking
+  /// path checks for `active` and nothing less.
+  status    String  @default("pending")
+  /// The last API or webhook failure, for the Settings screen. Never a
+  /// token, never a payload.
+  lastError String?
+
+  connectedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  connection Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
 }

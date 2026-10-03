@@ -22,6 +22,10 @@ export * as Bookings from "./booking/bookings.js";
 // Asking a customer for a deposit, and recording that it arrived.
 // GetBooqin never holds the money — see src/booking/payments.ts.
 export * as Payments from "./booking/payments.js";
+// The connected-gateway rail (payments_gateway entitlement). Separate
+// from Payments above, which is the merchant-direct UPI/PayPal.me flow
+// that works with no provider at all — see payments/gateway.ts.
+export * as PaymentGateway from "./payments/gateway.js";
 // QR images — the printable booking-link code, and the payment one.
 export * as Qr from "./booking/qr.js";
 // Onboarding's "send yourself a test booking" — a real booking through

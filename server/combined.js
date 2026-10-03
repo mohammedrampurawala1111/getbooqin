@@ -68,6 +68,10 @@ const CLOUD_PREFIXES = [
   // Listed individually rather than as "/webhooks" because
   // shopify-openslot owns the rest of that namespace for Shopify's own
   // mandatory webhooks.
+  //
+  // Also covers /webhooks/razorpay/payments — merchant-account payment
+  // events, a different route signed with a different secret — via the
+  // startsWith check below. Both are cloud's.
   "/webhooks/razorpay",
   // PayPal subscription events (cloud/app/routes/webhooks.paypal.tsx).
   // Same reason as above for being listed individually rather than as a

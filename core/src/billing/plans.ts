@@ -100,11 +100,13 @@ export type FeatureKey =
   | "shopify"
   | "export"
   | "priority_support"
+  | "payments_gateway"
   | "early_access";
 
 export const FEATURE_KEYS: readonly FeatureKey[] = [
   "no_badge", "branding", "whatsapp", "staff", "waitlist", "team_roles",
-  "email_templates", "shopify", "export", "priority_support", "early_access",
+  "email_templates", "shopify", "export", "priority_support",
+  "payments_gateway", "early_access",
 ];
 
 /** Human copy for the feature catalogue in /admin, so the keys don't become magic strings. */
@@ -131,6 +133,26 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   // point of entitlements being per-account rather than per-deploy, and
   // it needs no deploy to flip.
   whatsapp: "Confirmations and reminders on WhatsApp",
+  // Granted by no plan, for the same reason as `whatsapp` directly
+  // above: ours is built, the other side's is not.
+  //
+  // A booking can already ask for a deposit — the customer gets a UPI
+  // deep link and the merchant marks it received by hand, because
+  // `upi://pay` is an NPCI deep link with no callback and nothing can
+  // tell us the money arrived. Confirming automatically needs a
+  // provider in the loop, and the only version of that which does not
+  // make us an unauthorised payment aggregator is Razorpay's
+  // Technology Partner programme: the merchant gets their *own*
+  // Razorpay account, we hold an OAuth token against it, funds never
+  // pool with us. See core/src/payments/README-ish header in
+  // gateway.ts, and docs/india-market-analysis.md §8.3 for the line
+  // this must not cross.
+  //
+  // What is not done is Razorpay's side: the partner agreement, and
+  // live client credentials. Until those exist this must stay off for
+  // everyone, which is exactly what "granted by no plan" means — an
+  // admin flips it per account from /admin on the day it is real.
+  payments_gateway: "Take booking payments through the merchant's own Razorpay account",
   // Also granted by no plan, and for a different reason from the two
   // above: this one is about how much product a first customer should
   // be shown, not about what they have paid for.
