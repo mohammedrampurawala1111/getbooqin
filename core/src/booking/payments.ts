@@ -241,7 +241,21 @@ export async function markPaid(
 }
 
 /**
- * Confirms a pending booking once nothing is outstanding on it.
+ * Confirms a pending booking once the up-front amount has been paid.
+ *
+ * Against `amountDue`, **not** `paymentStatus`. Those are two different
+ * questions and conflating them broke the feature outright: a deposit
+ * is by definition a part-payment, so recomputeBookingPaymentStatus
+ * leaves paymentStatus at "unpaid" (it compares against the full
+ * price), and gating on "paid" meant a ₹500 deposit on a ₹2000 service
+ * confirmed nothing. The booking the customer had just paid for stayed
+ * pending forever. Caught by the QA harness, not by a unit test —
+ * hence the ones added alongside this.
+ *
+ * `amountDue` is the figure frozen on the booking at creation, which is
+ * what was actually asked for; the balance (if any) is a separate
+ * matter settled at the appointment and not a reason to withhold the
+ * confirmation.
  *
  * Separate from recomputeBookingPaymentStatus because that runs inside
  * the payment transaction and this must not: it emits the event that
@@ -250,9 +264,20 @@ export async function markPaid(
 async function confirmIfSettled(shop: string, platform: string, bookingId: number): Promise<void> {
   const booking = await prisma.booking.findFirst({
     where: { shop, platform, id: bookingId },
-    select: { id: true, status: true, paymentStatus: true },
+    select: { id: true, status: true, amountDue: true },
   });
-  if (!booking || booking.status !== "pending" || booking.paymentStatus !== "paid") return;
+  // Only a pending booking that was actually holding out for money.
+  // A booking pending because the *merchant* approves requests by hand
+  // is not something a payment should confirm over their head.
+  if (!booking || booking.status !== "pending" || booking.amountDue <= 0) return;
+
+  const paid = await prisma.payment.aggregate({
+    where: { shop, platform, bookingId, status: "paid" },
+    _sum: { amount: true },
+  });
+  // round2 on the sum: several part-payments of a float amount can land
+  // a hair under the threshold purely through accumulation.
+  if (round2(paid._sum.amount ?? 0) < booking.amountDue) return;
 
   await setStatus(shop, bookingId, "confirmed", "payment received");
 }

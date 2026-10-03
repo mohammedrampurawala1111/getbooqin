@@ -216,6 +216,74 @@ describe("recording that it arrived", () => {
   });
 });
 
+/**
+ * Payment-before-confirmation (10-01-2026 review, item 13).
+ *
+ * The first version of confirmIfSettled() gated on `paymentStatus ===
+ * "paid"`, which is the wrong question: a deposit is by definition a
+ * part-payment, so paymentStatus stays "unpaid" (it compares against
+ * the full price) and the booking the customer had just paid for
+ * confirmed never. The feature was inert for exactly the case it
+ * exists to serve, and no unit test noticed — a QA run did. These are
+ * the tests that would have.
+ */
+describe("a deposit confirming the booking", () => {
+  it("confirms a pending booking once the amount due is covered", async () => {
+    // ₹500 due on a ₹2,000 service: a part-payment of the bill, and the
+    // whole of what was asked for up front.
+    const held = await booking(2000, { status: "pending", amountDue: 500, paymentStatus: "unpaid" });
+    const payment = await Payments.requestPayment(shop, platform, held, { amount: 500 });
+
+    await Payments.markPaid(shop, platform, payment.id, { userId });
+
+    const after = await prisma.booking.findUnique({ where: { id: held } });
+    expect(after?.status).toBe("confirmed");
+    // ...and the ₹1,500 balance is still outstanding, which is a
+    // different fact and must not be rounded up into "paid".
+    expect(after?.paymentStatus).toBe("unpaid");
+  });
+
+  it("leaves it pending when less than the amount due has arrived", async () => {
+    const held = await booking(2000, { status: "pending", amountDue: 500, paymentStatus: "unpaid" });
+    const partial = await Payments.requestPayment(shop, platform, held, { amount: 200 });
+
+    await Payments.markPaid(shop, platform, partial.id, { userId });
+
+    expect((await prisma.booking.findUnique({ where: { id: held } }))?.status).toBe("pending");
+  });
+
+  it("does not confirm a booking that is pending for the merchant's own approval", async () => {
+    // amountDue 0 — nothing was ever owed, so this is pending because
+    // auto_confirm is off. A stray payment must not approve it over the
+    // merchant's head.
+    const held = await booking(2000, { status: "pending", amountDue: 0, paymentStatus: "not_required" });
+    const payment = await Payments.requestPayment(shop, platform, held, { amount: 100 });
+
+    await Payments.markPaid(shop, platform, payment.id, { userId });
+
+    expect((await prisma.booking.findUnique({ where: { id: held } }))?.status).toBe("pending");
+  });
+
+  it("does not resurrect a cancelled booking when an old payment is reconciled", async () => {
+    const dead = await booking(2000, { status: "cancelled", amountDue: 500, paymentStatus: "unpaid" });
+    const payment = await Payments.requestPayment(shop, platform, dead, { amount: 500 });
+
+    await Payments.markPaid(shop, platform, payment.id, { userId });
+
+    expect((await prisma.booking.findUnique({ where: { id: dead } }))?.status).toBe("cancelled");
+  });
+
+  it("is idempotent — a replayed webhook does not re-confirm or double-count", async () => {
+    const held = await booking(2000, { status: "pending", amountDue: 500, paymentStatus: "unpaid" });
+    const payment = await Payments.requestPayment(shop, platform, held, { amount: 500 });
+
+    await Payments.markPaid(shop, platform, payment.id, { userId });
+    await Payments.markPaid(shop, platform, payment.id, { userId });
+
+    expect((await prisma.booking.findUnique({ where: { id: held } }))?.status).toBe("confirmed");
+  });
+});
+
 describe("the amount asked for", () => {
   it("never exceeds the price, even when the merchant types it", async () => {
     // The Orders screen passes merchant free text straight through.

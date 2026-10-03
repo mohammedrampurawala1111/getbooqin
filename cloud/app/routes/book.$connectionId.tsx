@@ -461,6 +461,27 @@ async function handleBook(connectionId: string, request: Request, form: FormData
         };
       } catch (err) {
         console.warn(`[getbooqin book] could not raise a payment request for ${booking.uid}:`, err);
+        // Still tell the customer what they owe.
+        //
+        // The common cause is a merchant who switched on a deposit for a
+        // service and never set a UPI ID, so requestPayment() has no
+        // payee to build a link from. Before deposits held a booking
+        // pending that was merely untidy; now the booking waits for a
+        // payment — so saying nothing leaves the customer on a screen
+        // that reads "we'll confirm shortly" about a booking that will
+        // never confirm, with no hint that money is the reason.
+        //
+        // No link and no QR, because there genuinely is nothing to pay
+        // *to* yet; the merchant has to get in touch. The amount is
+        // still knowable and is the whole point of saying anything.
+        payment = {
+          amount: booking.amountDue,
+          currencySymbol: settings.currency_symbol,
+          reference: "",
+          link: "",
+          qr: "",
+          checkout: null,
+        };
       }
     }
 
@@ -2300,11 +2321,15 @@ function Confirmation({
                     Pay {payment.currencySymbol}{payment.amount.toFixed(2)}
                   </a>
                 )}
-                <p className="m-0 text-[12px] text-subtle">
-                  Quote reference <strong>{payment.reference}</strong> so {businessName} can match your payment.
-                </p>
+                {payment.reference && (
+                  <p className="m-0 text-[12px] text-subtle">
+                    Quote reference <strong>{payment.reference}</strong> so {businessName} can match your payment.
+                  </p>
+                )}
                 <p className="m-0 max-w-[320px] text-[12px] text-subtle">
-                  Your {vocab.bookingOne} is held until {businessName} confirms the payment has arrived.
+                  {payment.link
+                    ? `Your ${vocab.bookingOne} is held until ${businessName} confirms the payment has arrived.`
+                    : `Your ${vocab.bookingOne} is held until this is paid — ${businessName} will be in touch with how to pay.`}
                 </p>
               </>
             )}
