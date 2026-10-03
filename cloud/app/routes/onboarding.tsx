@@ -8,14 +8,14 @@ import {
   WeeklyHoursEditor, defaultWeek, type DayHours,
 } from "~/components/onboarding";
 import { starterTemplate, templateCard, vocabFor, SERVICE_SWATCHES } from "~/lib/presets";
-import { PHONE_PATTERN, isValidPhone } from "~/lib/validation";
+import { PHONE_PATTERN, canonicalPhone, isValidPhone } from "~/lib/validation";
 import { CURRENCIES, guessCurrency } from "~/lib/currency";
 // The plan table, not the server-side entitlement machinery — this
 // subpath is import-free by design so the pricing copy can render in
 // the browser. See core/src/billing/plans.ts.
 import { PLANS, PRICES, TRIAL_DAYS, TRIAL_PLAN, billingCurrencyFor, formatPrice, visiblePlans } from "getbooqin-core/billing/plans";
 import { getAppUrl } from "~/lib/env.server";
-import { Data, Settings, Team, Lifecycle, TestBooking, createManualConnection, getUserConnection, listUserConnections, isGetBooqinError } from "getbooqin-core";
+import { prisma, Data, Settings, Team, Lifecycle, TestBooking, createManualConnection, getUserConnection, listUserConnections, isGetBooqinError } from "getbooqin-core";
 
 // Two ways to leave this wizard with a working account: connect a real
 // Shopify store (answers used to ride through the OAuth
@@ -156,6 +156,22 @@ async function handleStep1(userId: string, form: FormData): Promise<ActionResult
   // number — which is what "asadad" was saving as before.
   if (businessPhone && !isValidPhone(businessPhone)) {
     return { error: "Enter a valid phone number, or leave the field empty." };
+  }
+
+  // The merchant's own contact number, as distinct from the business's.
+  // signup.tsx POSTs this to /dashboard/profile-phone the moment a session
+  // goes active, but that call is best-effort and the Google sign-up path
+  // never makes it at all — it redirects to Clerk before there is a
+  // session to post with. Both carry the number here in the URL instead,
+  // so this is where it actually lands for an OAuth signup.
+  //
+  // Only when User.phone is still empty: a merchant who later edits their
+  // profile number must not have it reverted by re-submitting step 1.
+  if (businessPhone) {
+    const existing = await prisma.user.findUnique({ where: { id: userId }, select: { phone: true } });
+    if (!existing?.phone) {
+      await prisma.user.update({ where: { id: userId }, data: { phone: canonicalPhone(businessPhone) } });
+    }
   }
 
   const settingsPatch: Record<string, string> = {};

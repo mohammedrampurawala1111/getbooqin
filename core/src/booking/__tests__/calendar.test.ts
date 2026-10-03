@@ -8,7 +8,7 @@
  * covered below.
  */
 import { describe, expect, it } from "vitest";
-import { buildIcs, icsDataUrl, icsFilename } from "../calendar.js";
+import { buildIcs, calendarLinks, icsDataUrl, icsFilename } from "../calendar.js";
 
 const base = {
   uid: "bk_123",
@@ -125,5 +125,59 @@ describe("helpers", () => {
     expect(icsFilename("Cut, colour & finish")).toBe("cut-colour-finish.ics");
     expect(icsFilename("")).toBe("booking.ics");
     expect(icsFilename("!!!")).toBe("booking.ics");
+  });
+});
+
+/**
+ * The web hand-off links (10-01-2026 review, item 6). Same silent-remote
+ * failure mode as the .ics above: a malformed query string produces a
+ * Google Calendar page with the wrong date on it, and the only person who
+ * ever sees that is the customer.
+ */
+describe("calendarLinks", () => {
+  const full = {
+    ...base,
+    description: "Booked with Trevor Hayes",
+    location: "12 High Street",
+    url: "https://app.getbooqin.com/book/abc?b=bk_123",
+  };
+
+  it("gives Google the UTC basic-format range buildIcs uses", () => {
+    const { google } = calendarLinks(full, NOW);
+    const params = new URL(google).searchParams;
+    expect(params.get("action")).toBe("TEMPLATE");
+    expect(params.get("dates")).toBe("20261001T090000Z/20261001T093000Z");
+    expect(params.get("text")).toBe("Haircut");
+    expect(params.get("location")).toBe("12 High Street");
+  });
+
+  it("gives Outlook ISO 8601, which is the one it accepts", () => {
+    const { outlook } = calendarLinks(full, NOW);
+    const params = new URL(outlook).searchParams;
+    expect(params.get("startdt")).toBe("2026-10-01T09:00:00.000Z");
+    expect(params.get("enddt")).toBe("2026-10-01T09:30:00.000Z");
+    expect(params.get("rru")).toBe("addevent");
+    expect(params.get("subject")).toBe("Haircut");
+  });
+
+  it("carries the manage URL into the body, same as the .ics description", () => {
+    const { google, outlook } = calendarLinks(full, NOW);
+    expect(new URL(google).searchParams.get("details")).toContain(full.url);
+    expect(new URL(outlook).searchParams.get("body")).toContain(full.url);
+  });
+
+  it("keeps the .ics as the third option rather than replacing it", () => {
+    expect(calendarLinks(full, NOW).ics).toBe(icsDataUrl(full, NOW));
+  });
+
+  it("omits optional parameters rather than sending empty ones", () => {
+    const params = new URL(calendarLinks(base, NOW).google).searchParams;
+    expect(params.has("location")).toBe(false);
+    expect(params.has("details")).toBe(false);
+  });
+
+  it("escapes a title that would otherwise break the query string", () => {
+    const { google } = calendarLinks({ ...base, title: "Cut, colour & finish" }, NOW);
+    expect(new URL(google).searchParams.get("text")).toBe("Cut, colour & finish");
   });
 });

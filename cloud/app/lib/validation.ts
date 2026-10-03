@@ -10,6 +10,26 @@ export function isValidPhone(value: string): boolean {
   return stripped.length === 0 || DIGITS_RE.test(stripped);
 }
 
+/**
+ * The form the number is *stored* in: the same strip isValidPhone already
+ * does to decide validity, so what passes validation is what lands in the
+ * database.
+ *
+ * Without this, `+91 93257 05315` and `+919325705315` are two different
+ * strings for one merchant — the same inconsistency PB-03 fixed for
+ * customer phone numbers via core's normalizePhone(), which the merchant's
+ * own number never got.
+ *
+ * Deliberately does NOT add a country code, unlike core's normalizePhone().
+ * That function takes the business's configured default, and the one place
+ * this is called from — signup, before any Connection exists — has no
+ * business to ask. Guessing a country code onto someone's phone number is
+ * worse than leaving it as they typed it.
+ */
+export function canonicalPhone(value: string): string {
+  return value.replace(/[\s()-]/g, "").trim();
+}
+
 // For <input pattern>, which matches against the raw (unstripped) value —
 // allow the same separators inline rather than asking the browser to strip
 // them first. Both ( ) and the trailing - must be escaped: browsers compile

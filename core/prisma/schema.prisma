@@ -56,10 +56,24 @@ model Session {
 model User {
   id                String             @id
   email             String             @unique
-  // Collected at signup for our own records only — not sent to Clerk, since
-  // Clerk's SMS country allowlist rejects +91 and others regardless of
-  // whether phone sign-in/verification is even enabled. Re-evaluate once
-  // phone-based sign-in is wired up through Clerk properly.
+  // The merchant's own contact number. Ours alone: Clerk never sees it,
+  // so this row is the only copy.
+  //
+  // Not a temporary workaround — a decision, re-confirmed 10-01-2026.
+  // Putting it in Clerk needs phone enabled as an identifier, and that
+  // (like the SMS country allowlist, which blocks +91 by default) is a
+  // paid Clerk feature; we are on the free tier. Clerk's Backend API
+  // `createPhoneNumber({ verified: true })` sends no SMS and might slip
+  // past that gate, but it is untested here and nothing depends on it.
+  //
+  // Unverified by design, and that is the point: nobody signs in with
+  // this, so there is no credential to verify. If it is ever promoted to
+  // a recovery channel or a second factor, it has to be verified for
+  // real first.
+  //
+  // Written by cloud/app/routes/dashboard.profile-phone.tsx (canonical
+  // form, no country code inferred) and backfilled by onboarding's step 1
+  // for the Google sign-up path, which never reaches that route.
   phone             String             @default("")
   /// The mailbox this address actually reaches, for duplicate detection
   /// only — never for sending. `info.scintillaweb@gmail.com` and
@@ -96,33 +110,33 @@ model User {
 // belong to one User: reconnecting the same store from a different User
 // must be rejected or made an explicit transfer, never a silent duplicate.
 model Connection {
-  id            String             @id @default(cuid())
-  userId        String
-  platform      String             @default("shopify")
-  shop          String
-  credentials   String
-  status        String             @default("active") // active|revoked|error
-  connectedAt   DateTime           @default(now())
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
+  id              String             @id @default(cuid())
+  userId          String
+  platform        String             @default("shopify")
+  shop            String
+  credentials     String
+  status          String             @default("active") // active|revoked|error
+  connectedAt     DateTime           @default(now())
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
   // Human-readable alias for the public /book/:connectionId link (UX
   // audit's #13 finding — a raw cuid is unfriendly in a social bio). Null
   // until Connections.ensureSlug() generates one lazily; the cuid `id`
   // keeps resolving permanently either way, so an already-shared link never
   // breaks.
-  slug          String?            @unique
-  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  members       ConnectionMember[]
-  invites       ConnectionInvite[]
-  subscription  Subscription?
-  entitlements  Entitlement[]
-  billingEvents BillingEvent[]
-
-  @@unique([platform, shop])
-  @@index([userId])
+  slug            String?            @unique
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  members         ConnectionMember[]
+  invites         ConnectionInvite[]
+  subscription    Subscription?
+  entitlements    Entitlement[]
+  billingEvents   BillingEvent[]
   lifecycleEmails LifecycleEmail[]
   invoices        Invoice[]
   whatsapp        WhatsAppAccount?
+
+  @@unique([platform, shop])
+  @@index([userId])
 }
 
 // One row per user granted access to a Connection — the multi-user team
@@ -434,15 +448,15 @@ model TimeOff {
 }
 
 model Customer {
-  id              Int        @id @default(autoincrement())
-  shop            String
-  platform        String     @default("shopify")
-  firstName       String     @default("")
-  lastName        String     @default("")
-  email           String
-  phone           String     @default("")
-  timezone        String     @default("")
-  notes           String?
+  id                  Int        @id @default(autoincrement())
+  shop                String
+  platform            String     @default("shopify")
+  firstName           String     @default("")
+  lastName            String     @default("")
+  email               String
+  phone               String     @default("")
+  timezone            String     @default("")
+  notes               String?
   // A dental record isn't a customer record — a patient's date of birth
   // and any medical alert (allergy, condition, anything staff need to see
   // before an appointment) had nowhere to live at all before this, and a
@@ -450,8 +464,8 @@ model Customer {
   // the whole record (GetBooqin clinic audit's PT-02 finding). Both blank
   // by default and shown nowhere unless filled in — no existing shop's
   // customer records change.
-  dateOfBirth     String?
-  medicalAlert    String     @default("")
+  dateOfBirth         String?
+  medicalAlert        String     @default("")
   /// WhatsApp opt-in. Meta requires demonstrable consent before a
   /// business sends a customer a template message, and "demonstrable"
   /// means being able to say when and where it was given — so this is
@@ -459,14 +473,14 @@ model Customer {
   /// customer who gave an email address years ago did not consent to
   /// this, and backfilling them to true would be the exact thing the
   /// rule exists to prevent.
-  whatsappOptIn   Boolean    @default(false)
-  whatsappOptInAt DateTime?
+  whatsappOptIn       Boolean    @default(false)
+  whatsappOptInAt     DateTime?
   /// Where consent came from — "booking_form", "dashboard", "import".
-  whatsappOptInSource String @default("")
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
-  bookings        Booking[]
-  waitlistEntries Waitlist[]
+  whatsappOptInSource String     @default("")
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  bookings            Booking[]
+  waitlistEntries     Waitlist[]
 
   @@unique([platform, shop, email])
 }
@@ -681,43 +695,43 @@ model Waitlist {
 /// sets `status` instead of a person. The policy, the screens and the
 /// emails around it do not change.
 model Payment {
-  id            Int      @id @default(autoincrement())
-  shop          String
-  platform      String   @default("shopify")
-  bookingId     Int
+  id        Int    @id @default(autoincrement())
+  shop      String
+  platform  String @default("shopify")
+  bookingId Int
 
   /// deposit|balance|full — what this request is for.
-  kind          String   @default("deposit")
+  kind      String @default("deposit")
   /// upi|paypal|cash|bank|other — how the customer was asked to pay.
-  method        String   @default("upi")
+  method    String @default("upi")
   /// Short human reference, shown to both sides and carried in the UPI
   /// link, so a line on a bank statement can be matched to a booking.
-  reference     String   @default("")
+  reference String @default("")
   /// The upi:// or paypal.me link the customer was given. Stored rather
   /// than rebuilt, so resending cannot quietly change the amount or the
   /// payee after the fact.
-  link          String   @default("")
+  link      String @default("")
 
   /// Retained for a future provider-backed payment. Empty for a request
   /// a merchant confirmed by hand.
-  gateway       String   @default("")
-  transactionId String   @default("")
+  gateway       String @default("")
+  transactionId String @default("")
   /// The UTR the customer quoted. Evidence, not proof — it is what the
   /// merchant matches against their statement.
-  utr           String   @default("")
+  utr           String @default("")
 
-  amount        Float    @default(0)
-  currency      String   @default("USD")
+  amount            Float     @default(0)
+  currency          String    @default("USD")
   /// pending|paid|cancelled|refunded
-  status        String   @default("pending")
+  status            String    @default("pending")
   /// Who marked it paid. Null when nobody has.
   confirmedByUserId String?
-  paidAt        DateTime?
+  paidAt            DateTime?
 
-  payload       String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  booking       Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payload   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
   @@index([platform, shop, bookingId])
   @@index([platform, shop, status])
@@ -863,8 +877,8 @@ model Subscription {
   ///
   /// Display only, and never the full instrument. "Visa ending 4526",
   /// "UPI · priya@okhdfcbank", "PayPal · priya@example.com".
-  paymentMethodKind  String     @default("")
-  paymentMethodLabel String     @default("")
+  paymentMethodKind  String @default("")
+  paymentMethodLabel String @default("")
 
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
@@ -1005,7 +1019,7 @@ model Invoice {
   /// The full human-readable number, e.g. "GB/2026-27/0001". Unique
   /// across the system — India requires a consecutive series, and a
   /// duplicate is the kind of thing an auditor opens with.
-  number String @unique
+  number   String   @unique
   /// The series this number was drawn from, e.g. "GB/2026-27".
   series   String
   issuedAt DateTime @default(now())
@@ -1028,17 +1042,17 @@ model Invoice {
   /// The declaration this invoice carries. Frozen with the rest.
   taxNote   String @default("")
 
-  currency String
+  currency       String
   /// Minor units, like every other amount in the billing code.
   amountMinor    Int
-  taxAmountMinor Int @default(0)
+  taxAmountMinor Int    @default(0)
 
   planId       String
   billingCycle String
   periodStart  DateTime?
   periodEnd    DateTime?
 
-  provider String
+  provider          String
   /// The payment this invoices. Unique, and that uniqueness is the
   /// idempotency guard: a webhook redelivery, a reconciliation running
   /// beside it, and a manual replay all try to insert the same payment
@@ -1117,7 +1131,7 @@ model WhatsAppAccount {
   connectedAt        DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  connection Connection        @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  connection Connection         @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   templates  WhatsAppTemplate[]
   messages   WhatsAppMessage[]
 
@@ -1133,21 +1147,21 @@ model WhatsAppAccount {
 /// sending against a template Meta has since rejected or paused is a
 /// failed send and a quality-rating hit, and we already know it will be.
 model WhatsAppTemplate {
-  id         String   @id @default(cuid())
-  accountId  String
+  id             String   @id @default(cuid())
+  accountId      String
   /// Our catalogue key — "booking_confirmed". See whatsapp/templates.ts.
-  key        String
+  key            String
   /// The name registered at Meta, which is the key prefixed and lowercased.
-  name       String
-  language   String   @default("en")
+  name           String
+  language       String   @default("en")
   /// APPROVED|PENDING|REJECTED|PAUSED|DISABLED — Meta's vocabulary, kept
   /// verbatim rather than mapped, so a new status can't silently read as
   /// sendable.
-  status     String   @default("PENDING")
-  category   String   @default("UTILITY")
+  status         String   @default("PENDING")
+  category       String   @default("UTILITY")
   /// Why Meta rejected it, shown to the merchant so it can be fixed.
   rejectedReason String?
-  updatedAt  DateTime @updatedAt
+  updatedAt      DateTime @updatedAt
 
   account WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 

@@ -1,13 +1,18 @@
 import type { ActionFunctionArgs } from "react-router";
 import { prisma, emailKey } from "getbooqin-core";
 import { getUserSession, getClerkClient } from "~/session.server";
-import { isValidPhone } from "~/lib/validation";
+import { canonicalPhone, isValidPhone } from "~/lib/validation";
 
-// Resource route only — no UI. Called once from signup.tsx right after a
-// session goes active, to record the phone number the user typed in without
-// ever sending it to Clerk (see core/prisma/schema.prisma's User.phone
-// comment for why). Upserts rather than updates because webhooks.clerk.tsx's
-// user.created row may not have landed yet by the time this fires.
+// Resource route only — no UI. Called from signup.tsx right after a session
+// goes active, and from the account page's PhoneCard, to record the phone
+// number the user typed in without ever sending it to Clerk (see
+// core/prisma/schema.prisma's User.phone comment for why). Upserts rather
+// than updates because webhooks.clerk.tsx's user.created row may not have
+// landed yet by the time this fires.
+//
+// This is the only copy of the number. Clerk never sees it, so there is no
+// second place to recover it from if this write is lost — which is why
+// signup.tsx now reports a failure here instead of discarding it.
 export async function action({ request }: ActionFunctionArgs) {
   if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
 
@@ -29,10 +34,15 @@ export async function action({ request }: ActionFunctionArgs) {
     clerkUser.emailAddresses[0]?.emailAddress ??
     "";
 
+  // Stored in one canonical shape rather than however it was typed, so
+  // "+91 93257 05315" and "+919325705315" are not two records of one
+  // merchant. No country code is inferred — see canonicalPhone().
+  const stored = canonicalPhone(phone);
+
   await prisma.user.upsert({
     where: { id: session.userId },
-    create: { id: session.userId, email, emailKey: emailKey(email), phone },
-    update: { phone },
+    create: { id: session.userId, email, emailKey: emailKey(email), phone: stored },
+    update: { phone: stored },
   });
 
   return new Response(null, { status: 204 });

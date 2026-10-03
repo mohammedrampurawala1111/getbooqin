@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs } from "react-router";
-import { Jobs, prisma } from "getbooqin-core";
+import { Jobs, Mailer, prisma } from "getbooqin-core";
 
 /**
  * Phase 0 / B4 — the endpoint health checks and uptime monitors watch.
@@ -22,7 +22,7 @@ import { Jobs, prisma } from "getbooqin-core";
  *     hasn't run would turn a background problem into an outage.
  *
  *   • **Strict** (`?strict=1`) — also 503 when a scheduled job has gone
- *     stale. This is what an external uptime monitor should watch,
+ *     stale, or when mail is unconfigured. This is what an external uptime monitor should watch,
  *     because a page is exactly the right response there. Reminder
  *     emails are sold on every tier including free, and a sweep that
  *     stops looks identical to a quiet hour — nothing else anywhere
@@ -69,6 +69,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
     degraded = true;
     checks.jobs = error instanceof Error ? error.message : "unavailable";
   }
+
+  // Mail is the one subsystem with no in-request failure signal at all:
+  // every send is best-effort so a booking never fails over it, which
+  // means a dead relay is invisible from inside the product (10-01-2026
+  // review, item 7 — confirmations silently dropped for an unset
+  // SMTP_HOST). Degraded, not dead: the app serves bookings fine without
+  // it, so this must not fail liveness and pull the machine out of
+  // rotation.
+  const mail = Mailer.mailerConfigured();
+  checks.mail = mail.ok ? "ok" : mail.reason;
+  if (!mail.ok) degraded = true;
 
   const ok = live && (!strict || !degraded);
 

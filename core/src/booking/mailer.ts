@@ -171,6 +171,33 @@ function getTransporter(): nodemailer.Transporter | null {
 }
 
 /**
+ * Can this process actually send mail?
+ *
+ * For /healthz?strict=1. Every email in the product is best-effort by
+ * design — a failed confirmation must not fail the booking — which means
+ * nothing in the request path can ever go red over it, and a relay that
+ * stopped working looks exactly like a quiet hour. That is how the
+ * 10-01-2026 review's item 7 went unnoticed. This is the signal that
+ * originates outside the send path.
+ *
+ * Deliberately only "is there a transport and a sender identity", not a
+ * live SMTP handshake: a health check that opens a TCP connection to a
+ * third party on every poll is its own outage waiting to happen. A
+ * misconfigured credential still shows up, as a rejected send in the
+ * logs at the call site.
+ */
+export function mailerConfigured(): { ok: boolean; reason?: string } {
+  if (!process.env.SMTP_HOST) return { ok: false, reason: "SMTP_HOST is not set" };
+  if (!process.env.MAIL_FROM_EMAIL) {
+    // Not fatal — fromHeaders() falls back to the merchant's own address
+    // — but that fallback fails SPF/DKIM alignment and gets spam-foldered,
+    // so it is degraded, not healthy.
+    return { ok: false, reason: "MAIL_FROM_EMAIL is not set — mail will fail SPF/DKIM alignment" };
+  }
+  return { ok: true };
+}
+
+/**
  * A display name safe to drop inside a quoted string in a header.
  * `business_name` is merchant-supplied free text: a stray quote would
  * break the header, and a stray newline would let a merchant append
@@ -238,6 +265,25 @@ async function mail(
 ): Promise<void> {
   const t = getTransporter();
   if (!t) {
+    // In production, an unconfigured transport is an outage, not a
+    // no-op. Returning quietly here is why "booking confirmation and
+    // cancellation emails are not being received" (10-01-2026 review,
+    // item 7) looked like nothing at all from inside the product: the
+    // send path reported success, the confirmation page told the
+    // customer "a confirmation has been sent to your email", and the
+    // only trace was a console.warn nobody reads. Throwing routes it
+    // into the caller's own error handling — logMailError for the
+    // booking events, `emailSent: false` for a team invite — so a
+    // missing SMTP_HOST surfaces the same way a rejected send does.
+    //
+    // Still a quiet no-op outside production: local development and the
+    // test suite both run with no SMTP at all, and neither should fail a
+    // booking over it.
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        `SMTP is not configured (SMTP_HOST is unset) — cannot send "${subject}" to ${to}. Set SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS and MAIL_FROM_EMAIL.`
+      );
+    }
     console.warn(`[getbooqin mailer] SMTP not configured — dropping email to ${to}: ${subject}`);
     return;
   }

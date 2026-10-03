@@ -84,16 +84,30 @@ export default function Signup() {
 
   // Best-effort — phone is a contact convenience for us, not part of the
   // account itself, so a failure here shouldn't block getting into the app.
+  //
+  // "Best-effort" used to mean "silently discarded": a non-2xx response
+  // wasn't checked at all, and the Google path below never calls this in
+  // the first place (it redirects away before a session exists here). The
+  // field is marked `required`, so either gap produced an account with no
+  // contact number and nothing to say so.
+  //
+  // The number survives both now because onboardingHref() carries it in
+  // the URL and onboarding's own step-1 action writes it if User.phone is
+  // still empty — that is the real recovery path, not a retry here. This
+  // stays as the fast path, and now at least says when it didn't work.
   async function saveProfilePhone() {
     if (!phone) return;
     try {
-      await fetch("/dashboard/profile-phone", {
+      const res = await fetch("/dashboard/profile-phone", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone }),
       });
-    } catch {
-      // ignored — see comment above
+      if (!res.ok) {
+        console.warn(`[signup] could not save phone (${res.status}) — onboarding will retry`);
+      }
+    } catch (err) {
+      console.warn("[signup] could not save phone — onboarding will retry", err);
     }
   }
 
