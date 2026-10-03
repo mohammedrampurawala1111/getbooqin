@@ -17,7 +17,7 @@ import { validateBranding, isInternalShopKey } from "./settingsShared.js";
 
 export type { Settings, BookingRuleField, BookingRuleInput } from "./settingsShared.js";
 export {
-  term, money, template, isInternalShopKey,
+  term, money, template, isInternalShopKey, isSafeRedirectUrl,
   BOOKING_RULE_LIMITS, validateBookingRules, cancelCutoffExceedsNotice, bookingWindowIsClosed,
 } from "./settingsShared.js";
 
@@ -51,6 +51,9 @@ export function defaultSettings(shopDomain: string, adminEmail: string): Setting
     consent_text: "",
     privacy_notice_url: "",
     booking_page_url: `https://${shopDomain}`,
+    // Empty = render our own confirmation panel. See the field's comment
+    // in settingsShared.ts, and isSafeRedirectUrl() next to it.
+    thank_you_url: "",
     intake_fields: [],
 
     waitlist_enabled: false,

@@ -64,6 +64,21 @@ export interface Settings {
   // the point of collection).
   privacy_notice_url: string;
   booking_page_url: string;
+  /**
+   * Where to send the customer once a booking is confirmed, instead of
+   * rendering our own "You're booked!" panel (10-01-2026 review, item 9).
+   *
+   * Empty means "stay here", which is the default and the right one for
+   * most merchants — the built-in panel carries the reference, the manage
+   * link and the add-to-calendar chooser, and a custom page carries
+   * whatever the merchant put on it. The reason to set this is a merchant
+   * who wants their own thank-you page, usually for conversion tracking.
+   *
+   * MUST be validated with isSafeRedirectUrl() before it is stored. This
+   * is a merchant-controlled string that becomes a redirect target on the
+   * one page in the product an anonymous visitor reaches.
+   */
+  thank_you_url: string;
   intake_fields: IntakeField[];
 
   // When a booking's slot frees up early (cancelled/declined/no-show), offer
@@ -168,6 +183,38 @@ export interface Settings {
  * A Shopify `shop` is a real myshopify.com domain and is a reasonable
  * placeholder name; this is only about the manual key.
  */
+/**
+ * Is this a URL we are willing to send a booking customer to?
+ *
+ * `thank_you_url` is typed by a merchant and used as a redirect target on
+ * the public booking page, which is the product's one unauthenticated,
+ * anonymous-visitor surface. Without a scheme-and-host check that is an
+ * open redirect: `javascript:` executes in the customer's browser against
+ * our origin, `data:` renders attacker-authored HTML that still looks
+ * like it came from us, and a protocol-relative `//evil.example` is a
+ * different site that reads as a path.
+ *
+ * Allowlist, not denylist — anything that is not an absolute http(s) URL
+ * is refused, so a scheme nobody has thought of yet is refused too.
+ * http:// is permitted alongside https:// only because some small
+ * merchants genuinely still run one; the UI nudges toward https.
+ */
+export function isSafeRedirectUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    // Not absolute, or not parseable at all. Both are refusals: a
+    // relative path here is far more likely to be a typo than an intent.
+    return false;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+  // `new URL("https:///foo")` parses with an empty host.
+  return url.hostname.length > 0;
+}
+
 export function isInternalShopKey(shop: string): boolean {
   return /^manual-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shop);
 }

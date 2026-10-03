@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { data, isRouteErrorResponse, useFetcher, useRouteError, useSearchParams } from "react-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { data, isRouteErrorResponse, redirect, useFetcher, useRevalidator, useRouteError, useSearchParams } from "react-router";
 import type { Route } from "./+types/book.$connectionId";
 import {
   Data,
@@ -137,9 +137,75 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     ? { logo: settings.brand_logo, accent: settings.brand_accent }
     : { logo: "", accent: "" };
 
+  const search = new URL(request.url).searchParams;
+
+  // Waitlist.claimUrl() builds this for a non-Shopify account — the
+  // "claim it here" link in an offer email. The Shopify half of the
+  // product has had a view for this all along (the app-proxy route at
+  // /apps/getbooqin/waitlist/:token); the cloud half had the emails and
+  // no page to land on, so the link went nowhere. See claimUrl().
+  const claimToken = search.get("getbooqin_claim");
+  if (claimToken) {
+    const entry = await Waitlist.getByToken(connection.shop, claimToken);
+    if (!entry) throw data("That waitlist offer couldn't be found.", { status: 404 });
+    // entry.service is the raw ServiceConfig row, which has no display
+    // name — the name lives in the product cache. Same lookup every other
+    // branch of this loader uses.
+    const [service, resource] = await Promise.all([
+      Data.catalogService(connection.shop, entry.serviceId),
+      entry.offeredResourceId ? Data.resource(connection.shop, entry.offeredResourceId) : Promise.resolve(null),
+    ]);
+    return {
+      mode: "claim" as const,
+      showBadge,
+      brand,
+      businessName: settings.business_name,
+      vocab,
+      token: claimToken,
+      offer: {
+        serviceName: service?.name ?? "",
+        resourceName: resource?.name ?? "",
+        // Null before an offer is made; the template only renders a
+        // claimable offer, and the component refuses anything else.
+        when: entry.offeredStartUtc ? formatInZone(entry.offeredStartUtc, settings.timezone) : "",
+        expiresAt: entry.offerExpiresAt ? formatInZone(entry.offerExpiresAt, settings.timezone) : "",
+        status: entry.status,
+        expired: !entry.offerExpiresAt || entry.offerExpiresAt.getTime() < Date.now(),
+      },
+    };
+  }
+
+  // Waitlist.manageUrl() — the "leave the waitlist" link carried by every
+  // waitlist email. Same gap as the claim link above: the URL was being
+  // generated correctly, and this page ignored the parameter and rendered
+  // the booking wizard as though nothing had been asked.
+  const waitlistUid = search.get("getbooqin_waitlist");
+  if (waitlistUid) {
+    const entry = await Waitlist.getByUid(connection.shop, waitlistUid);
+    if (!entry) throw data("That waitlist entry couldn't be found.", { status: 404 });
+    const [service, resource] = await Promise.all([
+      Data.catalogService(connection.shop, entry.serviceId),
+      entry.resourceId ? Data.resource(connection.shop, entry.resourceId) : Promise.resolve(null),
+    ]);
+    return {
+      mode: "waitlist" as const,
+      showBadge,
+      brand,
+      businessName: settings.business_name,
+      vocab,
+      entry: {
+        uid: entry.uid,
+        serviceName: service?.name ?? "",
+        resourceName: resource?.name ?? "",
+        when: formatInZone(entry.windowStartUtc, settings.timezone),
+        status: entry.status,
+      },
+    };
+  }
+
   // Bookings.manageUrl() builds exactly this query param — this is the link
   // a (now-fixed) confirmation/cancel email points customers back to.
-  const uid = new URL(request.url).searchParams.get("getbooqin_booking");
+  const uid = search.get("getbooqin_booking");
   if (uid) {
     const booking = await Bookings.getByUid(connection.shop, uid);
     if (!booking) throw data("That booking couldn't be found.", { status: 404 });
@@ -162,6 +228,15 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         when: formatInZone(booking.startUtc, Bookings.displayTz(booking, settings.timezone)),
         priceLabel: booking.price > 0 ? `${settings.currency_symbol}${booking.price.toFixed(2)}` : "",
       },
+      // Drives the reschedule slot picker (10-01-2026 review, item 8) —
+      // the same /slots resource route the booking wizard uses, which
+      // needs the service and resource to compute availability against.
+      // Ids only; nothing here is a disclosure the manage page doesn't
+      // already make by naming both.
+      serviceId: booking.serviceId,
+      resourceId: booking.resourceId,
+      minNoticeHours: settings.min_notice_hours,
+      maxAdvanceDays: settings.max_advance_days,
       canCancel: Bookings.customerCanCancel(booking, settings),
       // Why cancellation isn't available, when it isn't — "" when it is.
       // See cancelUnavailableReason's own comment for the un-cancellable-
@@ -286,6 +361,33 @@ async function handleBook(connectionId: string, request: Request, form: FormData
       source: "form",
     });
 
+    // The merchant's own thank-you page, when they have configured one
+    // (10-01-2026 review, item 9). Only for a booking that is actually
+    // on: a pending request still needs our panel to say so, and sending
+    // someone to a page that reads "thanks, you're booked" when they are
+    // not is worse than not redirecting at all.
+    //
+    // Re-checked here even though it was validated at write time — a row
+    // written before that validation existed, or edited around it, must
+    // not become an open redirect on the public page. Cheap, and this is
+    // the boundary that actually matters.
+    //
+    // Never when embedded. The page runs inside an iframe on the
+    // merchant's own site (see EMBED_QUERY_PARAM and useEmbedHeight), and
+    // redirecting there would load their whole thank-you page into a
+    // widget-sized frame — their site inside their site. Breaking out
+    // isn't available either: window.top is cross-origin here. So an
+    // embedded booking keeps the built-in panel, which is the thing
+    // actually designed to render at that size.
+    const embedded = new URL(request.url).searchParams.get(EMBED_QUERY_PARAM) === "1";
+    if (!embedded && booking.status === "confirmed" && settings.thank_you_url && CoreSettings.isSafeRedirectUrl(settings.thank_you_url)) {
+      const target = new URL(settings.thank_you_url);
+      // So the merchant's page can acknowledge the specific booking —
+      // and so conversion tracking has something to deduplicate on.
+      target.searchParams.set("ref", booking.uid);
+      throw redirect(target.toString());
+    }
+
     const [service, resource] = await Promise.all([
       Data.catalogService(connection.shop, booking.serviceId),
       Data.resource(connection.shop, booking.resourceId),
@@ -395,6 +497,115 @@ async function handleCancel(connectionId: string, request: Request, form: FormDa
   }
 }
 
+/**
+ * Public "Reschedule" — item 8 of the 10-01-2026 review.
+ *
+ * Bookings.reschedule() has existed for a long time: it re-runs the full
+ * availability check, respects the slot lattice, and fires the
+ * booking_rescheduled event the mailer already listens for. The only
+ * thing missing was a way for a customer to reach it — the manage page
+ * said "Need to change the time instead? Contact the business directly",
+ * which is a human doing by hand what the server could already do.
+ *
+ * Gated on customerCanCancel(), deliberately. Moving an appointment and
+ * cancelling it are the same decision from the business's side — the slot
+ * is given up either way — so a customer who is inside the cancellation
+ * cutoff must not be able to reschedule out of it instead. One policy,
+ * not two that can disagree.
+ *
+ * No `override`: that escape hatch is for staff, who can see the whole
+ * diary and take responsibility for a double-booking. A customer gets
+ * the published slots and nothing else.
+ */
+async function handleReschedule(connectionId: string, request: Request, form: FormData) {
+  const connection = await getPublicConnection(connectionId);
+  if (!connection) return { error: "This booking page isn't available." };
+
+  try {
+    // Same bucket as cancel: both are "act on an existing booking you
+    // hold the uid for", and a reschedule loop is the cheaper way to
+    // probe the diary of the two.
+    throttle(`manage:${connectionId}:${clientIp(request)}`, 8);
+
+    const uid = String(form.get("uid") || "");
+    const booking = await Bookings.getByUid(connection.shop, uid);
+    if (!booking) return { error: "That booking couldn't be found." };
+
+    const settings = await CoreSettings.getSettings(connection.shop, connection.platform);
+    if (!Bookings.customerCanCancel(booking, settings)) {
+      return { error: "This booking can no longer be changed here — please contact the business directly." };
+    }
+
+    const date = String(form.get("date") || "");
+    const time = String(form.get("time") || "");
+    if (!date || !time) return { error: "Choose a new date and time first." };
+
+    await Bookings.reschedule(
+      connection.shop,
+      connection.platform,
+      settings.timezone,
+      booking.id,
+      date,
+      time,
+      // Same resource. A customer changing their time has not asked to
+      // change who they are seeing, and silently reassigning them would
+      // be a different appointment wearing the same reference.
+      booking.resourceId
+    );
+    return { rescheduled: true };
+  } catch (err) {
+    if (isGetBooqinError(err)) return { error: err.message, code: err.code };
+    throw err;
+  }
+}
+
+/**
+ * Accept a waitlist offer. The counterpart to the claim view's one
+ * button — Waitlist.claim() does the real work (re-checks the offer is
+ * still `offered`, still inside its expiry, and turns it into a real
+ * Booking), and this is the public entry point the cloud product never
+ * had.
+ */
+async function handleClaimWaitlist(connectionId: string, request: Request, form: FormData) {
+  const connection = await getPublicConnection(connectionId);
+  if (!connection) return { error: "This booking page isn't available." };
+
+  try {
+    throttle(`manage:${connectionId}:${clientIp(request)}`, 8);
+    const token = String(form.get("token") || "");
+    if (!token) return { error: "That offer link is incomplete." };
+
+    const settings = await CoreSettings.getSettings(connection.shop, connection.platform);
+    const booking = await Waitlist.claim(connection.shop, connection.platform, settings.timezone, token);
+    return { claimed: true, bookingUid: booking.uid };
+  } catch (err) {
+    // claim() throws a precise, already-customer-readable message for
+    // every losing case — already claimed, withdrawn, expired — and
+    // those are the common paths here, not the exceptional ones.
+    if (isGetBooqinError(err)) return { error: err.message, code: err.code };
+    throw err;
+  }
+}
+
+/** Leave the waitlist, from the link in every waitlist email. */
+async function handleLeaveWaitlist(connectionId: string, request: Request, form: FormData) {
+  const connection = await getPublicConnection(connectionId);
+  if (!connection) return { error: "This booking page isn't available." };
+
+  try {
+    throttle(`manage:${connectionId}:${clientIp(request)}`, 8);
+    const uid = String(form.get("uid") || "");
+    if (!uid) return { error: "That link is incomplete." };
+    // Idempotent by construction (updateMany over waiting|offered), so a
+    // double-click or a re-opened email is not an error.
+    await Waitlist.leaveByUid(connection.shop, uid);
+    return { left: true };
+  } catch (err) {
+    if (isGetBooqinError(err)) return { error: err.message, code: err.code };
+    throw err;
+  }
+}
+
 export async function action({ request, params }: Route.ActionArgs) {
   if (request.method !== "POST") return { error: "Method not allowed." };
   const form = await request.formData();
@@ -403,6 +614,9 @@ export async function action({ request, params }: Route.ActionArgs) {
 
   if (intent === "book") return handleBook(connectionId, request, form);
   if (intent === "cancel") return handleCancel(connectionId, request, form);
+  if (intent === "reschedule") return handleReschedule(connectionId, request, form);
+  if (intent === "claim_waitlist") return handleClaimWaitlist(connectionId, request, form);
+  if (intent === "leave_waitlist") return handleLeaveWaitlist(connectionId, request, form);
   if (intent === "join_waitlist") return handleJoinWaitlist(connectionId, request, form);
   return { error: "Unknown request." };
 }
@@ -579,6 +793,29 @@ export function ErrorBoundary() {
 }
 
 export default function BookingPage({ loaderData, params }: Route.ComponentProps) {
+  if (loaderData.mode === "claim") {
+    return (
+      <ClaimOffer
+        businessName={loaderData.businessName}
+        showBadge={loaderData.showBadge}
+        brand={loaderData.brand}
+        vocab={loaderData.vocab}
+        token={loaderData.token}
+        offer={loaderData.offer}
+      />
+    );
+  }
+  if (loaderData.mode === "waitlist") {
+    return (
+      <WaitlistEntryView
+        businessName={loaderData.businessName}
+        showBadge={loaderData.showBadge}
+        brand={loaderData.brand}
+        vocab={loaderData.vocab}
+        entry={loaderData.entry}
+      />
+    );
+  }
   if (loaderData.mode === "manage") {
     return (
       <ManageBooking
@@ -589,6 +826,10 @@ export default function BookingPage({ loaderData, params }: Route.ComponentProps
         brand={loaderData.brand}
         vocab={loaderData.vocab}
         initial={loaderData.booking}
+        serviceId={loaderData.serviceId}
+        resourceId={loaderData.resourceId}
+        minNoticeHours={loaderData.minNoticeHours}
+        maxAdvanceDays={loaderData.maxAdvanceDays}
         canCancelInitial={loaderData.canCancel}
         cancelUnavailableReason={loaderData.cancelUnavailableReason}
       />
@@ -597,12 +838,162 @@ export default function BookingPage({ loaderData, params }: Route.ComponentProps
   return <BookingFlow loaderData={loaderData} />;
 }
 
+/* ----------------------------------------------------------- Claim view */
+
+/**
+ * "A spot opened up — claim it." The landing page for a waitlist offer
+ * email's claim link on a non-Shopify account.
+ *
+ * The whole flow behind this already existed — matchAndOffer() makes the
+ * offer when a booking is cancelled, the email goes out, expireStaleOffers()
+ * cascades it to the next person if nobody takes it. What did not exist
+ * was anywhere for a cloud merchant's customer to land, because the link
+ * pointed at a Shopify app-proxy path built from the internal shop key.
+ * See Waitlist.claimUrl().
+ *
+ * First come, first served with a hard expiry, so this is deliberately
+ * one button and no form: every field we would ask for, we already have
+ * from when they joined the waitlist, and the time spent typing is time
+ * the offer can expire in.
+ */
+function ClaimOffer({
+  businessName, showBadge, brand, vocab, token, offer,
+}: {
+  businessName: string;
+  showBadge: boolean;
+  brand: { logo: string; accent: string };
+  vocab: ReturnType<typeof vocabFor>;
+  token: string;
+  offer: { serviceName: string; resourceName: string; when: string; expiresAt: string; status: string; expired: boolean };
+}) {
+  const fetcher = useFetcher<{ claimed?: boolean; bookingUid?: string; error?: string }>();
+  const submitting = fetcher.state !== "idle";
+
+  if (fetcher.data?.claimed) {
+    return (
+      <Shell businessName={businessName} showBadge={showBadge} brand={brand}>
+        <div className="card p-[18px] text-center">
+          <h1 className="ob-h1 mb-1">It's yours</h1>
+          <p className="m-0 text-body text-muted">
+            {offer.serviceName} on {offer.when} is confirmed. We've emailed you the details.
+          </p>
+        </div>
+      </Shell>
+    );
+  }
+
+  // Claimable only while the offer is actually live. Rendering the button
+  // for an expired or already-taken offer would be inviting a click whose
+  // only possible outcome is a refusal.
+  const claimable = offer.status === "offered" && !offer.expired;
+
+  return (
+    <Shell businessName={businessName} showBadge={showBadge} brand={brand}>
+      <div className="card p-[18px]">
+        <h1 className="ob-h1 mb-1">A {vocab.bookingOne} opened up</h1>
+        {fetcher.data?.error && <AlertError className="mb-3">{fetcher.data.error}</AlertError>}
+        <div className="flex flex-col gap-[6px] text-body">
+          <span className="font-medium">{offer.serviceName}</span>
+          {offer.resourceName && <span className="text-muted">with {offer.resourceName}</span>}
+          <span className="text-muted">{offer.when}</span>
+        </div>
+
+        {claimable ? (
+          <>
+            <p className="mt-3 rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">
+              First come, first served — this offer is held until {offer.expiresAt}.
+            </p>
+            <fetcher.Form method="post" className="mt-3">
+              <input type="hidden" name="_intent" value="claim_waitlist" />
+              <input type="hidden" name="token" value={token} />
+              <button type="submit" className="btn-pri w-full justify-center" disabled={submitting}>
+                {submitting ? "Claiming…" : `Claim this ${vocab.bookingOne}`}
+              </button>
+            </fetcher.Form>
+          </>
+        ) : (
+          <p className="mt-3 rounded-[8px] bg-canvas-alt px-3 py-2 text-[12.5px] text-muted">
+            {offer.status === "claimed"
+              ? "This offer has already been claimed."
+              : offer.expired
+                ? "This offer has expired — we've passed it to the next person on the list."
+                : "This offer is no longer available."}{" "}
+            You're still on the waitlist if another time opens up.
+          </p>
+        )}
+      </div>
+    </Shell>
+  );
+}
+
+/* -------------------------------------------------------- Waitlist view */
+
+/**
+ * The "leave the waitlist" landing page. Waitlist.manageUrl() has been
+ * putting this link in every waitlist email all along; this page used to
+ * ignore the parameter entirely and render the booking wizard, so the
+ * link silently did nothing.
+ */
+function WaitlistEntryView({
+  businessName, showBadge, brand, vocab, entry,
+}: {
+  businessName: string;
+  showBadge: boolean;
+  brand: { logo: string; accent: string };
+  vocab: ReturnType<typeof vocabFor>;
+  entry: { uid: string; serviceName: string; resourceName: string; when: string; status: string };
+}) {
+  const fetcher = useFetcher<{ left?: boolean; error?: string }>();
+  const submitting = fetcher.state !== "idle";
+  const gone = fetcher.data?.left || entry.status === "cancelled";
+
+  return (
+    <Shell businessName={businessName} showBadge={showBadge} brand={brand}>
+      <div className="card p-[18px]">
+        <h1 className="ob-h1 mb-1">Your waitlist place</h1>
+        {fetcher.data?.error && <AlertError className="mb-3">{fetcher.data.error}</AlertError>}
+        <div className="flex flex-col gap-[6px] text-body">
+          <span className="font-medium">{entry.serviceName}</span>
+          {entry.resourceName && <span className="text-muted">with {entry.resourceName}</span>}
+          <span className="text-muted">Hoping for {entry.when}</span>
+          <span className="mt-1 w-fit">
+            <Badge
+              status={gone ? "cancelled" : "pending"}
+              label={gone ? "Left the waitlist" : entry.status === "offered" ? "Offer sent" : "Waiting"}
+            />
+          </span>
+        </div>
+
+        {!gone && (
+          <fetcher.Form method="post" className="mt-4">
+            <input type="hidden" name="_intent" value="leave_waitlist" />
+            <input type="hidden" name="uid" value={entry.uid} />
+            <button type="submit" className="btn-sec w-full justify-center" disabled={submitting}>
+              {submitting ? "Leaving…" : "Leave the waitlist"}
+            </button>
+          </fetcher.Form>
+        )}
+        {gone && (
+          <p className="mt-4 m-0 text-[12.5px] text-muted">
+            You're off the list — we won't email you about this {vocab.bookingOne} again.
+          </p>
+        )}
+      </div>
+    </Shell>
+  );
+}
+
 /* ---------------------------------------------------------- Manage view */
 
 function ManageBooking({
-  connectionId, businessName, businessPhone, showBadge, brand, vocab, initial, canCancelInitial, cancelUnavailableReason,
+  connectionId, businessName, businessPhone, showBadge, brand, vocab, initial,
+  serviceId, resourceId, minNoticeHours, maxAdvanceDays, canCancelInitial, cancelUnavailableReason,
 }: {
   connectionId: string;
+  serviceId: number;
+  resourceId: number;
+  minNoticeHours: number;
+  maxAdvanceDays: number;
   businessName: string;
   showBadge: boolean;
   /** Paid branding, already checked against entitlements in the loader. */
@@ -614,8 +1005,14 @@ function ManageBooking({
   cancelUnavailableReason: string;
 }) {
   const fetcher = useFetcher<{ cancelled?: boolean; error?: string }>();
+  const revalidator = useRevalidator();
   const cancelled = fetcher.data?.cancelled || initial.status === "cancelled";
   const canCancel = canCancelInitial && !cancelled;
+  // A reschedule rewrites the very row this page is rendering — the new
+  // time, and possibly a new answer to "can this still be cancelled?".
+  // Revalidating is what makes the page show the booking that now exists
+  // rather than the one that did a moment ago.
+  const onRescheduled = useCallback(() => revalidator.revalidate(), [revalidator]);
 
   return (
     <Shell businessName={businessName} showBadge={showBadge} brand={brand}>
@@ -636,13 +1033,31 @@ function ManageBooking({
           </span>
         </div>
         {canCancel && (
-          <button
-            type="button"
-            className="btn-sec mt-4 w-full justify-center"
-            onClick={() => (document.getElementById("cancel-booking") as HTMLDialogElement | null)?.showModal()}
-          >
-            Cancel this {vocab.bookingOne}
-          </button>
+          <>
+            {/* Reschedule above cancel: moving an appointment is the
+                outcome the business would rather have, and a customer
+                who came to cancel because they could not find a way to
+                move it is the exact failure this closes. */}
+            <div className="mt-4">
+              <ReschedulePanel
+                connectionId={connectionId}
+                uid={initial.uid}
+                serviceId={serviceId}
+                resourceId={resourceId}
+                minNoticeHours={minNoticeHours}
+                maxAdvanceDays={maxAdvanceDays}
+                vocab={vocab}
+                onDone={onRescheduled}
+              />
+            </div>
+            <button
+              type="button"
+              className="btn-sec mt-2 w-full justify-center"
+              onClick={() => (document.getElementById("cancel-booking") as HTMLDialogElement | null)?.showModal()}
+            >
+              Cancel this {vocab.bookingOne}
+            </button>
+          </>
         )}
         {/* Previously this dead-ended silently: no cancel control, no
             message, no mention of *why* — a customer booked 9h50m ahead
@@ -655,16 +1070,18 @@ function ManageBooking({
           <p className="mt-4 rounded-[8px] bg-warn-bg px-3 py-2 text-[12.5px] text-warn">{cancelUnavailableReason}</p>
         )}
       </div>
-      <p className="text-center text-body text-muted">
-        Need to change the time instead?{" "}
-        {businessPhone ? (
-          <>
-            Call {businessName} at <a href={`tel:${businessPhone.replace(/[\s()-]/g, "")}`} className="text-brand-600 underline">{businessPhone}</a>.
-          </>
-        ) : (
-          <>Contact {businessName} directly.</>
-        )}
-      </p>
+      {/* This used to read "Need to change the time instead? Contact
+          {business} directly." — a human doing by hand what
+          Bookings.reschedule() could already do, which is what the
+          10-01-2026 review reported as item 8. The phone number stays as
+          the fallback for a booking that is past the cutoff, where
+          calling genuinely is the only route left. */}
+      {!cancelled && businessPhone && (
+        <p className="text-center text-body text-muted">
+          Need something else? Call {businessName} at{" "}
+          <a href={`tel:${businessPhone.replace(/[\s()-]/g, "")}`} className="text-brand-600 underline">{businessPhone}</a>.
+        </p>
+      )}
 
       {canCancel && (
         <ConfirmDialog
@@ -681,6 +1098,107 @@ function ManageBooking({
         </ConfirmDialog>
       )}
     </Shell>
+  );
+}
+
+/**
+ * Reschedule, on the manage page — item 8 of the 10-01-2026 review.
+ *
+ * Collapsed to a single button until clicked, same shape as
+ * WaitlistJoinPrompt and AddToCalendar: a customer who came here to
+ * cancel should not have to scroll past a date picker to find the cancel
+ * button.
+ *
+ * Reuses the wizard's own /slots resource route and SlotGrid rather than
+ * computing anything itself, so a time offered here is a time the booking
+ * flow would have offered — the server re-checks it regardless
+ * (Bookings.reschedule runs the full availability assertion), but
+ * offering a slot that will then be refused is its own bug.
+ */
+function ReschedulePanel({
+  connectionId, uid, serviceId, resourceId, minNoticeHours, maxAdvanceDays, vocab, onDone,
+}: {
+  connectionId: string;
+  uid: string;
+  serviceId: number;
+  resourceId: number;
+  minNoticeHours: number;
+  maxAdvanceDays: number;
+  vocab: ReturnType<typeof vocabFor>;
+  onDone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
+  const slotsFetcher = useFetcher<{ mode: "slots"; slots: { time: string; label: string }[] }>();
+  const fetcher = useFetcher<{ rescheduled?: boolean; error?: string }>();
+  const submitting = fetcher.state !== "idle";
+
+  // Same bounds the booking wizard applies, for the same reason: a date
+  // inside the notice window or past the advance window is not pickable
+  // rather than pickable-then-refused (PB-05).
+  const [dateMin, setDateMin] = useState<string | undefined>(undefined);
+  const [dateMax, setDateMax] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    const toValue = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const now = new Date();
+    setDateMin(toValue(new Date(now.getTime() + minNoticeHours * 3600_000)));
+    setDateMax(toValue(new Date(now.getTime() + maxAdvanceDays * 86_400_000)));
+  }, [minNoticeHours, maxAdvanceDays]);
+
+  // Load the chosen day's slots. Keyed on the date alone — service and
+  // resource are fixed for the life of this panel.
+  useEffect(() => {
+    if (!date) return;
+    setTime("");
+    slotsFetcher.load(`/book/${connectionId}/slots?service_id=${serviceId}&resource_id=${resourceId}&date=${date}`);
+    // slotsFetcher is a stable fetcher instance; including it loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, connectionId, serviceId, resourceId]);
+
+  useEffect(() => {
+    if (fetcher.data?.rescheduled) onDone();
+  }, [fetcher.data?.rescheduled, onDone]);
+
+  if (!open) {
+    return (
+      <button type="button" className="btn-sec mt-2 w-full justify-center" onClick={() => setOpen(true)}>
+        Reschedule
+      </button>
+    );
+  }
+
+  const slots = slotsFetcher.data?.mode === "slots" ? slotsFetcher.data.slots : [];
+  const loading = slotsFetcher.state !== "idle";
+
+  return (
+    <fetcher.Form method="post" className="mt-3 flex flex-col gap-3 rounded-[10px] border border-line p-3">
+      <input type="hidden" name="_intent" value="reschedule" />
+      <input type="hidden" name="uid" value={uid} />
+      <input type="hidden" name="date" value={date} />
+      <input type="hidden" name="time" value={time} />
+
+      {fetcher.data?.error && <span className="text-[12px] text-danger">{fetcher.data.error}</span>}
+
+      <Field label="New date">
+        <Input type="date" value={date} min={dateMin} max={dateMax} onChange={(e) => setDate(e.target.value)} />
+      </Field>
+
+      {date && loading && <p className="m-0 text-[12.5px] text-muted">Checking what's open…</p>}
+      {date && !loading && slots.length === 0 && (
+        <p className="m-0 text-[12.5px] text-muted">No open times that day — try another date.</p>
+      )}
+      {slots.length > 0 && <SlotGrid slots={slots} time={time} onPick={setTime} />}
+
+      <div className="flex gap-2">
+        <button type="button" className="btn-sec flex-1 justify-center" onClick={() => setOpen(false)} disabled={submitting}>
+          Keep current time
+        </button>
+        <button type="submit" className="btn-pri flex-1 justify-center" disabled={!date || !time || submitting}>
+          {submitting ? "Moving…" : `Move ${vocab.bookingOne}`}
+        </button>
+      </div>
+    </fetcher.Form>
   );
 }
 
@@ -742,6 +1260,29 @@ const PART_OF_DAY_ORDER = ["Morning", "Afternoon", "Evening"] as const;
  * after work" — grouped by part of day instead (GetBooqin clinic audit's
  * PB-06 finding).
  */
+/**
+ * Records "they asked for this day and it had nothing" as a side effect
+ * of that state being rendered.
+ *
+ * A render-phase setState would be a loop and an effect in the parent
+ * would need the empty-slots condition duplicated there, so this is a
+ * zero-output component mounted exactly where that condition is already
+ * expressed. Deliberately not remembering an out-of-range date: a day
+ * past the booking window is not a day the business could ever offer,
+ * so there is nothing to waitlist for.
+ */
+function RememberPreferredDate({
+  date, outOfRange, onLearn,
+}: { date: string; outOfRange: boolean; onLearn: (date: string) => void }) {
+  useEffect(() => {
+    if (!date || outOfRange) return;
+    // First wins — see preferredDate's own comment.
+    onLearn(date);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, outOfRange]);
+  return null;
+}
+
 function SlotGrid({
   slots, time, onPick,
 }: { slots: { time: string; label: string }[]; time: string; onPick: (time: string) => void }) {
@@ -784,12 +1325,24 @@ function SlotGrid({
  * PB-04 finding).
  */
 function WaitlistJoinPrompt({
-  serviceId, resourceId, vocab, settings,
+  serviceId, resourceId, vocab, settings, preferredDate, ctaLabel,
 }: {
   serviceId: number;
   resourceId: number;
   vocab: ReturnType<typeof vocabFor>;
   settings: BookLoaderData["settings"];
+  /**
+   * The day they actually want.
+   *
+   * This form never sent one. handleJoinWaitlist reads `date` off the
+   * form and passes it to Waitlist.join() as window_start — and join()
+   * falls back to *today* when it is absent, so every customer who used
+   * the empty-availability prompt was queued for the wrong day and then
+   * never offered the slot they had asked about. Silent, because
+   * joining still "worked".
+   */
+  preferredDate: string;
+  ctaLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const fetcher = useFetcher<{ waitlisted?: boolean; error?: string; fieldErrors?: Record<string, string> }>();
@@ -806,7 +1359,7 @@ function WaitlistJoinPrompt({
   if (!open) {
     return (
       <button type="button" className="btn-sec w-full justify-center" onClick={() => setOpen(true)}>
-        Join the waitlist instead
+        {ctaLabel ?? "Join the waitlist instead"}
       </button>
     );
   }
@@ -816,6 +1369,9 @@ function WaitlistJoinPrompt({
       <input type="hidden" name="_intent" value="join_waitlist" />
       <input type="hidden" name="service_id" value={serviceId} />
       <input type="hidden" name="resource_id" value={resourceId} />
+      {/* The day being queued for. Absent, Waitlist.join() silently uses
+          today — see preferredDate above. */}
+      <input type="hidden" name="date" value={preferredDate} />
       {/* Honeypot — same convention as the main booking form below. */}
       <input type="text" name="hp_company" tabIndex={-1} autoComplete="off" className="sr-only" aria-hidden="true" />
       <p className="m-0 text-[12.5px] text-muted">We'll reach out the moment a spot frees up.</p>
@@ -876,6 +1432,17 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
     setDateMax(toDateInputValue(latest));
   }, [settings.minNoticeHours, settings.maxAdvanceDays]);
   const dateOutOfRange = !!date && !!dateMin && !!dateMax && (date < dateMin || date > dateMax);
+
+  // The date the customer actually wanted, when it turned out to have
+  // nothing on it (10-01-2026 review, item 10). The waitlist prompt on
+  // the empty-day screen only helps someone willing to leave with
+  // nothing booked; the far more common path is "Monday is full, fine,
+  // I'll take Tuesday" — and that customer would have taken Monday, and
+  // we never ask. Remembered here so the confirmation screen can.
+  //
+  // First one only: if they shop around three full days before booking a
+  // fourth, the first is the one they came for.
+  const [preferredDate, setPreferredDate] = useState("");
 
   const daysFetcher = useFetcher<{ mode: "days"; days: { date: string; label: string; count: number }[]; unbookable: boolean }>();
   const slotsFetcher = useFetcher<{ mode: "slots"; slots: { time: string; label: string }[] }>();
@@ -952,6 +1519,20 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
         brand={brand}
         vocab={vocab}
         booking={bookFetcher.data.booking}
+        // Only when they settled for a different day than the one they
+        // asked for first, and only if this business runs a waitlist at
+        // all. Both false for the ordinary "booked the day I wanted"
+        // path, which must stay a clean confirmation with nothing extra
+        // asked of it.
+        waitlist={
+          // serviceId is non-null by the time a booking exists — you
+          // cannot reach the confirmation without having picked one —
+          // but the state is typed nullable for the first step, so the
+          // narrowing has to be explicit.
+          settings.waitlistEnabled && serviceId !== null && preferredDate && preferredDate !== date
+            ? { serviceId, resourceId, preferredDate, settings }
+            : null
+        }
       />
     );
   }
@@ -1081,6 +1662,16 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
                 <span className="text-[11.5px] text-subtle">Times shown in {zoneAbbr(new Date(), settings.timezone)}</span>
               )}
               {slotsFetcher.data?.mode === "slots" && slotsFetcher.data.slots.length === 0 && (
+                <RememberPreferredDate
+                  date={date}
+                  outOfRange={dateOutOfRange}
+                  // Functional, so "first wins" is actually true — a plain
+                  // set would overwrite with whichever empty day they
+                  // looked at last.
+                  onLearn={(d) => setPreferredDate((prev) => prev || d)}
+                />
+              )}
+              {slotsFetcher.data?.mode === "slots" && slotsFetcher.data.slots.length === 0 && (
                 // "Outside our booking window" (a date the calendar was
                 // never open on) used to render identically to "fully
                 // booked" (a date that is open but every slot is taken) —
@@ -1102,13 +1693,18 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
                   freed slots, and never mentioned here (GetBooqin clinic
                   audit's PB-04 finding). */}
               {settings.waitlistEnabled && slotsFetcher.data?.mode === "slots" && slotsFetcher.data.slots.length === 0 && !dateOutOfRange && (
-                <WaitlistJoinPrompt serviceId={service.id} resourceId={resourceId} vocab={vocab} settings={settings} />
+                <WaitlistJoinPrompt serviceId={service.id} resourceId={resourceId} vocab={vocab} settings={settings} preferredDate={date} />
               )}
             </div>
           )}
 
           {daysFetcher.data?.mode === "days" && daysFetcher.data.days.length === 0 && !daysFetcher.data.unbookable && settings.waitlistEnabled && (
-            <WaitlistJoinPrompt serviceId={service.id} resourceId={resourceId} vocab={vocab} settings={settings} />
+            // No specific day was asked for here — nothing in the next
+            // week has anything — so `date` is whatever they last typed,
+            // possibly nothing. Passing it through either way: an empty
+            // value lands on join()'s own "from today" default, which is
+            // the honest reading of "I'll take the first thing going".
+            <WaitlistJoinPrompt serviceId={service.id} resourceId={resourceId} vocab={vocab} settings={settings} preferredDate={date} />
           )}
 
           {/* Sticky on mobile: a ten-hour, 15-minute-interval day renders as
@@ -1401,7 +1997,7 @@ function AddToCalendar({ event, filename }: { event: CalendarEvent; filename: st
 }
 
 function Confirmation({
-  connectionId, businessName, businessAddress, showBadge, brand, vocab, booking,
+  connectionId, businessName, businessAddress, showBadge, brand, vocab, booking, waitlist,
 }: {
   connectionId: string;
   businessName: string;
@@ -1409,6 +2005,13 @@ function Confirmation({
   showBadge: boolean;
   brand: { logo: string; accent: string };
   vocab: ReturnType<typeof vocabFor>;
+  /** Non-null only when they settled for a different day — see item 10. */
+  waitlist: {
+    serviceId: number;
+    resourceId: number;
+    preferredDate: string;
+    settings: BookLoaderData["settings"];
+  } | null;
   booking: {
     uid: string;
     status: string;
@@ -1508,6 +2111,50 @@ function Confirmation({
           )}
         </div>
       </div>
+
+      {/* "You're booked for Tuesday. You wanted Monday — want us to tell
+          you if Monday opens up?" (10-01-2026 review, item 10.)
+          
+          The waitlist engine behind this is complete and has been for a
+          while: a cancellation frees a slot, matchAndOffer() offers it to
+          the first matching entry, and an unclaimed offer cascades to the
+          next. What was missing was anyone to offer it to — the only way
+          onto the list was an empty-availability day, i.e. a customer
+          willing to leave with nothing booked. The customer who took
+          Tuesday but wanted Monday is both more common and more likely to
+          say yes, and nobody was asking them.
+
+          Below the confirmation, never instead of it: the booking they
+          just made is the thing they came for. */}
+      {waitlist && (
+        <div className="card p-[18px]">
+          <p className="m-0 mb-2 text-body">
+            You were looking at <strong>{formatPreferredDate(waitlist.preferredDate)}</strong>. Want us to let you
+            know if something opens up then?
+          </p>
+          <WaitlistJoinPrompt
+            serviceId={waitlist.serviceId}
+            resourceId={waitlist.resourceId}
+            vocab={vocab}
+            settings={waitlist.settings}
+            preferredDate={waitlist.preferredDate}
+            ctaLabel={`Tell me if ${formatPreferredDate(waitlist.preferredDate)} opens up`}
+          />
+        </div>
+      )}
     </Shell>
   );
+}
+
+/**
+ * "Mon 5 Oct" from a yyyy-mm-dd the customer picked.
+ *
+ * Parsed as local parts rather than `new Date("2026-10-05")`, which is
+ * parsed as UTC midnight and renders as the day before for anyone west
+ * of Greenwich.
+ */
+function formatPreferredDate(date: string): string {
+  const [y, m, d] = date.split("-").map(Number);
+  if (!y || !m || !d) return date;
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" });
 }

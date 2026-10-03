@@ -429,12 +429,25 @@ export async function action({ request, params }: Route.ActionArgs) {
     // BR-01 finding), and a minimum notice past the maximum advance window
     // silently closed online booking entirely with no warning anywhere
     // (BR-02 finding).
-    const ruleErrors = Settings.validateBookingRules(ruleValues);
+    // Widened past BookingRuleField: thank_you_url is validated alongside
+    // the numeric booking rules and rendered by the same error map, but it
+    // is not one of them and core's validator knows nothing about it.
+    const ruleErrors: Record<string, string> = { ...Settings.validateBookingRules(ruleValues) };
+    // Blank is valid and means "use the built-in confirmation panel".
+    // Anything else has to be an absolute http(s) URL before it is stored
+    // — see isSafeRedirectUrl(). Refusing at write time rather than at
+    // redirect time means a bad value can never be sitting in the
+    // database waiting for a customer to reach it.
+    const thankYouUrl = String(form.get("thank_you_url") ?? "").trim();
+    if (thankYouUrl && !Settings.isSafeRedirectUrl(thankYouUrl)) {
+      ruleErrors.thank_you_url = "Enter a full web address starting with https:// — or leave it blank.";
+    }
     if (Object.keys(ruleErrors).length > 0) {
       return { ruleErrors };
     }
     await Settings.setSettings(shop, platform, {
       ...ruleValues,
+      thank_you_url: thankYouUrl,
       auto_confirm: form.get("auto_confirm") === "on",
       allow_cancel: form.get("allow_cancel") === "on",
       require_phone: form.get("require_phone") === "on",
@@ -651,7 +664,7 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
 
   // Field-level errors from a blocked "rules" save (BR-01/BR-02) — see the
   // action's validateBookingRules call above.
-  const ruleErrors: Partial<Record<BookingRuleField, string>> =
+  const ruleErrors: Partial<Record<BookingRuleField | "thank_you_url", string>> =
     (actionData && "ruleErrors" in actionData ? actionData.ruleErrors : undefined) ?? {};
   const ruleErrorSummary = Object.keys(ruleErrors).length > 0 ? "Fix the highlighted fields below before saving." : undefined;
   const bookingWindowClosed = bookingWindowIsClosed(settings);
@@ -805,6 +818,20 @@ export default function SettingsPage({ loaderData, actionData }: Route.Component
             {ruleErrors.waitlist_offer_window_hours && <p className="m-0 mt-1 text-[12px] text-danger">{ruleErrors.waitlist_offer_window_hours}</p>}
           </Row>
           <ToggleRow name="allow_cancel" label={`Allow ${v.customers.toLowerCase()} to cancel`} hint={`Let ${v.customers.toLowerCase()} cancel their own ${v.bookingMany}`} defaultChecked={settings.allow_cancel} />
+          {/* 10-01-2026 review, item 9. Blank keeps the built-in
+              confirmation panel, which carries the reference, the manage
+              link and add-to-calendar — a custom page carries whatever the
+              merchant put on it, so this is opt-in rather than a default.
+              Validated server-side as an absolute http(s) URL: it is a
+              merchant-controlled redirect target on the one page an
+              anonymous visitor reaches. */}
+          <Row
+            label="Thank-you page URL"
+            hint={`Where to send ${v.customers.toLowerCase()} after a confirmed ${v.bookingOne}. Leave blank to show the built-in confirmation. We add ?ref= with the ${v.bookingOne} reference.`}
+          >
+            <RowInput type="url" name="thank_you_url" defaultValue={settings.thank_you_url} placeholder="https://your-clinic.example/thanks" cap={9999} />
+            {ruleErrors.thank_you_url && <p className="m-0 mt-1 text-[12px] text-danger">{ruleErrors.thank_you_url}</p>}
+          </Row>
         </SettingsCard>
       )}
 

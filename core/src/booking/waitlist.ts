@@ -292,6 +292,36 @@ export function manageUrl(entry: Waitlist, settings: Settings): string {
 }
 
 /**
+ * Where an offer email's "claim it here" link points.
+ *
+ * This used to be built inline in mailer.ts as
+ * `https://${shop}/apps/getbooqin/waitlist/${token}` — the Shopify
+ * app-proxy path, with the shop domain as the host. Correct for a
+ * Shopify store. For a cloud merchant the shop *key* is
+ * `manual-<uuid>`, so every waitlist offer email sent by the standalone
+ * product carried a link to `https://manual-77cd2e49-…/apps/…`, which
+ * resolves to nothing at all.
+ *
+ * Nobody noticed because the waitlist only ever offered slots that had
+ * been freed by a cancellation, and the cloud product had no public way
+ * to join a waitlist until the booking page grew one. Shipping the
+ * join prompt without this fixed would have shipped a feature whose
+ * entire payoff is an email with a dead link in it.
+ *
+ * booking_page_url for a manual account is pinned to
+ * `${APP_URL}/book/${connectionId}` at onboarding step 1, so it is the
+ * one value here that is reliably a real URL.
+ */
+export function claimUrl(entry: Waitlist, settings: Settings, shop: string, platform: string): string {
+  if (platform === "shopify") {
+    return `https://${shop}/apps/getbooqin/waitlist/${entry.offerToken ?? ""}`;
+  }
+  const base = settings.booking_page_url || "/";
+  const separator = base.includes("?") ? "&" : "?";
+  return `${base}${separator}getbooqin_claim=${entry.offerToken ?? ""}`;
+}
+
+/**
  * FIFO-matches a freed slot against waiting entries for that service
  * (resourceId 0 = any resource, otherwise must match) whose preferred
  * window covers it, and makes a time-boxed offer to the first one that

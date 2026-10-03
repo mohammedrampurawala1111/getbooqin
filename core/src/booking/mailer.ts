@@ -12,7 +12,7 @@ import type { Booking, Connection, ConnectionInvite, Waitlist } from "@prisma/cl
 import prisma from "../db.js";
 import * as Data from "./data.js";
 import * as Bookings from "./bookings.js";
-import { manageUrl as waitlistManageUrl } from "./waitlist.js";
+import { manageUrl as waitlistManageUrl, claimUrl as waitlistClaimUrl } from "./waitlist.js";
 import { getSettings, template as settingTemplate, type Settings } from "./settings.js";
 // The second channel, called alongside every send below rather than
 // from inside them. Its failures are returned, never thrown: a WhatsApp
@@ -738,9 +738,11 @@ function logMailError(context: string, shop: string, uid: string, error: unknown
  * A waitlist entry isn't a Booking row until claimed, so its tokens can't
  * reuse tokens() above — built from the entry's offered slot instead, or
  * (before an offer exists yet — the join-confirmation email) its requested
- * window. The claim link is the app-proxy route shopify-openslot mounts
- * publicly at /apps/getbooqin/* (see proxy.server.ts's appProxyBase), not
- * booking_page_url — there's no storefront widget view for that flow. The
+ * window. The claim link comes from Waitlist.claimUrl(), which picks the
+ * app-proxy route shopify-openslot mounts publicly at /apps/getbooqin/*
+ * for a Shopify store and our own booking page for everyone else — see
+ * that function for why hardcoding the Shopify path here was a dead link
+ * in every cloud merchant's offer email. The
  * leave link is the opposite: it does have a storefront view (Waitlist.
  * manageUrl -> booking_page_url + ?getbooqin_waitlist=uid, same convention
  * as Bookings.manageUrl), same as every other waitlist email regardless of
@@ -763,7 +765,10 @@ async function waitlistTokens(shop: string, entry: Waitlist, settings: Settings)
     "{{timezone}}": start ? start.toFormat("z") : "",
     "{{customer_name}}": customer ? `${customer.firstName} ${customer.lastName}`.trim() : "",
     "{{expires_at}}": entry.offerExpiresAt ? DateTime.fromJSDate(entry.offerExpiresAt, { zone: "utc" }).setZone(tz).toFormat("h:mm a") : "",
-    "{{claim_url}}": `https://${shop}/apps/getbooqin/waitlist/${entry.offerToken ?? ""}`,
+    // entry.platform, not a threaded argument — the row carries which
+    // platform it belongs to, and that is what decides whether the claim
+    // link is a Shopify app-proxy path or our own booking page.
+    "{{claim_url}}": waitlistClaimUrl(entry, settings, shop, entry.platform),
     "{{leave_url}}": waitlistManageUrl(entry, settings),
   };
 }
