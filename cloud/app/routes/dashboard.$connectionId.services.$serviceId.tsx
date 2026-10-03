@@ -82,6 +82,17 @@ export async function action({ request, params }: Route.ActionArgs) {
       color: String(form.get("color") ?? before.color),
       status: form.get("status") === "on",
       requires_room: form.get("requires_room") === "on",
+      // Payment before confirmation (10-01-2026 review, item 13). The
+      // columns and the deposit maths have existed since before the
+      // gateway was cut; nothing ever let a merchant switch them on.
+      // With payment_required set, bookings.ts holds new bookings at
+      // `pending` whatever auto_confirm says, and Payments.markPaid
+      // confirms them.
+      payment_required: form.get("payment_required") === "on",
+      // 100% unless a percentage is given. deposit_amount, when set,
+      // wins over the percentage — see amountDueFor().
+      deposit_percent: Number(form.get("deposit_percent") ?? 100) || 100,
+      deposit_amount: Number(form.get("deposit_amount") ?? 0) || 0,
       resource_ids: resourceIds,
       addon_ids: addonIds,
     },
@@ -227,6 +238,39 @@ export default function ServiceDetail({ loaderData, actionData, params }: Route.
             </Field>
             <div className="col-span-2 flex flex-col gap-3">
               <Toggle name="status" defaultChecked={config.status} label="Active" />
+            </div>
+
+            {/* Payment before confirmation — 10-01-2026 review, item 13.
+                
+                Be precise about what this does, because the honest
+                description is not the obvious one: GetBooqin is not in
+                this transaction. The customer pays the merchant directly
+                over UPI or PayPal.me, and a payment is marked paid *by a
+                person, not verified* (see core/src/booking/payments.ts).
+                So the guarantee this buys is "the booking stays pending
+                until you say the money arrived", not "the booking
+                confirms when the money arrives". Anywhere the UI implies
+                otherwise would be lying to a merchant about their own
+                money. */}
+            <div className="col-span-2 flex flex-col gap-3 rounded-[10px] border border-line p-3">
+              <Toggle
+                name="payment_required"
+                defaultChecked={config.paymentRequired}
+                label={`Hold ${v.bookingMany} until payment is recorded`}
+              />
+              <p className="m-0 text-[12px] text-muted">
+                New {v.bookingMany} stay pending — even with auto-confirm on — until you mark the payment
+                received on the Orders page. You take the money directly; we only track what was asked for
+                and what you tell us arrived.
+              </p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-[14px]">
+                <Field label="Deposit (%)" hint="Of the total, including add-ons. 100 means pay in full.">
+                  <Input type="number" name="deposit_percent" min={1} max={100} defaultValue={config.depositPercent || 100} />
+                </Field>
+                <Field label={`Or a fixed amount (${currencySymbol})`} hint="Overrides the percentage when set.">
+                  <Input type="number" name="deposit_amount" min={0} step="0.01" defaultValue={config.depositAmount || 0} />
+                </Field>
+              </div>
             </div>
 
             <div className="col-span-2">

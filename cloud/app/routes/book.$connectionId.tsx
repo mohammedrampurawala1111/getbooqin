@@ -7,6 +7,7 @@ import {
   Entitlements,
   WhatsAppAccounts,
   Settings as CoreSettings,
+  Payments,
   Waitlist,
   getPublicConnection,
   isGetBooqinError,
@@ -228,6 +229,20 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         when: formatInZone(booking.startUtc, Bookings.displayTz(booking, settings.timezone)),
         priceLabel: booking.price > 0 ? `${settings.currency_symbol}${booking.price.toFixed(2)}` : "",
       },
+      // Where the money stands, for the customer's own copy (10-01-2026
+      // review, item 13: "payment status should be visible to both the
+      // business owner and the customer" — the owner has the Orders
+      // page, this is the other half). Reads the booking's own
+      // paymentStatus, which Payments keeps in step inside the same
+      // transaction that records a payment.
+      payment:
+        booking.paymentStatus === "not_required"
+          ? null
+          : {
+              status: booking.paymentStatus,
+              amountDue: booking.amountDue,
+              currencySymbol: settings.currency_symbol,
+            },
       // Drives the reschedule slot picker (10-01-2026 review, item 8) —
       // the same /slots resource route the booking wizard uses, which
       // needs the service and resource to compute availability against.
@@ -393,7 +408,35 @@ async function handleBook(connectionId: string, request: Request, form: FormData
       Data.resource(connection.shop, booking.resourceId),
     ]);
 
+    // What the customer owes up front, if the service asks for anything
+    // (10-01-2026 review, item 13). Created here rather than left to the
+    // merchant's Orders page, because the moment a customer has just
+    // committed is the moment they are most willing to pay — and because
+    // the booking is being held pending until they do.
+    //
+    // requestPayment() is idempotent per booking and kind, so a reload
+    // or a double submit cannot produce two requests for one booking.
+    // Best-effort: a booking that exists must never be reported as
+    // failed because we could not render a QR for it, and the merchant
+    // can still request payment by hand.
+    let payment: { amount: number; currencySymbol: string; reference: string; link: string; qr: string } | null = null;
+    if (booking.amountDue > 0) {
+      try {
+        const request = await Payments.requestPayment(connection.shop, connection.platform, booking.id);
+        payment = {
+          amount: request.amount,
+          currencySymbol: settings.currency_symbol,
+          reference: request.reference,
+          link: request.link,
+          qr: await Payments.paymentQr(request.link),
+        };
+      } catch (err) {
+        console.warn(`[getbooqin book] could not raise a payment request for ${booking.uid}:`, err);
+      }
+    }
+
     return {
+      payment,
       booking: {
         uid: booking.uid,
         status: booking.status,
@@ -826,6 +869,7 @@ export default function BookingPage({ loaderData, params }: Route.ComponentProps
         brand={loaderData.brand}
         vocab={loaderData.vocab}
         initial={loaderData.booking}
+        payment={loaderData.payment}
         serviceId={loaderData.serviceId}
         resourceId={loaderData.resourceId}
         minNoticeHours={loaderData.minNoticeHours}
@@ -986,10 +1030,11 @@ function WaitlistEntryView({
 /* ---------------------------------------------------------- Manage view */
 
 function ManageBooking({
-  connectionId, businessName, businessPhone, showBadge, brand, vocab, initial,
+  connectionId, businessName, businessPhone, showBadge, brand, vocab, initial, payment,
   serviceId, resourceId, minNoticeHours, maxAdvanceDays, canCancelInitial, cancelUnavailableReason,
 }: {
   connectionId: string;
+  payment: { status: string; amountDue: number; currencySymbol: string } | null;
   serviceId: number;
   resourceId: number;
   minNoticeHours: number;
@@ -1031,6 +1076,16 @@ function ManageBooking({
           <span className="mt-1 w-fit">
             <Badge status={cancelled ? "cancelled" : (initial.status as "pending" | "confirmed")} label={cancelled ? "Cancelled" : initial.status === "pending" ? "Pending confirmation" : "Confirmed"} />
           </span>
+          {/* Said plainly, including who confirms it. The business
+              records the payment by hand — nothing here watches a bank
+              account — so "paid" means they said so. */}
+          {payment && !cancelled && (
+            <span className="mt-1 text-[12.5px] text-muted">
+              {payment.status === "paid"
+                ? `Payment of ${payment.currencySymbol}${payment.amountDue.toFixed(2)} received.`
+                : `${payment.currencySymbol}${payment.amountDue.toFixed(2)} due — ${businessName} will confirm once your payment arrives.`}
+            </span>
+          )}
         </div>
         {canCancel && (
           <>
@@ -1464,6 +1519,14 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
       cancelUnavailableReason: string;
       businessPhone: string;
     };
+    /** Raised by handleBook when the service asks for a deposit. */
+    payment?: {
+      amount: number;
+      currencySymbol: string;
+      reference: string;
+      link: string;
+      qr: string;
+    } | null;
   }>();
 
   const service = services.find((s) => s.id === serviceId) ?? null;
@@ -1519,6 +1582,7 @@ function BookingFlow({ loaderData }: { loaderData: BookLoaderData }) {
         brand={brand}
         vocab={vocab}
         booking={bookFetcher.data.booking}
+        payment={bookFetcher.data.payment ?? null}
         // Only when they settled for a different day than the one they
         // asked for first, and only if this business runs a waitlist at
         // all. Both false for the ordinary "booked the day I wanted"
@@ -1997,8 +2061,10 @@ function AddToCalendar({ event, filename }: { event: CalendarEvent; filename: st
 }
 
 function Confirmation({
-  connectionId, businessName, businessAddress, showBadge, brand, vocab, booking, waitlist,
+  connectionId, businessName, businessAddress, showBadge, brand, vocab, booking, waitlist, payment,
 }: {
+  /** What is owed up front, if anything — see item 13. */
+  payment: { amount: number; currencySymbol: string; reference: string; link: string; qr: string } | null;
   connectionId: string;
   businessName: string;
   businessAddress: string;
@@ -2067,12 +2133,48 @@ function Confirmation({
             : "A confirmation has been sent to your email."}
         </p>
 
+        {/* What is owed, and how to pay it (10-01-2026 review, item 13).
+            
+            Worded to match what actually happens: the customer pays the
+            business directly, and the business confirms when the money
+            lands. GetBooqin is not in this transaction and must not
+            imply it is — payments.ts is explicit that a payment is
+            marked paid by a person, not verified, so "we'll confirm once
+            payment clears" would be a promise nothing here can keep. */}
+        {payment && (
+          <div className="mt-4 flex flex-col items-center gap-2 border-t border-line pt-4">
+            <p className="m-0 text-body font-medium">
+              {payment.currencySymbol}{payment.amount.toFixed(2)} due to confirm
+            </p>
+            {payment.qr && (
+              <img
+                src={payment.qr}
+                alt={`Payment QR code for ${payment.currencySymbol}${payment.amount.toFixed(2)}`}
+                className="h-[180px] w-[180px]"
+              />
+            )}
+            {payment.link && (
+              <a href={payment.link} className="btn-pri no-underline hover:no-underline">
+                Pay {payment.currencySymbol}{payment.amount.toFixed(2)}
+              </a>
+            )}
+            <p className="m-0 text-[12px] text-subtle">
+              Quote reference <strong>{payment.reference}</strong> so {businessName} can match your payment.
+            </p>
+            <p className="m-0 max-w-[320px] text-[12px] text-subtle">
+              Your {vocab.bookingOne} is held until {businessName} confirms the payment has arrived.
+            </p>
+          </div>
+        )}
+
         <div className="mt-4 flex flex-col items-center gap-2 border-t border-line pt-4">
-          {/* The manage page only ever offered Cancel — no self-service
-              reschedule exists yet — so this promised more than the page
-              could deliver (Defect Dossier's R2-06 finding). */}
+          {/* Says "change" now that it can: the manage page gained a real
+              reschedule panel (10-01-2026 review, item 8). It used to
+              offer only Cancel, which is why this link was carefully
+              worded not to promise more than the page could deliver
+              (Defect Dossier's R2-06 finding). */}
           <a href={manageUrl} className="btn-sec no-underline hover:no-underline">
-            View or cancel this {vocab.bookingOne}
+            View, change or cancel this {vocab.bookingOne}
           </a>
           {booking.canCancel && (
             <p className="m-0 text-[12px] text-subtle">

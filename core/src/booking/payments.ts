@@ -27,6 +27,9 @@ import {
   type PayeeDetails,
 } from "./paymentLinks.js";
 import { getSettings } from "./settings.js";
+// Static: bookings.ts does not import this module (it takes amountDueFor
+// from paymentLinks directly), so there is no cycle to dodge here.
+import { setStatus } from "./bookings.js";
 import * as Data from "./data.js";
 
 export type { PaymentMethod } from "./paymentLinks.js";
@@ -205,8 +208,8 @@ export async function markPaid(
   if (!payment) throw new GetBooqinError("getbooqin_not_found", "Payment not found.", 404);
   if (payment.status === "paid") return payment;
 
-  return prisma.$transaction(async (tx) => {
-    const updated = await tx.payment.update({
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.payment.update({
       where: { id: paymentId },
       data: {
         status: "paid",
@@ -217,8 +220,41 @@ export async function markPaid(
     });
 
     await recomputeBookingPaymentStatus(tx, shop, platform, payment.bookingId);
-    return updated;
+    return row;
   });
+
+  // Payment-before-confirmation's other half (10-01-2026 review, item
+  // 13). bookings.ts holds a deposit-bearing booking at `pending`
+  // whatever auto_confirm says; this is what lets it go.
+  //
+  // Outside the transaction above, and after it: setStatus() emits
+  // booking_status_changed, which sends the customer their confirmation.
+  // Emitting that from inside a transaction that might still roll back
+  // would send a confirmation for a payment that was never recorded.
+  //
+  // Only when the booking is fully settled, and only from `pending` —
+  // a part-payment is not a confirmation, and a cancelled booking must
+  // not be resurrected by someone reconciling an old bank statement.
+  await confirmIfSettled(shop, platform, payment.bookingId);
+
+  return updated;
+}
+
+/**
+ * Confirms a pending booking once nothing is outstanding on it.
+ *
+ * Separate from recomputeBookingPaymentStatus because that runs inside
+ * the payment transaction and this must not: it emits the event that
+ * emails the customer.
+ */
+async function confirmIfSettled(shop: string, platform: string, bookingId: number): Promise<void> {
+  const booking = await prisma.booking.findFirst({
+    where: { shop, platform, id: bookingId },
+    select: { id: true, status: true, paymentStatus: true },
+  });
+  if (!booking || booking.status !== "pending" || booking.paymentStatus !== "paid") return;
+
+  await setStatus(shop, bookingId, "confirmed", "payment received");
 }
 
 /** Withdraws a request that should not have been sent. Never deletes: the record is the audit trail. */

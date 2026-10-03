@@ -280,7 +280,28 @@ export async function create(shop: string, platform: string, shopTimezone: strin
     whatsapp_opt_in_source: args.whatsapp_opt_in_source,
   });
 
-  const status: BookingStatus = args.force_status ?? (settings.auto_confirm ? "confirmed" : "pending");
+  // Payment-before-confirmation (10-01-2026 review, item 13).
+  //
+  // A service with a deposit policy holds its bookings at `pending`
+  // regardless of auto_confirm, and they are confirmed when the merchant
+  // records the payment (Payments.markPaid). Without this, auto_confirm
+  // (on by default) confirmed the appointment the instant it was
+  // requested and the deposit became something to chase afterwards —
+  // which is the opposite of what asking for one is for.
+  //
+  // force_status still wins, because that is a staff action: someone
+  // adding a booking from the dashboard has already decided, and is
+  // often recording a payment taken at the counter.
+  //
+  // Not a new status. `pending -> confirmed` is already a legal
+  // transition and already means "the business has not agreed to this
+  // yet", which is exactly true of an unpaid deposit. An
+  // `awaiting_payment` status would need its own transitions, its own
+  // badge and its own handling in every list that filters by status,
+  // to express something the product can already say.
+  const paymentHolds = amountDue > 0;
+  const status: BookingStatus =
+    args.force_status ?? (settings.auto_confirm && !paymentHolds ? "confirmed" : "pending");
 
   // Everything above only *chose* a slot. The check and the insert were two
   // separate statements with nothing holding the slot in between, so two
