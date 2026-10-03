@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { data, isRouteErrorResponse, useFetcher, useRouteError, useSearchParams } from "react-router";
 import type { Route } from "./+types/book.$connectionId";
 import {
@@ -16,7 +16,7 @@ import { formatInZone, wallClockToUtc, zoneAbbr } from "getbooqin-core/booking/t
 // second one here: the two drifted, and this copy escaped nothing and
 // folded nothing, so a service called "Cut, colour & finish" produced a
 // file some calendars refused.
-import { icsDataUrl, icsFilename } from "getbooqin-core/booking/calendar";
+import { calendarLinks, icsFilename, type CalendarEvent } from "getbooqin-core/booking/calendar";
 // The message type and the param that triggers it are defined once, in
 // core, because the other end of this protocol is a string we hand a
 // merchant to paste into a website we will never see. The two halves
@@ -27,7 +27,7 @@ import { vocabFor } from "~/lib/presets";
 import { AlertError, Badge, ConfirmDialog, Field, FormErrorSummary, Input } from "~/components/ui";
 import { LogoMark } from "~/components/onboarding";
 import { throttle, clientIp } from "~/lib/http.server";
-import { contactFieldErrors } from "~/lib/validation";
+import { contactFieldErrors, isValidEmail, isValidPhone, PHONE_PATTERN } from "~/lib/validation";
 
 export const meta: Route.MetaFunction = ({ data: loaderData }) =>
   loaderData ? [{ title: `Book with ${loaderData.businessName} · GetBooqin` }] : [{ title: "Book · GetBooqin" }];
@@ -1174,6 +1174,41 @@ function DetailsForm({
     });
   }
 
+  /**
+   * Validate one contact field as the customer leaves it.
+   *
+   * handleSubmit below already refuses an invalid phone, and handleBook
+   * mirrors that server-side — so "the form accepts invalid text"
+   * (10-01-2026 review, item 5) was never true of the submit. What was
+   * true is that nothing said so until the customer had filled in the
+   * whole form and pressed Confirm, so a field they had already moved on
+   * from looked accepted. Onboarding's phone field shows its error as you
+   * type; this one stayed silent. Blur rather than change, so the message
+   * doesn't flash while a half-typed number is still legitimately invalid.
+   */
+  function validateOnBlur(name: "email" | "phone", value: string) {
+    // Deliberately not contactFieldErrors(): that function also enforces
+    // the cross-field "give us one of the two" rule, which would fire on
+    // blurring an empty optional phone field and tell the customer off
+    // for a field they have not reached yet. One field at a time here;
+    // the full check still runs on submit.
+    const trimmed = value.trim();
+    let message = "";
+    if (trimmed) {
+      const valid = name === "phone" ? isValidPhone(trimmed) : isValidEmail(trimmed);
+      if (!valid) message = name === "phone" ? "Enter a valid phone number." : "Enter a valid email address.";
+    }
+    setErrors((prev) => {
+      if (!message) {
+        if (!(name in prev)) return prev;
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      }
+      return { ...prev, [name]: message };
+    });
+  }
+
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     const form = new FormData(event.currentTarget);
     const next = contactFieldErrors(
@@ -1228,10 +1263,10 @@ function DetailsForm({
           </Field>
         </div>
         <Field label="Email" required={settings.requireEmail} error={errors.email}>
-          <Input id="email" type="email" name="email" required={settings.requireEmail} autoComplete="email" onChange={() => clearError("email")} />
+          <Input id="email" type="email" name="email" required={settings.requireEmail} autoComplete="email" onChange={() => clearError("email")} onBlur={(e) => validateOnBlur("email", e.target.value)} />
         </Field>
         <Field label="Phone" required={settings.requirePhone} error={errors.phone}>
-          <Input id="phone" type="tel" name="phone" required={settings.requirePhone} autoComplete="tel" onChange={() => clearError("phone")} />
+          <Input id="phone" type="tel" inputMode="tel" pattern={PHONE_PATTERN} name="phone" required={settings.requirePhone} autoComplete="tel" onChange={() => clearError("phone")} onBlur={(e) => validateOnBlur("phone", e.target.value)} />
         </Field>
         {settings.intakeFields.map((f) => (
           <Field key={f.key} label={f.label} required={f.required} error={errors[`intake_${f.key}`]}>
@@ -1312,6 +1347,55 @@ function DetailsForm({
           </button>
         </div>
       </fetcher.Form>
+    </div>
+  );
+}
+
+/**
+ * "+ Add to calendar" — a chooser, not a download.
+ *
+ * This was a single <a download> pointing at an .ics data URL. On Apple
+ * Calendar and Outlook desktop that is exactly right. On Android and in
+ * Chrome — which is what the 10-01-2026 review tested (item 6) — the file
+ * lands in Downloads as "standard-appointment.ics" and nothing opens it,
+ * so the button looked broken.
+ *
+ * Collapsed to the same single link until clicked, so the common case
+ * costs one tap and the panel keeps its shape; the three destinations
+ * only appear once the customer has said they want them.
+ *
+ * The .ics stays as the third option rather than being replaced: it is
+ * still the only one that works for Apple Calendar, and it is the only
+ * one that works offline.
+ */
+function AddToCalendar({ event, filename }: { event: CalendarEvent; filename: string }) {
+  const [open, setOpen] = useState(false);
+  // Recomputed only when the booking changes, not on every render — each
+  // call builds two URLs and serialises a whole .ics into a data: URL.
+  const links = useMemo(() => calendarLinks(event), [event.uid, event.start, event.end, event.title]);
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="btn-link text-brand-600">
+        + Add to calendar
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+      {/* rel=noopener on the two that leave the page: these open a logged-in
+          calendar account, and the opener reference is not something to
+          hand to another origin. */}
+      <a href={links.google} target="_blank" rel="noopener noreferrer" className="btn-link text-brand-600">
+        Google
+      </a>
+      <a href={links.outlook} target="_blank" rel="noopener noreferrer" className="btn-link text-brand-600">
+        Outlook
+      </a>
+      <a href={links.ics} download={filename} className="btn-link text-brand-600">
+        Apple / other (.ics)
+      </a>
     </div>
   );
 }
@@ -1409,8 +1493,8 @@ function Confirmation({
           {/* Only once there is something to put in a diary — a pending
               request is not an appointment yet. */}
           {booking.status !== "pending" && (
-            <a
-              href={icsDataUrl({
+            <AddToCalendar
+              event={{
                 uid: booking.uid,
                 start: new Date(booking.startIso),
                 end: new Date(booking.endIso),
@@ -1418,12 +1502,9 @@ function Confirmation({
                 description: `Booked with ${businessName}`,
                 location: businessAddress || undefined,
                 url: `${typeof window === "undefined" ? "" : window.location.origin}${manageUrl}`,
-              })}
-              download={icsFilename(booking.serviceName || vocab.bookingOne)}
-              className="btn-link text-brand-600"
-            >
-              + Add to calendar
-            </a>
+              }}
+              filename={icsFilename(booking.serviceName || vocab.bookingOne)}
+            />
           )}
         </div>
       </div>

@@ -152,6 +152,26 @@ export interface Settings {
 
 }
 
+/**
+ * Is this `shop` value the internal tenant key of a non-platform account,
+ * rather than something a human should ever read?
+ *
+ * connections.ts's createManualConnection() mints `manual-<uuid>` as the
+ * shop key for an account with no Shopify store behind it. That key is a
+ * join column, but defaultSettings() seeds `business_name` from it — so
+ * until the merchant saves a real name, anything rendering business_name
+ * renders a UUID. It reached the public booking page ("with
+ * manual-77cd2e49-…"), the confirmation email, and every row of the
+ * bookings table, because onboarding also names the first Resource after
+ * it (10-01-2026 review, item 14).
+ *
+ * A Shopify `shop` is a real myshopify.com domain and is a reasonable
+ * placeholder name; this is only about the manual key.
+ */
+export function isInternalShopKey(shop: string): boolean {
+  return /^manual-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shop);
+}
+
 export function term(settings: Settings, key: keyof Terms): string {
   return settings.terms?.[key] || defaultTerms()[key];
 }

@@ -91,7 +91,10 @@ export default function ServicesList({ loaderData, actionData, params }: Route.C
           <span className="inline-block h-[10px] w-6 rounded-[3px]" style={{ backgroundColor: s.color }} />,
           <span className="num">{s.price > 0 ? `${currencySymbol}${s.price.toFixed(2)}` : "—"}</span>,
           <span className="num">{s.durationMin} min</span>,
-          <div className="flex flex-wrap items-center gap-[6px]">
+          // whitespace-normal: the Table cell wrapper now clips+ellipses by
+          // default, and this cell is the one place a badge's own label is
+          // allowed to wrap onto a second line rather than be cut off.
+          <div className="flex flex-wrap items-center gap-[6px] whitespace-normal">
             <Badge status={s.status ? "confirmed" : "cancelled"} label={s.status ? "Active" : "Inactive"} />
             {/* Two identically-unticked "who can deliver this" boxes used to
                 behave differently with no visible difference between them

@@ -5,7 +5,7 @@ import { isClerkAPIResponseError, isReverificationCancelledError } from "@clerk/
 import type { Route } from "./+types/dashboard.$connectionId.account";
 import { prisma, Settings, AccountDeletion, isGetBooqinError } from "getbooqin-core";
 import { requireTenant } from "~/tenant.server";
-import { AlertError, Badge, Field, Input, Toggle } from "~/components/ui";
+import { AlertError, Badge, ConfirmDialog, Field, Input, Toggle } from "~/components/ui";
 import { AuthMethodRow, GoogleGlyph, PasswordField, SessionRow } from "~/components/account";
 import { SettingsShell, SettingsCard, Row, RowInput } from "~/components/settings";
 import { vocabFor, type Terms } from "~/lib/presets";
@@ -376,55 +376,52 @@ function SecurityTab() {
       <PasswordCard user={user} />
       <LinkedAccountsCard user={user} />
       <SessionsCard user={user} currentSessionId={currentSession?.id} onSignOutEverywhere={() => clerk.signOut(() => navigate("/logout"))} />
-      {/* This card, and everything on it, was already solid — 2FA, linked
-          sign-in methods, active sessions with device/city, sign out
-          everywhere, a 15-character minimum. What was missing was any nudge
-          at all toward actually turning 2FA on for the one account with
-          full access to every patient record (GetBooqin clinic audit's
-          TS-04 finding). Only shown once Clerk has loaded a real answer for
-          whether it's on — never a false "you should enable this" flash
-          for someone who already has. */}
-      {!user.twoFactorEnabled && (
-        <div className="card border-l-[3px] border-l-warn">
+      {/* Two-step verification: shown only to an account that already has
+          it on.
+          ------------------------------------------------------------------
+          There used to be a "Turn on two-step verification" banner here
+          (TS-04's nudge) and a "Two-step verification / Manage" row beneath
+          it, both opening Clerk's Security page. On our Clerk plan that
+          page has no 2FA options on it at all: MFA — authenticator apps,
+          SMS codes, backup codes — is a paid Clerk feature, available in
+          development mode only on the free tier.
+
+          So both controls led nowhere, which is what the 10-01-2026 review
+          reported as item 3 ("no visible option to actually set up or
+          enable two-step verification"). The honest reading is worse than
+          the report: the banner told a clinic that a second sign-in step
+          was "the single biggest thing you can do" to protect patient
+          records, and then could not deliver one.
+
+          A dead end is worse than an absence, so both are gone. The row
+          below survives for an account that somehow *does* have a second
+          factor (a dev-mode user, or us upgrading the Clerk plan later) —
+          it must stay manageable, and this needs no change on that day.
+          Re-adding the enrolment nudge is a one-commit revert once MFA is
+          actually available; do not re-add it before then. */}
+      {user.twoFactorEnabled && (
+        <div className="card">
           <div className="card-body flex items-center justify-between gap-3">
             <div className="flex flex-col gap-[3px]">
-              <span className="text-body font-medium">Turn on two-step verification</span>
-              <span className="text-meta text-muted">
-                This account can see every patient's contact details and notes. A second sign-in step is the
-                single biggest thing you can do to protect it.
-              </span>
+              <span className="text-body font-medium">Two-step verification</span>
+              <span className="text-meta text-muted">On. Manage your authenticator app or backup codes.</span>
             </div>
+            {/* Deep-links straight to the security page instead of landing on
+                Clerk's own "Profile details" tab — a second, out-of-sync
+                profile/email/phone UI behind this one (UX audit's R3
+                finding). Still Clerk's modal chrome (2FA enrollment isn't
+                exposed by the client SDK outside it), but at least it opens
+                where the merchant actually clicked. */}
             <button
               type="button"
-              className="btn-pri shrink-0"
+              className="btn-sec"
               onClick={() => clerk.openUserProfile({ __experimental_startPath: "/security" })}
             >
-              Turn on
+              Manage
             </button>
           </div>
         </div>
       )}
-      <div className="card">
-        <div className="card-body flex items-center justify-between gap-3">
-          <div className="flex flex-col gap-[3px]">
-            <span className="text-body font-medium">Two-step verification</span>
-            <span className="text-meta text-muted">Add an authenticator app or backup codes for a second sign-in step.</span>
-          </div>
-          {/* Deep-links straight to the security page instead of landing on
-              Clerk's own "Profile details" tab — a second, out-of-sync
-              profile/email/phone UI behind this one (UX audit's R3
-              finding). Still Clerk's modal chrome (2FA enrollment isn't
-              exposed by the client SDK outside it), but at least it opens
-              where the merchant actually clicked. */}
-          <button
-            type="button"
-            className="btn-sec"
-            onClick={() => clerk.openUserProfile({ __experimental_startPath: "/security" })}
-          >
-            Manage
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -687,6 +684,11 @@ type DeletionPreview = NonNullable<Awaited<ReturnType<typeof AccountDeletion.pre
 function DangerZone({ deletion, error }: { deletion: DeletionPreview | null; error?: string }) {
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
+  // Hooks run before the early return below — React requires an
+  // unconditional call order, and `deletion` is null on first paint while
+  // the preview loads.
+  const [typed, setTyped] = useState("");
+  const confirmMatches = typed.trim() === deletion?.businessName;
   if (!deletion) return null;
 
   // Counted, not adjectival. "1,240 bookings and 380 customers" is a
@@ -708,7 +710,8 @@ function DangerZone({ deletion, error }: { deletion: DeletionPreview | null; err
           </p>
         </div>
       </div>
-      <Form method="post" className="card-body flex flex-col gap-3">
+      {/* id: ConfirmDialog's confirm button submits this by `form=` */}
+      <Form id="confirm-delete-account-form" method="post" className="card-body flex flex-col gap-3">
         <input type="hidden" name="_intent" value="delete_account" />
 
         {error && (
@@ -740,13 +743,58 @@ function DangerZone({ deletion, error }: { deletion: DeletionPreview | null; err
             customers' records as well as their own. */}
         <label className="flex flex-col gap-1 text-[12px] text-muted">
           Type <strong className="text-ink">{deletion.businessName}</strong> to confirm
-          <input name="confirm" required autoComplete="off" className="input w-full max-w-[360px]" />
+          <input
+            name="confirm"
+            required
+            autoComplete="off"
+            className="input w-full max-w-[360px]"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+          />
         </label>
 
-        <button type="submit" disabled={busy} className="btn-del w-fit">
+        {/* type="button", not submit: this opens the confirmation dialog and
+            the dialog's own button submits this form (via ConfirmDialog's
+            `form={id}-form` wiring). Before this, the click *was* the
+            deletion — nothing stood between it and an irreversible wipe
+            except the typed name above, and a native `required` tooltip
+            (10-01-2026 review, item 4). The typed name stays: it is the
+            stronger of the two gates, and the dialog is the second one,
+            not a replacement. */}
+        <button
+          type="button"
+          disabled={busy || !confirmMatches}
+          className="btn-del w-fit"
+          onClick={() => (document.getElementById("confirm-delete-account") as HTMLDialogElement | null)?.showModal()}
+          title={confirmMatches ? undefined : `Type ${deletion.businessName} above to enable this`}
+        >
           {busy ? "Deleting…" : "Delete my account permanently"}
         </button>
       </Form>
+
+      <ConfirmDialog
+        id="confirm-delete-account"
+        title={`Delete ${deletion.businessName}?`}
+        body="This is permanent. There is no undo, and we keep no copy for you to restore."
+        confirmLabel="Delete permanently"
+        cancelLabel="Keep my account"
+        pending={busy}
+        pendingLabel="Deleting…"
+      >
+        {/* The counts again, inside the dialog. A merchant who has scrolled
+            to the button has the list above off-screen, and "1 booking" is
+            a different decision from "1,240 bookings". */}
+        <div className="rounded-[8px] bg-danger-bg px-3 py-2 text-[12.5px] text-danger">
+          <p className="m-0 mb-1 font-medium">This immediately and permanently deletes:</p>
+          <ul className="m-0 flex list-disc flex-col gap-[2px] pl-5">
+            {counts.map(([n, noun]) => (
+              <li key={noun}>
+                <span className="num">{n}</span> {noun}{n === 1 ? "" : "s"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }

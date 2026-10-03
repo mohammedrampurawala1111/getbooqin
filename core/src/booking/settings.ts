@@ -13,11 +13,11 @@ import { defaultTerms, withDefaultTerms } from "./presets.js";
 import type { Settings } from "./settingsShared.js";
 import { assertFeature } from "../billing/enforcement.js";
 import { GetBooqinError } from "./errors.js";
-import { validateBranding } from "./settingsShared.js";
+import { validateBranding, isInternalShopKey } from "./settingsShared.js";
 
 export type { Settings, BookingRuleField, BookingRuleInput } from "./settingsShared.js";
 export {
-  term, money, template,
+  term, money, template, isInternalShopKey,
   BOOKING_RULE_LIMITS, validateBookingRules, cancelCutoffExceedsNotice, bookingWindowIsClosed,
 } from "./settingsShared.js";
 
@@ -25,7 +25,10 @@ export {
 export function defaultSettings(shopDomain: string, adminEmail: string): Settings {
   return {
     preset: "generic",
-    business_name: shopDomain,
+    // Never the raw `manual-<uuid>` key — see isInternalShopKey(). Empty is
+    // the honest default for an account that has not told us its name yet,
+    // and every display site already falls back from it.
+    business_name: isInternalShopKey(shopDomain) ? "" : shopDomain,
     business_email: adminEmail,
     business_phone: "",
     business_description: "",

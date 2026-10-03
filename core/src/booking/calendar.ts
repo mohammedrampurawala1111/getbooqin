@@ -130,3 +130,51 @@ export function icsFilename(title: string): string {
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
   return `${slug || "booking"}.ics`;
 }
+
+/**
+ * Web calendar hand-off links for the same event.
+ *
+ * The "+ Add to calendar" button used to be a lone `.ics` download
+ * (icsDataUrl above). That is right for Apple Calendar and Outlook
+ * desktop, which register themselves as the handler for the file — and
+ * useless on Android and in Chrome, where it lands in ~/Downloads as
+ * "standard-appointment.ics" and nothing opens it. That is what the
+ * 10-01-2026 review reported as item 6.
+ *
+ * Google and Outlook Web both take the event in the query string, so the
+ * fix is two more links beside the download rather than any integration:
+ * the customer picks where it goes.
+ *
+ * Built from the same CalendarEvent as buildIcs(), so the three can't
+ * describe different appointments.
+ */
+export interface CalendarLinks {
+  google: string;
+  outlook: string;
+  /** The original download — still the right answer for Apple Calendar. */
+  ics: string;
+}
+
+// Google wants UTC basic format without punctuation (the same `stamp()`
+// shape buildIcs uses); Outlook Web wants an ISO 8601 string.
+export function calendarLinks(event: CalendarEvent, now = new Date()): CalendarLinks {
+  const description = [event.description, event.url].filter(Boolean).join("\n\n");
+
+  const google = new URL("https://calendar.google.com/calendar/render");
+  google.searchParams.set("action", "TEMPLATE");
+  google.searchParams.set("text", event.title);
+  google.searchParams.set("dates", `${stamp(event.start)}/${stamp(event.end)}`);
+  if (description) google.searchParams.set("details", description);
+  if (event.location) google.searchParams.set("location", event.location);
+
+  const outlook = new URL("https://outlook.live.com/calendar/0/deeplink/compose");
+  outlook.searchParams.set("path", "/calendar/action/compose");
+  outlook.searchParams.set("rru", "addevent");
+  outlook.searchParams.set("subject", event.title);
+  outlook.searchParams.set("startdt", event.start.toISOString());
+  outlook.searchParams.set("enddt", event.end.toISOString());
+  if (description) outlook.searchParams.set("body", description);
+  if (event.location) outlook.searchParams.set("location", event.location);
+
+  return { google: google.toString(), outlook: outlook.toString(), ics: icsDataUrl(event, now) };
+}

@@ -150,6 +150,14 @@ async function handleStep1(userId: string, form: FormData): Promise<ActionResult
   const currencySymbol = String(form.get("currency_symbol") || "").trim();
   const presetId = String(form.get("preset") || "").trim();
 
+  // The client gate above is the one the merchant sees; this is the one
+  // that holds. isValidPhone() treats empty as fine (the field is
+  // optional here) and only rejects a non-empty value that isn't a
+  // number — which is what "asadad" was saving as before.
+  if (businessPhone && !isValidPhone(businessPhone)) {
+    return { error: "Enter a valid phone number, or leave the field empty." };
+  }
+
   const settingsPatch: Record<string, string> = {};
   if (businessName) settingsPatch.business_name = businessName;
   if (businessEmail) settingsPatch.business_email = businessEmail;
@@ -476,6 +484,17 @@ export default function Onboarding({ loaderData }: Route.ComponentProps) {
   }
 
   function submitStep1(outcome: { kind: "advance"; step: number } | { kind: "finish" }) {
+    // The field has shown "Enter a valid phone number." since the first bad
+    // keystroke, but nothing acted on it: Continue saved "asadad" and moved
+    // on, and so did Finish later (10-01-2026 review, item 1). The message
+    // was decoration. Both paths come through here, so this is the one
+    // place that has to refuse.
+    if (state.phone && !isValidPhone(state.phone)) {
+      setError("Enter a valid phone number, or leave the field empty.");
+      return;
+    }
+    setError(null);
+
     const fd = new FormData();
     fd.set("_intent", "step1");
     if (cid) fd.set("cid", cid);

@@ -372,8 +372,16 @@ export function DataTable<T>({
               className={`trow no-underline text-ink hover:no-underline ${compact ? "trow-compact" : ""} ${href ? "cursor-pointer" : ""}`}
               style={{ gridTemplateColumns: cols }}
             >
+              {/* `truncate` belongs on this wrapper, not on the cell content.
+                  Call sites wrote <span className="min-w-0 truncate">, and
+                  a span is inline — overflow:hidden and text-overflow are
+                  both ignored on an inline box, so a long value (a resource
+                  name, a customer name) painted straight over the next
+                  column instead of ellipsing. This div is the grid item and
+                  is block-level, so clipping actually applies. Cells that
+                  need to wrap opt out with `whitespace-normal`. */}
               {renderRow(row).map((cell, i) => (
-                <div key={i} className="min-w-0">{cell}</div>
+                <div key={i} className="min-w-0 truncate">{cell}</div>
               ))}
             </Row>
           </div>
